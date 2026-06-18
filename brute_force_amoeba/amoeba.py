@@ -5,6 +5,7 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 '''
 
 from typing import Optional
+import warnings
 
 import numpy as np
 import poly_tools as pt
@@ -184,8 +185,16 @@ def _find_exact_crossing(
         return [[df_dt1.real, df_dt2.real],
                 [df_dt1.imag, df_dt2.imag]]
 
-    sol = fsolve(func, [theta1_guess, theta2_guess], fprime=jac,
-                 xtol=1e-12, maxfev=500)
+    # fsolve may emit RuntimeWarning when the initial guess falls in a
+    # flat or ill-conditioned region (e.g. near band edges explored by
+    # the adaptive bisection).  The residual check below is the actual
+    # quality gate; suppress the scipy warning since non-convergence is
+    # handled correctly by returning None and falling back to the
+    # unrefined linear-interpolation estimate.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sol = fsolve(func, [theta1_guess, theta2_guess], fprime=jac,
+                     xtol=1e-12, maxfev=500)
     t1, t2 = sol
     beta1 = exp(mu1 + 1j * t1)
     beta2 = exp(mu2 + 1j * t2)
@@ -278,7 +287,21 @@ def _compute_root_tracks(
         char_poly, E_ref, mu1, N_points,
     )
     theta1_ext = np.hstack([theta1_arr, [theta1_arr[0] + 2 * pi]])
-    tracked_ext = np.vstack([tracked, tracked[0:1]])
+
+    # Ensure the periodic extension respects physical root identity, not
+    # just array index.  Hungarian matching tracks roots by chordal
+    # distance on the Riemann sphere; when |beta2| ordering crosses
+    # (a genuine PMGBZ-like degeneracy), tracked[-1, j] and tracked[0, j]
+    # may belong to *different* physical roots.  Naively stacking
+    # tracked[0] at the end would connect unrelated roots across the
+    # wrap-around boundary, producing spurious ln|beta2| crossings and
+    # corrupting both the coarse crossing detection and the fsolve
+    # refinement step.
+    matches_wrap = _hungarian_match_indices(tracked[-1], tracked[0])
+    first_periodic = np.zeros(tracked.shape[1], dtype=complex)
+    for from_idx, to_idx in matches_wrap:
+        first_periodic[from_idx] = tracked[0, to_idx]
+    tracked_ext = np.vstack([tracked, first_periodic[np.newaxis, :]])
     return {
         "theta1_arr": theta1_arr,
         "tracked": tracked,
@@ -424,29 +447,22 @@ def _compute_winding_from_tracks(
         ]
 
     # Deduplicate crossing pairs (by theta1)
-    crossing_pairs = []
     dW_dmu2 = 0.0
-    seen = set()
-    for t1, t2, jump in sorted(refined_full, key=lambda x: x[0]):
-        key = round(t1, 10)
-        if key not in seen:
-            seen.add(key)
-            crossing_pairs.append((t1, t2))
-            if refine_crossings:
-                theta1_dot = _compute_zero_dtheta1_dmu2(
-                    poly_diff, E_ref, mu1, mu2, t1, t2,
-                )
-                dW_dmu2 += jump * theta1_dot
-
     if refine_crossings:
+        for t1, t2, jump in sorted(refined_full, key=lambda x: x[0]):
+            theta1_dot = _compute_zero_dtheta1_dmu2(
+                poly_diff, E_ref, mu1, mu2, t1, t2,
+            )
+            dW_dmu2 += jump * theta1_dot
+
         dW_dmu2 /= (2 * pi)
 
     # Compute a2 average winding from the zero points
     winding = _get_average_winding_from_zeros(
-        char_poly, E_ref, mu1, mu2, crossing_pairs, direction=2,
+        char_poly, E_ref, mu1, mu2, refined_full, direction=2,
     )
 
-    return winding, crossing_pairs, has_continuum, dW_dmu2
+    return winding, refined_full, has_continuum, dW_dmu2
 
 
 def _compute_crossings_and_winding(

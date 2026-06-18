@@ -11,6 +11,7 @@ from .amoeba import (
     bisect_a2_winding,
     bisect_amoeba_ronkin_min,
     check_amoeba,
+    _compute_root_tracks, # debug
 )
 
 __all__ = [
