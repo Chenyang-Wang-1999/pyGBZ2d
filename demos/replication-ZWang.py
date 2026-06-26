@@ -148,9 +148,14 @@ def plot_SGBZ(fid_start, fid_end, which="x"):
     E_list = E_list_full
     res = res_full
 
+    # Fix bugs for old api
+    for curr_res in res:
+        if "is_SGBZ" not in curr_res:
+            curr_res["is_SGBZ"] = curr_res["is_PMGBZ"]
+
     ind_failed = [i for i in range(len(res)) if not res[i]["success"]]
-    ind_amoeba = [i for i in range(len(res)) if res[i]["success"] and res[i]["is_PMGBZ"]]
-    ind_not_amoeba = [i for i in range(len(res)) if res[i]["success"] and not res[i]["is_PMGBZ"]]
+    ind_amoeba = [i for i in range(len(res)) if res[i]["success"] and res[i]["is_SGBZ"]]
+    ind_not_amoeba = [i for i in range(len(res)) if res[i]["success"] and not res[i]["is_SGBZ"]]
 
     # Plot
     plt.figure()
@@ -185,19 +190,19 @@ def check_roots():
 
 
 if __name__ == "__main__":
-    N_grid_x = 51
-    N_grid_y = 51
+    N_grid_x = 31
+    N_grid_y = 31
     E_re = np.linspace(-4, 6, N_grid_x)
     E_im = np.linspace(-0.16, 0.16, N_grid_y)
     # E_im = np.concatenate([
     #     np.linspace(-0.16, -0.08, N_grid_y),
     #     np.linspace(0.08, 0.16, N_grid_y),
     # ])
-    sweep_general(E_re, E_im, which="amoeba")
-    sweep_general(E_re, E_im, which="x-SGBZ")
-    sweep_general(E_re, E_im, which="y-SGBZ")
-    # plot_amoeba(0, 1)
-    # plot_SGBZ(0, 2, "x")
-    # plot_SGBZ(0, 2, "y")
+    # sweep_general(E_re, E_im, which="amoeba")
+    # sweep_general(E_re, E_im, which="x-SGBZ")
+    # sweep_general(E_re, E_im, which="y-SGBZ")
+    plot_amoeba(0, 1)
+    plot_SGBZ(0, 1, "x")
+    plot_SGBZ(0, 1, "y")
 
     # check_roots()

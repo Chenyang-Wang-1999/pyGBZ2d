@@ -1,7 +1,7 @@
 '''
 author:        wangchenyang <cy-wang21@mails.tsinghua.edu.cn>
-date:          2025-11-23 00:00:00
-Copyright © YourCompanyName All rights reserved
+date:          2025-11-23
+Copyright © Department of Physics, Tsinghua University. All rights reserved
 '''
 
 import numpy as np
@@ -286,16 +286,16 @@ def check_SGBZ(
         return {"success": success, "error": str(e)}
 
     mu1 = sgbz_res["mu1"]
-    PMGBZ_points = sgbz_res["PMGBZ_points"]
-    if PMGBZ_points:
-        is_PMGBZ = True
+    SGBZ_points = sgbz_res["PMGBZ_points"]
+    if SGBZ_points:
+        is_SGBZ = True
         plateau_info = {
             "status": "skipped",
             "found": False,
             "reason": "disabled",
             "points": [],
         }
-        classification_reason = "nonempty_PMGBZ_points"
+        classification_reason = "nonempty_SGBZ_points"
         if plateau_check:
             plateau_info = _probe_zero_plateau_near_mu1(
                 solver.poly_diff, E_ref, mu1, sgbz_res.get("_mu1_bracket"),
@@ -304,17 +304,17 @@ def check_SGBZ(
                 probe_radius=plateau_probe_radius,
             )
             if plateau_info["found"]:
-                is_PMGBZ = False
+                is_SGBZ = False
                 classification_reason = "nearby_zero_plateau"
             elif plateau_info["status"] == "not_found":
-                classification_reason = "nonempty_PMGBZ_points_no_plateau"
+                classification_reason = "nonempty_SGBZ_points_no_plateau"
             else:
-                classification_reason = "PMGBZ_plateau_check_inconclusive"
+                classification_reason = "SGBZ_plateau_check_inconclusive"
         return {
             "success": success,
-            "is_PMGBZ": is_PMGBZ,
+            "is_SGBZ": is_SGBZ,
             "mu1": mu1,
-            "PMGBZ_points": PMGBZ_points,
+            "SGBZ_points": SGBZ_points,
             "_plateau_check": plateau_info["status"],
             "_plateau_check_found": plateau_info["found"],
             "_plateau_probe_points": plateau_info["points"],
@@ -327,12 +327,12 @@ def check_SGBZ(
     else:
         return {
             "success": success,
-            "is_PMGBZ": False,
+            "is_SGBZ": False,
             "mu1": mu1,
             "_plateau_check": "found",
             "_plateau_check_found": True,
             "_plateau_probe_points": [],
-            "_classification_reason": "empty_PMGBZ_zero_plateau",
+            "_classification_reason": "empty_SGBZ_zero_plateau",
             "_mu1_bracket": sgbz_res.get("_mu1_bracket"),
             "_winding_bracket": sgbz_res.get("_winding_bracket"),
             "_exit_reason": sgbz_res.get("_exit_reason"),
@@ -346,7 +346,7 @@ def convert_results_to_triplet(
     coeffs, degs
 ) -> list[tuple[complex, complex, complex]]:
     """
-    Convert the results of check_SGBZ to a list of triplets (E, k1, k2) for each PMGBZ point.
+    Convert the results of check_SGBZ to a list of triplets (E, k1, k2) for each SGBZ point.
     """
 
     char_poly = pt.CLaurent(3)
@@ -360,11 +360,11 @@ def convert_results_to_triplet(
     new_data_list = []
     for ind in range(len(results)):
         curr_res = results[ind]
-        if curr_res["success"] and curr_res["is_PMGBZ"]:
+        if curr_res["success"] and curr_res["is_SGBZ"]:
             curr_E = E_list[ind]
             curr_mu1 = curr_res["mu1"]
             sols_arr = None
-            for item in curr_res["PMGBZ_points"]:
+            for item in curr_res["SGBZ_points"]:
                 if item["is_continuum"]:
                     if sols_arr is None:
                         # calculate zeros
