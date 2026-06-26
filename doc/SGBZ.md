@@ -1,4 +1,4 @@
-# brute_force_solver — SGBZ Spectrum Calculation
+# brute_force_SGBZ — SGBZ Spectrum Calculation
 
 Non-Hermitian spectrum computation based on the SGBZ (Strip Generalized Brillouin Zone) formulation.
 
@@ -204,7 +204,7 @@ Batch checking entry point — given polynomial coefficients, energy, and progre
 
 ## 6. Relation to `brute_force_amoeba`
 
-| Aspect | brute_force_solver (SGBZ) | brute_force_amoeba |
+| Aspect | brute_force_SGBZ (SGBZ) | brute_force_amoeba |
 |--------|---------------------------|---------------------|
 | Base manifold | $\mu_2 = \rho_{2,0}(\theta_1)$ variable curve | $\mu_2 = \text{const}$ level surface |
 | Root ordering | By $\vert\beta_2\vert$ | Hungarian matching continuous tracking |

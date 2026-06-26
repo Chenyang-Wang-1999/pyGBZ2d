@@ -20,7 +20,7 @@ from scipy import interpolate
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[1]))
-import brute_force_solver as bfs
+import brute_force_SGBZ as bfs
 import brute_force_amoeba as bfa
 
 ALL_PARAMS = (

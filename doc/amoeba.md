@@ -1,6 +1,6 @@
 # brute_force_amoeba — Amoebic Spectrum Calculation
 
-Non-Hermitian spectrum computation based on the amoeba formulation. Complementary to the SGBZ formulation (`brute_force_solver/`).
+Non-Hermitian spectrum computation based on the amoeba formulation. Complementary to the SGBZ formulation (`brute_force_SGBZ/`).
 
 ## 1. Theoretical Background
 

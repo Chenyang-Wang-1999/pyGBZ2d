@@ -14,7 +14,7 @@ import poly_tools as pt
 from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).resolve().parents[1]))
-import brute_force_solver as bfs
+import brute_force_SGBZ as bfs
 import brute_force_amoeba as bfa
 
 DEFAULT_PARAMS = {
@@ -193,10 +193,10 @@ if __name__ == "__main__":
     #     np.linspace(-0.16, -0.08, N_grid_y),
     #     np.linspace(0.08, 0.16, N_grid_y),
     # ])
-    # sweep_general(E_re, E_im, which="amoeba")
-    # sweep_general(E_re, E_im, which="x-SGBZ")
-    # sweep_general(E_re, E_im, which="y-SGBZ")
-    plot_amoeba(0, 1)
+    sweep_general(E_re, E_im, which="amoeba")
+    sweep_general(E_re, E_im, which="x-SGBZ")
+    sweep_general(E_re, E_im, which="y-SGBZ")
+    # plot_amoeba(0, 1)
     # plot_SGBZ(0, 2, "x")
     # plot_SGBZ(0, 2, "y")
 

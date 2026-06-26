@@ -6,7 +6,7 @@ This package implements two complementary formulations for determining the gener
 
 | Module | Approach | Key Object |
 |--------|----------|------------|
-| `brute_force_solver` | SGBZ / strip winding number | PMGBZ points, strip winding $W(E, \mu_1)$ |
+| `brute_force_SGBZ` | SGBZ / strip winding number | PMGBZ points, strip winding $W(E, \mu_1)$ |
 | `brute_force_amoeba` | Amoeba / Ronkin function | Average winding numbers, Ronkin minimum $(\mu_1, \mu_2)$ |
 
 The characteristic polynomial $f(E, \beta_1, \beta_2) = \det[E - h(\beta_1, \beta_2)]$ of a 2D non-Hermitian tight-binding model is a Laurent polynomial in $\beta_j = e^{\mu_j + i\theta_j}$. Both modules solve for the non-Bloch decay factors $(\mu_1, \mu_2)$ that satisfy the GBZ condition, but through different mathematical routes.
@@ -23,7 +23,7 @@ make _poly_tools_cc.cpython-39-x86_64-linux-gnu.so   # adjust suffix to your Pyt
 cp -r ../python/poly_tools /path/to/your/workdir/
 ```
 
-- (Optional) **BerryPy** — only needed for `MatWindingFun` in `brute_force_solver.winding`.
+- (Optional) **BerryPy** — only needed for `MatWindingFun` in `brute_force_SGBZ.winding`.
 
 ## Installation
 
@@ -60,7 +60,7 @@ char_poly.set_Laurent_by_terms(coeffs, degs)
 Find the critical $\mu_1$ where the strip winding number vanishes:
 
 ```python
-from brute_force_solver import SGBZSolver
+from brute_force_SGBZ import SGBZSolver
 
 solver = SGBZSolver(char_poly)
 mu1, pmgbz_points = solver.solve_for_E(1.0 + 0j)
@@ -80,7 +80,7 @@ print(f"mu1 = {result['mu1']:.6f}, mu2 = {result['mu2']:.6f}")
 
 ## API Overview
 
-### `brute_force_solver`
+### `brute_force_SGBZ`
 
 | Function / Class | Description |
 |-----------------|-------------|

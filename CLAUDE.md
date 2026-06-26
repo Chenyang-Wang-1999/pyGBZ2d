@@ -6,7 +6,7 @@ Non-Hermitian skin effect computation for 2D tight-binding models. Two complemen
 
 ```
 brute-force-non-hermitian/
-├── brute_force_solver/        # SGBZ / strip winding number formulation
+├── brute_force_SGBZ/        # SGBZ / strip winding number formulation
 │   ├── __init__.py             # Whitelist exports of all public symbols
 │   ├── root_solver.py          # calculate_point_roots, complex_root, poly_to_np_coefficients
 │   ├── winding.py              # PolyDiffContext, WindingFun, MatWindingFun, get_winding_number
@@ -24,7 +24,7 @@ brute-force-non-hermitian/
 └── README.md
 ```
 
-## Module: brute_force_solver (SGBZ formulation)
+## Module: brute_force_SGBZ (SGBZ formulation)
 
 Computes the generalized Brillouin zone (GBZ) using strip winding numbers.
 
@@ -83,7 +83,7 @@ Computes the amoeba spectrum via the Ronkin function and average winding numbers
 - a₁ winding reuses a₂ zero points (no separate Hungarian matching needed).
 - Continuum detection uses |ln|β₂| - μ₂| < continuum_tol (simpler than SGBZ's |β_M| ≈ |β_{M+1}|).
 
-**Cross-module dependency:** `amoeba.py` imports `calculate_point_roots` and `PolyDiffContext` from `brute_force_solver`.
+**Cross-module dependency:** `amoeba.py` imports `calculate_point_roots` and `PolyDiffContext` from `brute_force_SGBZ`.
 
 ## Polynomial Format
 
