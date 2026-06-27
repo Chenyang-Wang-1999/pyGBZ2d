@@ -1083,6 +1083,23 @@ def bisect_amoeba_ronkin_min(
                 inner_right["mu2"], inner_right["zeros"], direction=1,
             )
 
+            if abs(a1_left) <= xtol:
+                return _make_ronkin_result(
+                    mu1_mid - continuum_perturb, inner_left["mu2"],
+                    inner_left["zeros"], inner_left["is_continuum"],
+                    mu1_low, mu1_mid + continuum_perturb,
+                    a1_low, a1_right,
+                    "left_perturb_a1_zero",
+                )
+            if abs(a1_right) <= xtol:
+                return _make_ronkin_result(
+                    mu1_mid + continuum_perturb, inner_right["mu2"],
+                    inner_right["zeros"], inner_right["is_continuum"],
+                    mu1_mid - continuum_perturb, mu1_high,
+                    a1_left, a1_high,
+                    "right_perturb_a1_zero",
+                )
+
             if a1_left * a1_right < 0:
                 return _make_ronkin_result(
                     mu1_mid, mu2_mid, zeros_mid, True,

@@ -85,4 +85,4 @@ def debug_amoeba(E_ref: complex):
     print(bfa.check_amoeba(coeffs, degs, E_ref, 0.0, True))
 
 if __name__ == "__main__":
-    debug_amoeba(1.648 + 0.0294j)
+    debug_amoeba(5.916 + 0.1344j)
