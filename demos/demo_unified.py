@@ -8,7 +8,7 @@ Demonstration of the unified GBZ API using the 2D HN model.
 Shows:
   - Building a characteristic polynomial
   - Running check_SGBZ (returns GBZResult directly)
-  - Running check_amoeba (returns GBZResult directly)
+  - Running collect_GBZ_subsets (returns GBZResult directly)
   - Iterating over subsets with match/case
   - Lazy beta2_arr fill for LineSubset
   - Converting to (E, k1, k2) triplets
@@ -88,8 +88,8 @@ def main():
                 print(f"      beta2_arr loaded: shape = {subset.beta2_arr.shape}")
 
     # ---- Amoeba ----
-    print("\n--- check_amoeba ---")
-    gbz_amoeba = bfa.check_amoeba(coeffs, degs, E_test, 0.0)
+    print("\n--- collect_GBZ_subsets ---")
+    gbz_amoeba = bfa.collect_GBZ_subsets(coeffs, degs, E_test, 0.0)
     print(f"  is_gbz: {gbz_amoeba.is_gbz}")
     print(f"  index: {gbz_amoeba.index}")
     print(f"  n_subsets: {len(gbz_amoeba.subsets)}")

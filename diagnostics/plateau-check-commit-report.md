@@ -20,7 +20,7 @@ The diagnostic sweep found:
 - No decreasing interval in the main-direction winding curve.
 - A finite zero plateau for the amoeba criterion:
   `mu1 in [0.113282599424, 0.11647195474]`.
-- The original `check_amoeba` returned `mu1 = 0.11328125`, immediately next to
+- The original `collect_GBZ_subsets` returned `mu1 = 0.11328125`, immediately next to
   the plateau boundary, with non-empty raw zeros but net-zero crossing content.
 
 ## Code Changes
@@ -37,7 +37,7 @@ The diagnostic sweep found:
   - the final bisection bracket width,
   - `xtol`,
   - a fixed probe radius, defaulting to `continuum_perturb`.
-- Updated `check_amoeba(...)`:
+- Updated `collect_GBZ_subsets(...)`:
   - `zeros == []` and non-continuum still directly means outside spectrum.
   - `zeros != []` no longer directly means inside spectrum.
   - A nearby point with `a1 == 0`, `zeros == []`, and non-continuum now changes

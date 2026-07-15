@@ -59,7 +59,7 @@ def sweep_general(E_re, E_im, which="amoeba", params=DEFAULT_PARAMS, N_process=1
         fname_prefix = "data/ZWang_amoeba"
         data_pack = [(coeffs, degs, E_list[j], j / len(E_list), True) for j in range(len(E_list))]
         with mp.Pool(N_process) as pool:
-            res = pool.starmap(bfa.check_amoeba, data_pack)
+            res = pool.starmap(bfa.collect_GBZ_subsets, data_pack)
     elif which == "x-SGBZ":
         fname_prefix = "data/ZWang_x-SGBZ"
         data_pack = [(coeffs, degs, E_list[j], j / len(E_list), True) for j in range(len(E_list))]
@@ -156,7 +156,7 @@ def check_roots():
         ax.plot(theta1_ext, np.angle(tracked_ext[:,j]), np.log(np.abs(tracked_ext[:,j])))
     plt.show()
 
-    print(bfa.check_amoeba(coeffs, degs, E_ref, 0, True))
+    print(bfa.collect_GBZ_subsets(coeffs, degs, E_ref, 0, True))
 
 
 if __name__ == "__main__":
@@ -172,8 +172,8 @@ if __name__ == "__main__":
     # sweep_general(E_re, E_im, which="x-SGBZ")
     # sweep_general(E_re, E_im, which="y-SGBZ")
     plot_amoeba()
-    plot_SGBZ("x")
-    plot_SGBZ("y")
+    # plot_SGBZ("x")
+    # plot_SGBZ("y")
     plt.show()
 
     # check_roots()

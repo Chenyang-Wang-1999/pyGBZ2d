@@ -5,7 +5,7 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 
 Ronkin-function winding number computation for amoeba GBZ.
 
-Provides a1 and a2 average winding numbers, zero-crossing detection, and
+Provides w1 and w2 average winding numbers, zero-crossing detection, and
 root-track-based winding computation.
 """
 
@@ -21,10 +21,9 @@ from brute_force_SGBZ.root_solver import calculate_point_roots
 from brute_force_SGBZ.winding import PolyDiffContext
 from gbz_types import (
     get_minor_degrees, find_cyclic_true_intervals,
-    hungarian_match_indices,
 )
 
-from .tracks import get_hungarian_sorted_roots, _compute_root_tracks
+from .tracks import _compute_root_tracks
 
 def _find_exact_crossing(
     poly_diff: PolyDiffContext,
@@ -83,15 +82,25 @@ def _get_average_winding_from_zeros(
     mu1: float,
     mu2: float,
     zeros: list[tuple[float, float]],  # (theta1, theta2)
-    direction: int,  # 1 = a1 (solve beta1), 2 = a2 (solve beta2)
-) -> float:
-    """Compute average winding from pre-computed (theta1, theta2) zero points.
+    direction: int,  # 1 = w1 (solve beta1), 2 = w2 (solve beta2)
+) -> tuple[float, float]:
+    """Compute average winding and normalized non-zero interval area.
+
+    Returns (avg_winding, non_zero_area) where both are divided by (2π):
+
+      avg_winding   = Σ(u · width) / (2π)
+      non_zero_area = Σ(|u| · width) / (2π)
 
     The zeros partition the angular circle in the `direction` variable.
     u_d is constant on each segment between consecutive zero crossings.
 
-    direction=2 (a2): partition theta1, solve beta2 at each segment midpoint.
-    direction=1 (a1): partition theta2, solve beta1 at each segment midpoint.
+    direction=2 (w2): partition theta1, solve beta2 at each segment midpoint.
+    direction=1 (w1): partition theta2, solve beta1 at each segment midpoint.
+
+    non_zero_area serves as a lightweight plateau indicator: at a
+    zero-plateau boundary, both w1 and w2 non-zero areas are tiny
+    (most of the circle has u = 0).  Callers can skip expensive plateau
+    probing when either area exceeds a safe threshold (e.g. 1e-2).
     """
     M, N = get_minor_degrees(PolyDiffContext(char_poly), direction)
 
@@ -120,9 +129,12 @@ def _get_average_winding_from_zeros(
             char_poly, param_ind, (E_ref, beta_param), var_ind, M, N,
         )
         count_below = np.sum(np.log(np.abs(np.asarray(roots, dtype=complex))) < mu_count)
-        return float(count_below - M)
+        u_const = count_below - M
+        # Single segment spans the full circle: width = 2π, so non_zero_area / (2π) = |u|
+        return u_const, abs(u_const)
 
     total = 0.0
+    non_zero_area = 0.0
     for i in range(n_seg):
         left = partition_thetas[i]
         right = partition_thetas[(i + 1) % n_seg]
@@ -138,52 +150,9 @@ def _get_average_winding_from_zeros(
         count_below = np.sum(np.log(np.abs(np.asarray(roots, dtype=complex))) < mu_count)
         u = count_below - M
         total += u * width
+        non_zero_area += abs(u) * width
 
-    return total / (2 * pi)
-
-
-def _compute_root_tracks(
-    char_poly: pt.CLaurent,
-    E_ref: complex,
-    mu1: float,
-    N_points: int = 301,
-) -> dict:
-    """Pre-compute Hungarian-matched beta2 root tracks across theta1.
-
-    This is the expensive part of the pipeline — depends only on (E, mu1),
-    NOT on mu2.  Cache this when scanning over mu2 at fixed (E, mu1).
-
-    Returns a dict with keys:
-        theta1_arr, tracked, M, N, theta1_ext, tracked_ext, poly_diff
-    """
-    theta1_arr, tracked, M, N = get_hungarian_sorted_roots(
-        char_poly, E_ref, mu1, N_points,
-    )
-    theta1_ext = np.hstack([theta1_arr, [theta1_arr[0] + 2 * pi]])
-
-    # Ensure the periodic extension respects physical root identity, not
-    # just array index.  Hungarian matching tracks roots by chordal
-    # distance on the Riemann sphere; when |beta2| ordering crosses
-    # (a genuine PMGBZ-like degeneracy), tracked[-1, j] and tracked[0, j]
-    # may belong to *different* physical roots.  Naively stacking
-    # tracked[0] at the end would connect unrelated roots across the
-    # wrap-around boundary, producing spurious ln|beta2| crossings and
-    # corrupting both the coarse crossing detection and the fsolve
-    # refinement step.
-    matches_wrap = hungarian_match_indices(tracked[-1], tracked[0])
-    first_periodic = np.zeros(tracked.shape[1], dtype=complex)
-    for from_idx, to_idx in matches_wrap:
-        first_periodic[from_idx] = tracked[0, to_idx]
-    tracked_ext = np.vstack([tracked, first_periodic[np.newaxis, :]])
-    return {
-        "theta1_arr": theta1_arr,
-        "tracked": tracked,
-        "M": M,
-        "N": N,
-        "theta1_ext": theta1_ext,
-        "tracked_ext": tracked_ext,
-        "poly_diff": PolyDiffContext(char_poly),
-    }
+    return total / (2 * pi), non_zero_area / (2 * pi)
 
 
 def _compute_zero_dtheta1_dmu2(
@@ -230,7 +199,7 @@ def _compute_winding_from_tracks(
     min_continuum_pts: int = 3,
     refine_crossings: bool = True,
 ):
-    """Detect a2 crossings and compute a2 average winding from pre-computed tracks.
+    """Detect beta2 crossings and compute w2 average winding from pre-computed tracks.
 
     Uses pre-computed root tracks (from _compute_root_tracks) — does NOT redo
     Hungarian matching.  Safe to call many times at different mu2 for the same
@@ -241,7 +210,7 @@ def _compute_winding_from_tracks(
     where only the winding value (not exact zero positions) is needed.
 
     Returns:
-        winding: float, a2 average winding number
+        winding: float, w2 average winding number
         crossing_pairs: list of (theta1, theta2) crossing points
         has_continuum: bool, whether extended continuum regions exist
         dW_dmu2: float, analytical derivative d(winding)/d(mu2) (only when
@@ -258,10 +227,18 @@ def _compute_winding_from_tracks(
     n_roots = M + N
     n_pts = len(theta1_arr)
 
-    # Per-root continuum mask: True where |ln|beta2_j| - mu2| < continuum_tol
-    near_boundary = np.abs(np.log(np.abs(tracked_ext)) - mu2) < continuum_tol
+    # Use pre-computed ln|beta2| when available (saved by _compute_root_tracks),
+    # otherwise compute on the fly for backward compatibility.
+    log_abs_all = tracks.get("log_abs_tracked_ext")
+    if log_abs_all is None:
+        log_abs_all = np.log(np.abs(tracked_ext))
 
-    # Check for extended continuum regions
+    # Per-root continuum mask: True where |ln|beta2_j| - mu2| < continuum_tol
+    near_boundary = np.abs(log_abs_all - mu2) < continuum_tol
+
+    # Check for extended continuum regions.
+    # Only existence is checked here; full interval extraction is deferred to
+    # _extract_continuum_intervals in amoeba.py.
     has_continuum = False
     for j in range(n_roots):
         intervals = find_cyclic_true_intervals(near_boundary[:n_pts, j])
@@ -269,33 +246,38 @@ def _compute_winding_from_tracks(
             width = (end - start) % n_pts + 1
             if width >= min_continuum_pts:
                 has_continuum = True
-                break
-        if has_continuum:
-            break
+                return None, None, has_continuum, None
 
-    # Find all approximate crossings, filtering out continuum noise.
-    # Tag each crossing with its winding jump direction:
-    #   jump = +1: root crosses mu2 going UP   (log|beta2| increasing, winding decreases)
-    #   jump = -1: root crosses mu2 going DOWN (log|beta2| decreasing, winding increases)
-    # The jump is used to compute dW/dmu2 = (1/2pi) * sum(jump_i * dtheta1_i/dmu2).
+    # ---- vectorized crossover detection ----
+    # For each root track j, a crossing occurs between theta1_ext[i] and
+    # theta1_ext[i+1] when (log|beta2| - mu2) changes sign.  The double
+    # for-loop over n_roots × n_pts is replaced by array-wide operations:
+    #
+    #   d[i,j] = log|beta2_j(theta1_ext[i])| - mu2
+    #   sign_change[i,j] = True  ⇔  d[i,j] · d[i+1,j] < 0
+    #
+    # Crossings inside the continuum band (both endpoints near mu2) are
+    # numerical noise and are filtered out.
+    d = log_abs_all - mu2                                   # (n_pts+1, n_roots)
+    sign_change = (d[:-1, :] * d[1:, :]) < 0                # (n_pts, n_roots)
+    noise = near_boundary[:-1, :] & near_boundary[1:, :]    # both ends in band
+    valid = sign_change & ~noise                            # real crossings only
+
+    cross_i, cross_j = np.where(valid)  # indices of valid crossings
+
     crossing_approx = []  # (theta1_approx, beta2_approx, jump)
-    for j in range(n_roots):
-        log_abs = np.log(np.abs(tracked_ext[:, j]))
-        near_j = near_boundary[:, j]
-        for i in range(n_pts):
-            d0 = log_abs[i] - mu2
-            d1 = log_abs[i + 1] - mu2
-            if d0 * d1 < 0:
-                if near_j[i] and near_j[i + 1]:
-                    continue  # noise crossing inside continuum band
-                frac = (mu2 - log_abs[i]) / (log_abs[i + 1] - log_abs[i])
-                theta1_approx = theta1_ext[i] + frac * (theta1_ext[i + 1] - theta1_ext[i])
-                beta2_approx = tracked_ext[i, j] + frac * (tracked_ext[i + 1, j] - tracked_ext[i, j])
-                jump = 1 if d0 < 0 else -1
-                crossing_approx.append((theta1_approx, beta2_approx, jump))
+    for i, j in zip(cross_i, cross_j):
+        # Linear interpolation to the exact mu2 crossing point
+        frac = (mu2 - log_abs_all[i, j]) / (log_abs_all[i + 1, j] - log_abs_all[i, j])
+        theta1_approx = theta1_ext[i] + frac * (theta1_ext[i + 1] - theta1_ext[i])
+        beta2_approx = tracked_ext[i, j] + frac * (tracked_ext[i + 1, j] - tracked_ext[i, j])
+        # jump = +1 when root crosses mu2 going UP  (log|beta2| increasing)
+        # jump = -1 when root crosses mu2 going DOWN
+        jump = 1 if log_abs_all[i, j] < mu2 else -1
+        crossing_approx.append((theta1_approx, beta2_approx, jump))
 
     if not crossing_approx:
-        winding = _get_average_winding_from_zeros(
+        winding, _ = _get_average_winding_from_zeros(
             char_poly, E_ref, mu1, mu2, [], direction=2,
         )
         return winding, [], has_continuum, 0.0
@@ -330,8 +312,8 @@ def _compute_winding_from_tracks(
 
         dW_dmu2 /= (2 * pi)
 
-    # Compute a2 average winding from the zero points
-    winding = _get_average_winding_from_zeros(
+    # Compute w2 average winding from the zero points
+    winding, _ = _get_average_winding_from_zeros(
         char_poly, E_ref, mu1, mu2, refined_full, direction=2,
     )
 
@@ -347,7 +329,7 @@ def _compute_crossings_and_winding(
     continuum_tol: float = 1e-8,
     min_continuum_pts: int = 3,
 ):
-    """Detect a2 crossings and compute a2 average winding.
+    """Detect beta2 crossings and compute w2 average winding.
 
     Thin wrapper: computes root tracks then detects crossings.
     For repeated calls at different mu2 (same E, mu1), use
@@ -400,7 +382,7 @@ def get_a1_average_winding(
     """
     Compute the a1-direction average winding number at given (E, mu1, mu2).
 
-    Reuses the (theta1, theta2) zero points computed by the a2 crossing
+    Reuses the (theta1, theta2) zero points computed by the beta2 crossing
     detection.  These zeros' theta2 values partition theta2; u1 is constant
     on each segment.  No separate Hungarian matching is needed.
 
@@ -409,7 +391,7 @@ def get_a1_average_winding(
     _, zeros, _, _ = _compute_crossings_and_winding(
         char_poly, E_ref, mu1, mu2, N_points, continuum_tol, min_continuum_pts,
     )
-    return _get_average_winding_from_zeros(
+    winding, _ = _get_average_winding_from_zeros(
         char_poly, E_ref, mu1, mu2, zeros, direction=1,
     )
-
+    return winding

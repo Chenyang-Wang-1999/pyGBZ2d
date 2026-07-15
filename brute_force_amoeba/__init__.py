@@ -20,7 +20,7 @@ from .bisect import (
     bisect_amoeba_ronkin_min,
 )
 from .amoeba import (
-    check_amoeba,
+    collect_GBZ_subsets,
 )
 
 __all__ = [
@@ -28,7 +28,7 @@ __all__ = [
     "get_a2_average_winding",
     "get_a1_average_winding",
     "bisect_amoeba_ronkin_min",
-    "check_amoeba",
+    "collect_GBZ_subsets",
     "PointSubset",
     "LineSubset",
     "GBZResult",

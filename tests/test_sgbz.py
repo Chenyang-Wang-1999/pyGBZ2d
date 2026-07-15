@@ -252,7 +252,7 @@ class TestHermitianLimit:
 
         gbz10 = bfs.check_SGBZ(coeffs10, degs10, 1.0 + 0j, 0.0, N_points=201)
         gbz11 = bfs.check_SGBZ(coeffs11, degs11, 1.0 + 0j, 0.0, N_points=201)
-        gbz_amoeba = bfa.check_amoeba(coeffs10, degs10, 1.0 + 0j, 0.0)
+        gbz_amoeba = bfa.collect_GBZ_subsets(coeffs10, degs10, 1.0 + 0j, 0.0)
 
         assert gbz10.is_gbz
         assert gbz11.is_gbz

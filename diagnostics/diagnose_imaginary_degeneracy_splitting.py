@@ -310,7 +310,7 @@ def main() -> None:
     demo = load_demo_module()
     char_poly, coeffs, degs = build_char_poly(demo)
 
-    check_result = amo.check_amoeba(coeffs, degs, e_ref, 0.0, True)
+    check_result = amo.collect_GBZ_subsets(coeffs, degs, e_ref, 0.0, True)
     returned_mu1 = float(check_result["mu1"]) if check_result.get("success") else None
 
     resolution_rows = []
@@ -392,7 +392,7 @@ def main() -> None:
         f"Reference energy: `{e_ref}`",
         f"Curve definition: solve `a2(mu1, mu2)=0`, then evaluate `a1(mu1, mu2)`.",
         "",
-        "## check_amoeba result",
+        "## collect_GBZ_subsets result",
         "",
         format_check_result(check_result),
         "",
@@ -462,7 +462,7 @@ def main() -> None:
     elif plateau_intervals and check_result.get("is_amoeba"):
         lines.append(
             "No monotonicity violation was found, but a finite a1=0 plateau with zero crossings absent was found. "
-            "Because check_amoeba still returned is_amoeba=True, this supports the plateau-edge/search-classification bug hypothesis."
+            "Because collect_GBZ_subsets still returned is_amoeba=True, this supports the plateau-edge/search-classification bug hypothesis."
         )
     elif plateau_intervals:
         lines.append(

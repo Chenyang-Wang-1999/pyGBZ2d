@@ -83,7 +83,7 @@ MODEL_NAME = "next-nearest-coupling"
 def debug_amoeba(E_ref: complex):
     model = get_model(**DEFAULT_PARAMS)
     coeffs, degs = model.get_characteristic_polynomial_data()
-    print(bfa.check_amoeba(coeffs, degs, E_ref, 0.0, True))
+    print(bfa.collect_GBZ_subsets(coeffs, degs, E_ref, 0.0, True))
 
 if __name__ == "__main__":
     debug_amoeba(5.916 + 0.1344j)

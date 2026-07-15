@@ -15,7 +15,7 @@ from brute_force_SGBZ.root_solver import calculate_point_roots
 from brute_force_SGBZ.winding import PolyDiffContext
 from gbz_types import (
     get_minor_degrees, sort_by_root_abs,
-    chordal_cost_matrix, hungarian_match_indices,
+    hungarian_match_indices,
 )
 
 
@@ -86,12 +86,27 @@ def _compute_root_tracks(
     )
     theta1_ext = np.hstack([theta1_arr, [theta1_arr[0] + 2 * pi]])
 
-    # Periodic extension respecting physical root identity
+    # Ensure the periodic extension respects physical root identity, not
+    # just array index.  Hungarian matching tracks roots by chordal
+    # distance on the Riemann sphere; when |beta2| ordering crosses
+    # (a genuine PMGBZ-like degeneracy), tracked[-1, j] and tracked[0, j]
+    # may belong to *different* physical roots.  Naively stacking
+    # tracked[0] at the end would connect unrelated roots across the
+    # wrap-around boundary, producing spurious ln|beta2| crossings and
+    # corrupting both the coarse crossing detection and the fsolve
+    # refinement step.
     matches_wrap = hungarian_match_indices(tracked[-1], tracked[0])
     first_periodic = np.zeros(tracked.shape[1], dtype=complex)
     for from_idx, to_idx in matches_wrap:
         first_periodic[from_idx] = tracked[0, to_idx]
     tracked_ext = np.vstack([tracked, first_periodic[np.newaxis, :]])
+
+    # Pre-compute ln|beta2| on the extended theta1 grid.
+    # _compute_winding_from_tracks calls this for every mu2 candidate during
+    # bisection (~30× per (E, mu1) pair); caching avoids O(n_pts × n_roots)
+    # log+abs re-computation on every call.
+    log_abs_tracked_ext = np.log(np.abs(tracked_ext))
+
     return {
         "theta1_arr": theta1_arr,
         "tracked": tracked,
@@ -99,5 +114,6 @@ def _compute_root_tracks(
         "N": N,
         "theta1_ext": theta1_ext,
         "tracked_ext": tracked_ext,
+        "log_abs_tracked_ext": log_abs_tracked_ext,
         "poly_diff": PolyDiffContext(char_poly),
     }

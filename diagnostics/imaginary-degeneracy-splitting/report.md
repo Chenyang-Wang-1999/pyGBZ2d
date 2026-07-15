@@ -3,7 +3,7 @@
 Reference energy: `(1.648+0.0294j)`
 Curve definition: solve `a2(mu1, mu2)=0`, then evaluate `a1(mu1, mu2)`.
 
-## check_amoeba result
+## collect_GBZ_subsets result
 
 success=True, is_amoeba=False, classification=nearby_zero_plateau, plateau_check=found, mu1=0.11328125, mu2=0.0, is_continuum=False, zero_count=4, net_zero_count=0
 
