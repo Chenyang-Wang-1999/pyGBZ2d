@@ -13,8 +13,9 @@ import matplotlib.pyplot as plt
 import poly_tools as pt
 from pathlib import Path
 import sys
-sys.path.append(str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import brute_force_SGBZ as bfs
+print("GBZ path: ", bfs.__file__)
 import brute_force_amoeba as bfa
 
 DEFAULT_PARAMS = {
@@ -56,27 +57,24 @@ def sweep_general(E_re, E_im, which="amoeba", params=DEFAULT_PARAMS, N_process=1
 
     if which == "amoeba":
         fname_prefix = "data/ZWang_amoeba"
-        data_pack = [(coeffs, degs, E_list[j], j / len(E_list)) for j in range(len(E_list))]
+        data_pack = [(coeffs, degs, E_list[j], j / len(E_list), True) for j in range(len(E_list))]
         with mp.Pool(N_process) as pool:
             res = pool.starmap(bfa.check_amoeba, data_pack)
     elif which == "x-SGBZ":
         fname_prefix = "data/ZWang_x-SGBZ"
-        data_pack = [(coeffs, degs, E_list[j], j / len(E_list)) for j in range(len(E_list))]
+        data_pack = [(coeffs, degs, E_list[j], j / len(E_list), True) for j in range(len(E_list))]
         with mp.Pool(N_process) as pool:
             res = pool.starmap(bfs.check_SGBZ, data_pack)
     elif which == "y-SGBZ":
         fname_prefix = "data/ZWang_y-SGBZ"
         degs = degs[:, [0, 2, 1]]
-        data_pack = [(coeffs, degs, E_list[j], j / len(E_list)) for j in range(len(E_list))]
+        data_pack = [(coeffs, degs, E_list[j], j / len(E_list), True) for j in range(len(E_list))]
         with mp.Pool(N_process) as pool:
             res = pool.starmap(bfs.check_SGBZ, data_pack)
     else:
         raise ValueError(f"Unknown type: {which}")
 
-    fid = 0
-    while os.path.exists(f"{fname_prefix}_{fid}.pkl"):
-        fid += 1
-    fname = f"{fname_prefix}_{fid}.pkl"
+    fname = f"{fname_prefix}.pkl"
     with open(fname, "wb") as fp:
         pickle.dump({
             "E_re": E_re,
@@ -86,38 +84,23 @@ def sweep_general(E_re, E_im, which="amoeba", params=DEFAULT_PARAMS, N_process=1
         }, fp)
 
 
-def plot_amoeba(fid_start, fid_end):
+def plot_amoeba():
     # Load data
-    E_list_full = np.array([])
-    res_full = []
-    for fid in range(fid_start, fid_end):
-        with open(f"data/ZWang_amoeba_{fid}.pkl", "rb") as fp:
-            data = pickle.load(fp)
-        E_re = data["E_re"]
-        E_im = data["E_im"]
-        E_re_mesh, E_im_mesh = np.meshgrid(E_re, E_im)
-        E_mesh = E_re_mesh + 1j * E_im_mesh
-        E_list = E_mesh.flatten()
-        params = data["params"]
-        res = data["res"]
-        res_full.extend(res)
-        E_list_full = np.concatenate([E_list_full, E_list])
-
-    E_list = E_list_full
-    res = res_full
-
+    with open(f"data/ZWang_amoeba.pkl", "rb") as fp:
+        data = pickle.load(fp)
+    E_re = data["E_re"]
+    E_im = data["E_im"]
+    E_re_mesh, E_im_mesh = np.meshgrid(E_re, E_im)
+    E_mesh = E_re_mesh + 1j * E_im_mesh
+    E_list = E_mesh.flatten()
+    params = data["params"]
+    res = data["res"]
 
     model = get_model(**params)
     coeffs, degs = model.get_characteristic_polynomial_data()
-    E_target = -2.4 - 0.14j
-    selected_ind = np.argmin(np.abs(E_list - E_target))
-    print(E_list[selected_ind])
-    print(res[selected_ind])
-    print(bfa.check_amoeba(coeffs, degs, E_list[selected_ind], 0))
-
-    ind_failed = [i for i in range(len(res)) if not res[i]["success"]]
-    ind_amoeba = [i for i in range(len(res)) if res[i]["success"] and res[i]["is_amoeba"]]
-    ind_not_amoeba = [i for i in range(len(res)) if res[i]["success"] and not res[i]["is_amoeba"]]
+    ind_failed = [i for i in range(len(res)) if not res[i].success]
+    ind_amoeba = [i for i in range(len(res)) if res[i].is_gbz]
+    ind_not_amoeba = [i for i in range(len(res)) if not res[i].is_gbz and res[i].success]
 
     # Plot
     plt.figure()
@@ -128,34 +111,21 @@ def plot_amoeba(fid_start, fid_end):
     plt.show()
 
 
-def plot_SGBZ(fid_start, fid_end, which="x"):
+def plot_SGBZ(which="x"):
     # Load data
-    E_list_full = np.array([])
-    res_full = []
-    for fid in range(fid_start, fid_end):
-        with open(f"data/ZWang_{which}-SGBZ_{fid}.pkl", "rb") as fp:
-            data = pickle.load(fp)
-        E_re = data["E_re"]
-        E_im = data["E_im"]
-        E_re_mesh, E_im_mesh = np.meshgrid(E_re, E_im)
-        E_mesh = E_re_mesh + 1j * E_im_mesh
-        E_list = E_mesh.flatten()
-        params = data["params"]
-        res = data["res"]
-        res_full.extend(res)
-        E_list_full = np.concatenate([E_list_full, E_list])
-    
-    E_list = E_list_full
-    res = res_full
+    with open(f"data/ZWang_{which}-SGBZ.pkl", "rb") as fp:
+        data = pickle.load(fp)
+    E_re = data["E_re"]
+    E_im = data["E_im"]
+    E_re_mesh, E_im_mesh = np.meshgrid(E_re, E_im)
+    E_mesh = E_re_mesh + 1j * E_im_mesh
+    E_list = E_mesh.flatten()
+    params = data["params"]
+    res = data["res"]
 
-    # Fix bugs for old api
-    for curr_res in res:
-        if "is_SGBZ" not in curr_res:
-            curr_res["is_SGBZ"] = curr_res["is_PMGBZ"]
-
-    ind_failed = [i for i in range(len(res)) if not res[i]["success"]]
-    ind_amoeba = [i for i in range(len(res)) if res[i]["success"] and res[i]["is_SGBZ"]]
-    ind_not_amoeba = [i for i in range(len(res)) if res[i]["success"] and not res[i]["is_SGBZ"]]
+    ind_failed = [i for i in range(len(res)) if not res[i].is_gbz and not res[i].success]
+    ind_amoeba = [i for i in range(len(res)) if res[i].is_gbz]
+    ind_not_amoeba = [i for i in range(len(res)) if not res[i].is_gbz and res[i].success]
 
     # Plot
     plt.figure()
@@ -201,8 +171,9 @@ if __name__ == "__main__":
     # sweep_general(E_re, E_im, which="amoeba")
     # sweep_general(E_re, E_im, which="x-SGBZ")
     # sweep_general(E_re, E_im, which="y-SGBZ")
-    plot_amoeba(0, 1)
-    plot_SGBZ(0, 1, "x")
-    plot_SGBZ(0, 1, "y")
+    plot_amoeba()
+    plot_SGBZ("x")
+    plot_SGBZ("y")
+    plt.show()
 
     # check_roots()

@@ -12,8 +12,9 @@ from scipy import linalg as la
 
 from pathlib import Path
 import sys
-sys.path.append(str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import brute_force_amoeba as bfa
+print(bfa.__file__)
 
 
 def get_model(gamma, u1, u2, v1, v2, u3, v3, w):

@@ -4,20 +4,29 @@ date:          2025-11-18 14:28:52
 Copyright © YourCompanyName All rights reserved
 '''
 
+from gbz_types import (
+    PointSubset, LineSubset, GBZResult, ConnectedSubset,
+    get_minor_degrees,
+)
+
 from .root_solver import (
     ComplexEqConverter,
     complex_root,
     poly_to_np_coefficients,
     calculate_point_roots,
 )
-from .strip_winding_number import (
-    get_minor_degrees,
+from .pmgbz_detector import (
     get_roots_and_PMGBZ,
+)
+from .strip_winding_number import (
     get_loop_winding,
     get_strip_winding,
 )
 from .winding import PolyDiffContext, WindingFun, MatWindingFun, get_winding_number
-from .SGBZ import SGBZSolver, SGBZChecker, check_SGBZ, convert_results_to_triplet
+from .SGBZ import (
+    SGBZSolver, SGBZChecker, check_SGBZ,
+    convert_gbz_to_triplets, convert_gbz_list_to_triplets,
+)
 
 __all__ = [
     "ComplexEqConverter",
@@ -35,5 +44,10 @@ __all__ = [
     "SGBZSolver",
     "SGBZChecker",
     "check_SGBZ",
-    "convert_results_to_triplet",
+    "convert_gbz_to_triplets",
+    "convert_gbz_list_to_triplets",
+    "PointSubset",
+    "LineSubset",
+    "GBZResult",
+    "ConnectedSubset",
 ]

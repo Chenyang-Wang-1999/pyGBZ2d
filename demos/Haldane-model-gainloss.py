@@ -19,9 +19,10 @@ import os
 from scipy import interpolate
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import brute_force_SGBZ as bfs
 import brute_force_amoeba as bfa
+print("Using ", bfs.__file__)
 
 ALL_PARAMS = (
     1, #t1,
@@ -114,17 +115,14 @@ def sweep_amoeba():
     E_mesh = E_real_mesh + 1j * E_imag_mesh
     E_list = E_mesh.flatten()
 
-    pool = mp.Pool(10)
+    pool = mp.Pool(12)
     results = pool.starmap(bfa.check_amoeba, [(coeffs, degs, E, j / len(E_list), True) for j, E in enumerate(E_list)])
     pool.close()
     pool.join()
 
     fname_prefix = "data/Haldane-gain-loss-amoeba"
-    file_id = 0
-    while os.path.exists(fname_prefix + "-%d.pkl" % file_id):
-        file_id += 1
 
-    with open(fname_prefix + "-%d.pkl" % file_id, "wb") as fp:
+    with open(fname_prefix + ".pkl", "wb") as fp:
         pickle.dump({
             "E_real": E_real,
             "E_imag": E_imag,
@@ -139,7 +137,7 @@ def sweep_SGBZ_a1():
     model = Haldane_non_Hermitian_phase(*ALL_PARAMS)
     coeffs, degs = model.get_characteristic_polynomial_data()
 
-    N_points = 41
+    N_points = 101
     E_real = np.linspace(-3.1, 4.6, N_points)
     E_imag = np.linspace(-0.51, 0.51, N_points)
     E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
@@ -152,11 +150,8 @@ def sweep_SGBZ_a1():
     pool.join()
 
     fname_prefix = "data/Haldane-gain-loss-a1-SGBZ"
-    file_id = 0
-    while os.path.exists(fname_prefix + "-%d.pkl" % file_id):
-        file_id += 1
 
-    with open(fname_prefix + "-%d.pkl" % file_id, "wb") as fp:
+    with open(fname_prefix + ".pkl", "wb") as fp:
         pickle.dump({
             "E_real": E_real,
             "E_imag": E_imag,
@@ -191,11 +186,8 @@ def sweep_SGBZ_a2():
     pool.join()
 
     fname_prefix = "data/Haldane-gain-loss-a2-SGBZ"
-    file_id = 0
-    while os.path.exists(fname_prefix + "-%d.pkl" % file_id):
-        file_id += 1
 
-    with open(fname_prefix + "-%d.pkl" % file_id, "wb") as fp:
+    with open(fname_prefix + ".pkl", "wb") as fp:
         pickle.dump({
             "E_real": E_real,
             "E_imag": E_imag,
@@ -230,11 +222,8 @@ def sweep_SGBZ_x():
     pool.join()
 
     fname_prefix = "data/Haldane-gain-loss-x-SGBZ"
-    file_id = 0
-    while os.path.exists(fname_prefix + "-%d.pkl" % file_id):
-        file_id += 1
 
-    with open(fname_prefix + "-%d.pkl" % file_id, "wb") as fp:
+    with open(fname_prefix + ".pkl", "wb") as fp:
         pickle.dump({
             "E_real": E_real,
             "E_imag": E_imag,
@@ -256,7 +245,7 @@ def sweep_SGBZ_y():
     )
     coeffs, degs = model.get_characteristic_polynomial_data()
 
-    N_points = 201
+    N_points = 101
     E_real = np.linspace(-3.1, 4.6, N_points)
     E_imag = np.linspace(-0.51, 0.51, N_points)
     # E_imag = np.array([0])
@@ -270,12 +259,9 @@ def sweep_SGBZ_y():
     pool.close()
     pool.join()
 
-    fname_prefix = "data/new-Haldane-gain-loss-y-SGBZ"
-    file_id = 0
-    while os.path.exists(fname_prefix + "-%d.pkl" % file_id):
-        file_id += 1
+    fname_prefix = "data/Haldane-gain-loss-y-SGBZ"
 
-    with open(fname_prefix + "-%d.pkl" % file_id, "wb") as fp:
+    with open(fname_prefix + ".pkl", "wb") as fp:
         pickle.dump({
             "E_real": E_real,
             "E_imag": E_imag,
@@ -287,71 +273,51 @@ def sweep_SGBZ_y():
 
 
 def plot_amoebic_spectrum():
-    with open("data/Haldane-gain-loss-amoeba-0.pkl", "rb") as fp:
+    with open("data/Haldane-gain-loss-amoeba.pkl", "rb") as fp:
         data = pickle.load(fp)
-    E_real, E_imag, results, params = data["E_real"], data["E_imag"], data["results"], data["params"]
+    E_real, E_imag, res, params = data["E_real"], data["E_imag"], data["results"], data["params"]
     E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
     E_list = (E_real_mesh + 1j * E_imag_mesh).flatten()
     coeffs, degs = data["coeffs"], data["degs"]
 
-    success_mesh = np.array([res["success"] for res in results]).reshape(E_real_mesh.shape)
-    failed_mesh = np.array([not res["success"] for res in results]).reshape(E_real_mesh.shape)
-    success_mesh = np.array([res["success"] and res["is_amoeba"] for res in results]).reshape(E_real_mesh.shape)
-    print(E_real_mesh[failed_mesh] + 1j * E_imag_mesh[failed_mesh])
-    plt.plot(E_real_mesh[success_mesh], E_imag_mesh[success_mesh], '.', label="Amoebic")
-    plt.plot(E_real_mesh[~success_mesh & ~failed_mesh], E_imag_mesh[~success_mesh & ~failed_mesh], '.', label="Non-amoebic")
-    plt.plot(E_real_mesh[failed_mesh], E_imag_mesh[failed_mesh], '.', label="Failed")
+    ind_failed = [i for i in range(len(res)) if not res[i].is_gbz and not res[i].success]
+    ind_amoeba = [i for i in range(len(res)) if res[i].is_gbz]
+    ind_not_amoeba = [i for i in range(len(res)) if not res[i].is_gbz and res[i].success]
+
+    # Plot
+    plt.figure()
+    plt.plot(E_list[ind_amoeba].real, E_list[ind_amoeba].imag, '.', label="SGBZ")
+    plt.plot(E_list[ind_not_amoeba].real, E_list[ind_not_amoeba].imag, '.', label="Non-SGBZ")
+    plt.plot(E_list[ind_failed].real, E_list[ind_failed].imag, '.', label="Failed")
     plt.legend()
     plt.show()
 
-    # if which == "a1":
-    #     model = Haldane_non_Hermitian_phase(*ALL_PARAMS)
-    #     coeffs, degs = model.get_characteristic_polynomial_data()
-
-    # else:
-    #     coeffs, degs = data["coeffs"], data["degs"]
-
-    # E_k_list = bfs.convert_results_to_triplet(results, E_list, coeffs, degs)
-    # E_k_list = np.array(E_k_list)
-    # plt.plot(E_k_list[:,0].real, E_k_list[:,1].imag, ".")
-    # plt.plot(E_k_list[:,0].real, E_k_list[:,2].imag, ".")
-    # plt.show()
 
 
 def plot_SGBZ(which="a1"):
-    with open("data/new-Haldane-gain-loss-%s-SGBZ-0.pkl" % which, "rb") as fp:
+    with open("data/Haldane-gain-loss-%s-SGBZ.pkl" % which, "rb") as fp:
         data = pickle.load(fp)
-    E_real, E_imag, results, params = data["E_real"], data["E_imag"], data["results"], data["params"]
+    E_real, E_imag, res, params = data["E_real"], data["E_imag"], data["results"], data["params"]
     E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
     E_list = (E_real_mesh + 1j * E_imag_mesh).flatten()
     coeffs, degs = data["coeffs"], data["degs"]
 
-    # success_mesh = np.array([res["success"] for res in results]).reshape(E_real_mesh.shape)
-    # failed_mesh = np.array([not res["success"] for res in results]).reshape(E_real_mesh.shape)
-    # success_mesh = np.array([res["success"] and res["is_PMGBZ"] for res in results]).reshape(E_real_mesh.shape)
-    # print(E_real_mesh[failed_mesh] + 1j * E_imag_mesh[failed_mesh])
-    # plt.plot(E_real_mesh[success_mesh], E_imag_mesh[success_mesh], '.', label="SGBZ")
-    # plt.plot(E_real_mesh[~success_mesh & ~failed_mesh], E_imag_mesh[~success_mesh & ~failed_mesh], '.', label="Non-SGBZ")
-    # plt.plot(E_real_mesh[failed_mesh], E_imag_mesh[failed_mesh], '.', label="Failed")
-    # plt.legend()
-    # plt.show()
+    ind_failed = [i for i in range(len(res)) if not res[i].is_gbz and not res[i].success]
+    ind_amoeba = [i for i in range(len(res)) if res[i].is_gbz]
+    ind_not_amoeba = [i for i in range(len(res)) if not res[i].is_gbz and res[i].success]
 
-    # if which == "a1":
-    #     model = Haldane_non_Hermitian_phase(*ALL_PARAMS)
-    #     coeffs, degs = model.get_characteristic_polynomial_data()
-
-    # else:
-    #     coeffs, degs = data["coeffs"], data["degs"]
-
-    E_k_list = bfs.convert_results_to_triplet(results, E_list, coeffs, degs)
-    E_k_list = np.array(E_k_list)
-    plt.plot(E_k_list[:,0].real, E_k_list[:,1].imag, ".")
-    plt.plot(E_k_list[:,0].real, E_k_list[:,2].imag, ".")
+    # Plot
+    plt.figure()
+    plt.plot(E_list[ind_amoeba].real, E_list[ind_amoeba].imag, '.', label="SGBZ")
+    plt.plot(E_list[ind_not_amoeba].real, E_list[ind_not_amoeba].imag, '.', label="Non-SGBZ")
+    plt.plot(E_list[ind_failed].real, E_list[ind_failed].imag, '.', label="Failed")
+    plt.legend()
     plt.show()
 
 
+
 def plot_SGBZ_mu(which="a1"):
-    with open("data/Haldane-gain-loss-%s-SGBZ-0.pkl" % which, "rb") as fp:
+    with open("data/Haldane-gain-loss-%s-SGBZ.pkl" % which, "rb") as fp:
         data = pickle.load(fp)
     E_real, E_imag, results, params = data["E_real"], data["E_imag"], data["results"], data["params"]
     all_mu1 = []
@@ -360,7 +326,7 @@ def plot_SGBZ_mu(which="a1"):
     E_list = (E_real_mesh + 1j * E_imag_mesh).flatten()
     E_SGBZ = []
     for ind, res in enumerate(results):
-        if res["success"]:
+        if not res.is_empty:
             if res["is_PMGBZ"]:
                 all_mu1.append(res["mu1"])
                 E_SGBZ.append(E_list[ind])
@@ -370,5 +336,19 @@ def plot_SGBZ_mu(which="a1"):
 
 
 if __name__ == "__main__":
-    sweep_amoeba()
+    # sweep_amoeba()
+    # sweep_SGBZ_a1()
+    # sweep_SGBZ_a2()
+    # sweep_SGBZ_x()
+    # sweep_SGBZ_y()
+    plt.figure()
     plot_amoebic_spectrum()
+    plt.figure()
+    plot_SGBZ("a1")
+    # plt.figure()
+    # plot_SGBZ("a2")
+    # plt.figure()
+    # plot_SGBZ("x")
+    # plt.figure()
+    # plot_SGBZ("y")
+    plt.show()
