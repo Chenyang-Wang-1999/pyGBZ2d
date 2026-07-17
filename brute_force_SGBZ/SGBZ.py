@@ -215,29 +215,6 @@ class SGBZSolver:
         }
 
 
-class SGBZChecker:
-    char_poly: pt.CLaurent
-    poly_diff: PolyDiffContext
-
-    def __init__(self, char_poly: pt.CLaurent):
-        self.char_poly = char_poly
-        self.poly_diff = PolyDiffContext(char_poly)
-
-    def check_for_E_and_mu1(self, E: complex, mu1: float, N_points: int = 101, zero_tol: float = 1e-10):
-        winding, gbz = get_strip_winding(self.poly_diff, E, mu1, N_points)
-
-        if isinstance(winding, tuple):
-            if winding[0] < 0 and winding[1] > 0:
-                return True
-            else:
-                return False
-        else:
-            if abs(winding) < zero_tol and not gbz.is_empty:
-                return True
-            else:
-                return False
-
-
 # ---- main entry point ----
 
 def check_SGBZ(

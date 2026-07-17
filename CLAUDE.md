@@ -17,9 +17,15 @@ brute-force-non-hermitian/
 │   └── amoeba.py               # All amoeba logic (~940 lines)
 ├── doc/                        # Documentation
 │   ├── SGBZ.md                 # SGBZ theory, architecture, API
+│   ├── sn-main.tex             # Simplified paper for SGBZ, main text
+|   ├── sn-supp.tex             # Simplified paper for SGBZ, supplementary information. Amoeba GBZ is discussed in section{Comparison with reported frameworks}
 │   └── amoeba.md               # Amoeba theory, algorithm, API
 ├── demos/                      # Runnable demo scripts
 ├── pyproject.toml
 └── README.md
 ```
+
+## Development Principles
+
+- **反常输出是改进算法的机会，不是需要绕过的 bug。** 遇到 unexpected behavior（如 winding 非单调、plateau check 误触发）时，优先追查根因并修复底层算法，而不是加 workaround（如调阈值、加预检查、限制探针范围等）。3cdb22d 版本没有 plateau check 时反而结果正确，说明问题出在后来引入的逻辑。对比不同 commit 是定位问题的有效手段。
 

@@ -133,6 +133,44 @@ def sweep_amoeba():
         }, fp)
 
 
+def sweep_amoeba_multiband():
+    model = Haldane_non_Hermitian_phase(*ALL_PARAMS)
+    model = model.get_supercell(
+        [(0, 0), (1, 0)],
+        np.array([
+            [1, 1],
+            [1, -1]
+        ], dtype=int)
+    )
+ 
+    coeffs, degs = model.get_characteristic_polynomial_data()
+
+    N_points = 101
+    E_real = np.linspace(-3.1, 4.6, N_points)
+    E_imag = np.linspace(-0.51, 0.51, N_points)
+    E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
+    E_mesh = E_real_mesh + 1j * E_imag_mesh
+    E_list = E_mesh.flatten()
+
+    pool = mp.Pool(12)
+    results = pool.starmap(bfa.collect_GBZ_subsets, [(coeffs, degs, E, j / len(E_list), True) for j, E in enumerate(E_list)])
+    pool.close()
+    pool.join()
+
+    fname_prefix = "data/Haldane-gain-loss-amoeba-xy"
+
+    with open(fname_prefix + ".pkl", "wb") as fp:
+        pickle.dump({
+            "E_real": E_real,
+            "E_imag": E_imag,
+            "results": results,
+            "params": ALL_PARAMS,
+            "coeffs": coeffs,
+            "degs": degs
+        }, fp)
+
+
+
 def sweep_SGBZ_a1():
     model = Haldane_non_Hermitian_phase(*ALL_PARAMS)
     coeffs, degs = model.get_characteristic_polynomial_data()
@@ -272,8 +310,8 @@ def sweep_SGBZ_y():
         }, fp)
 
 
-def plot_amoebic_spectrum():
-    with open("data/Haldane-gain-loss-amoeba.pkl", "rb") as fp:
+def plot_amoebic_spectrum(suffix=""):
+    with open("data/Haldane-gain-loss-amoeba%s.pkl" % (suffix), "rb") as fp:
         data = pickle.load(fp)
     E_real, E_imag, res, params = data["E_real"], data["E_imag"], data["results"], data["params"]
     E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
@@ -290,7 +328,6 @@ def plot_amoebic_spectrum():
     plt.plot(E_list[ind_not_amoeba].real, E_list[ind_not_amoeba].imag, '.', label="Non-SGBZ")
     plt.plot(E_list[ind_failed].real, E_list[ind_failed].imag, '.', label="Failed")
     plt.legend()
-    plt.show()
 
 
 
@@ -315,6 +352,24 @@ def plot_SGBZ(which="a1"):
     plt.show()
 
 
+def plot_amoeba_mu(suffix=""):
+    with open("data/Haldane-gain-loss-amoeba%s.pkl" % (suffix), "rb") as fp:
+        data = pickle.load(fp)
+    E_real, E_imag, res, params = data["E_real"], data["E_imag"], data["results"], data["params"]
+    E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
+    E_list = (E_real_mesh + 1j * E_imag_mesh).flatten()
+    
+    mu1 = []
+    mu2 = []
+    for item in res:
+        if item.success and item.is_gbz:
+            for point in item.subsets:
+                mu1.append(np.log(abs(point.beta1)))
+                mu2.append(np.log(abs(point.beta2)))
+    print(len(mu1), len(mu2))
+    plt.figure()
+    plt.plot(mu1, mu2, '.')
+
 
 def plot_SGBZ_mu(which="a1"):
     with open("data/Haldane-gain-loss-%s-SGBZ.pkl" % which, "rb") as fp:
@@ -337,11 +392,14 @@ def plot_SGBZ_mu(which="a1"):
 
 if __name__ == "__main__":
     # sweep_amoeba()
+    # sweep_amoeba_multiband()
     # sweep_SGBZ_a1()
     # sweep_SGBZ_a2()
     # sweep_SGBZ_x()
     # sweep_SGBZ_y()
-    plot_amoebic_spectrum()
+    # plot_amoebic_spectrum()
+    plot_amoeba_mu()
+    # plot_amoebic_spectrum("-xy")
     # plot_SGBZ("a1")
     # plot_SGBZ("a2")
     # plot_SGBZ("x")

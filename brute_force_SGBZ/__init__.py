@@ -24,7 +24,7 @@ from .strip_winding_number import (
 )
 from .winding import PolyDiffContext, WindingFun, MatWindingFun, get_winding_number
 from .SGBZ import (
-    SGBZSolver, SGBZChecker, check_SGBZ,
+    SGBZSolver, check_SGBZ,
     convert_gbz_to_triplets, convert_gbz_list_to_triplets,
 )
 
@@ -42,7 +42,7 @@ __all__ = [
     "MatWindingFun",
     "get_winding_number",
     "SGBZSolver",
-    "SGBZChecker",
+
     "check_SGBZ",
     "convert_gbz_to_triplets",
     "convert_gbz_list_to_triplets",

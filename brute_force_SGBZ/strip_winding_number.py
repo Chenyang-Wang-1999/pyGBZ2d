@@ -1,7 +1,7 @@
 '''
 author:        wangchenyang <cy-wang21@mails.tsinghua.edu.cn>
-date:          2025-11-18 00:00:00
-Copyright © YourCompanyName All rights reserved
+date:          2025-11-18
+Copyright © Department of Physics, Tsinghua University. All rights reserved
 '''
 
 ''' Calculations of the strip winding number '''
@@ -111,34 +111,25 @@ def _strip_winding_from_result(
     mu2_arr = (mu2_max_arr + mu2_min_arr) / 2
     mu2_fun = interpolate.CubicSpline(theta1_arr, mu2_arr, bc_type="periodic")
 
-    theta2_min_arr = np.angle(sols_arr[:, M - 1])
-    theta2_max_arr = np.angle(sols_arr[:, M])
+    def calc_loop_root_distance(theta2_target: float) -> float:
+        """Min Euclidean distance from beta2_loop to ALL roots across theta1.
 
-    def calculate_min_mu2_diff(theta2_target: float):
-        theta2_target = (theta2_target + pi) % (2 * pi) - pi
-
-        theta2_max_ind = np.arange(len(theta2_max_arr) - 1)[
-            (theta2_max_arr[1:] - theta2_target) * (theta2_max_arr[:-1] - theta2_target) <= 0
-        ]
-        theta2_min_ind = np.arange(len(theta2_min_arr) - 1)[
-            (theta2_min_arr[1:] - theta2_target) * (theta2_min_arr[:-1] - theta2_target) <= 0
-        ]
-
-        mu2_list = []
-        for ind in np.concatenate([theta2_max_ind, theta2_min_ind]):
-            curr_theta1 = theta1_arr[ind]
-            curr_mu2 = mu2_max_arr[ind]
-            mu2_list.append(abs(curr_mu2 - mu2_fun(curr_theta1)))
-        if len(mu2_list) == 0:
-            return np.inf
-        else:
-            return min(mu2_list)
+        Larger = safer theta2.  Replaces the old calculate_min_mu2_diff
+        which only checked boundary-root theta2 crossings and returned inf
+        for avoided-crossing regions where the loop passes between closely-
+        spaced roots without crossing them.
+        """
+        n_pts = len(theta1_arr) - 1
+        beta2_loop = np.exp(mu2_arr[:n_pts] + 1j * theta2_target)
+        dist = np.abs(beta2_loop[:, None] - sols_arr[:n_pts, :])
+        return float(np.min(dist))
 
     # Select best theta2
     if not PMGBZ_raw:
         N_samples = 4
-        theta2_samples = np.linspace(-pi + 2 * pi / (N_samples), pi, N_samples)
-        mu2_diff_samples = [calculate_min_mu2_diff(theta2) for theta2 in theta2_samples]
+        offset = np.random.uniform(-pi, pi)
+        theta2_samples = (np.linspace(0, 2 * pi, N_samples, endpoint=False) + offset) % (2 * pi)
+        mu2_diff_samples = [calc_loop_root_distance(theta2) for theta2 in theta2_samples]
         theta2_median = theta2_samples[np.argmax(mu2_diff_samples)]
         W_strip = np.round(get_loop_winding(poly_diff, E_ref, mu1, mu2_fun, theta2_median))
     else:
@@ -167,7 +158,7 @@ def _strip_winding_from_result(
             theta2_samples = np.hstack(
                 (theta2_samples, [(theta2_arr[0] + 2 * pi + theta2_arr[-1]) / 2])
             )
-        mu2_diff_samples = [calculate_min_mu2_diff(theta2) for theta2 in theta2_samples]
+        mu2_diff_samples = [calc_loop_root_distance(theta2) for theta2 in theta2_samples]
         theta2_median = theta2_samples[np.argmax(mu2_diff_samples)]
 
         w0 = np.round(get_loop_winding(poly_diff, E_ref, mu1, mu2_fun, theta2_median))

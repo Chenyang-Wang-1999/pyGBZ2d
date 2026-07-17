@@ -131,6 +131,24 @@ $$\sigma_{\text{Amoeba}} \supset \bigcup_j \sigma_{\text{SGBZ}, j}$$
 
 The amoeba spectrum is a superset of the union of SGBZ spectra. For uniform bands the two are equal.
 
+## Known Issues
+
+### Hungarian matching swap on coarse θ₁ grids in `brute_force_amoeba`
+
+**Symptom**: `get_hungarian_sorted_roots` may produce spurious ln|β₂| sign changes (false crossings of |β₂|=1) on the default coarse grid (N_points=301). This causes `collect_GBZ_subsets` to misclassify a small number of energy points as inside the GBZ spectrum when they are not. The issue is most visible when comparing results from different polynomial representations of the same physical system (e.g., original unit cell vs. supercell).
+
+**Root cause**: When two β₂ roots approach within ~1% of each other in the complex plane between adjacent θ₁ slices, the pure chordal-distance Hungarian matching can swap their identities. The "wrong" matching (crossing in |β₂|) has lower total chordal cost than the "correct" matching (preserving |β₂| ordering), so `linear_sum_assignment` selects it. Finer grids (N≥1001) resolve this by reducing the angular step Δθ₁, making root positions diverge less between slices.
+
+**Affected models**: Supercell / multiband polynomials are more susceptible because the larger total degree compresses root trajectories into the same angular range, increasing the likelihood of near-degeneracies.
+
+**Planned fixes**:
+
+1. Augment the Hungarian cost matrix with a first-order Taylor prediction term using dβ₂/dθ₁ from implicit differentiation of `f(E, β₁, β₂)=0`. The prediction penalizes matches that violate analytic continuity, steering the matcher toward the physically correct assignment. See `brute_force_amoeba/tracks.py:get_hungarian_sorted_roots`.
+
+2. Pseudo arc-length continuation: Instead of matching roots independently at each θ₁ slice, follow each root track along θ₁ by solving an augmented system `[f(E, β₁, β₂), |Δβ₂|² + |Δθ₁|² - ds²]` that parametrizes the root curve by arc length. This naturally handles near-degeneracies because the continuation step is controlled by the local curvature of the root trajectory rather than the θ₁ grid spacing.
+
+**Workaround**: Increase `N_points` from 301 to 1001 in `collect_GBZ_subsets` options, or manually compare results from multiple polynomial representations.
+
 ## References
 
 The SGBZ formulation is based on the strip winding number approach for 2D non-Hermitian systems. The amoeba formulation uses the Ronkin function of Laurent polynomials. See [doc/](doc/) for detailed theoretical background.
