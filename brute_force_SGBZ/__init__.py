@@ -1,7 +1,7 @@
 '''
 author:        wangchenyang <cy-wang21@mails.tsinghua.edu.cn>
-date:          2025-11-18 14:28:52
-Copyright © YourCompanyName All rights reserved
+date:          2025-11-18
+Copyright © Department of Physics, Tsinghua University. All rights reserved
 '''
 
 from gbz_types import (
@@ -10,8 +10,6 @@ from gbz_types import (
 )
 
 from .root_solver import (
-    ComplexEqConverter,
-    complex_root,
     poly_to_np_coefficients,
     calculate_point_roots,
 )
@@ -24,13 +22,10 @@ from .strip_winding_number import (
 )
 from .winding import PolyDiffContext, WindingFun, MatWindingFun, get_winding_number
 from .SGBZ import (
-    SGBZSolver, check_SGBZ,
-    convert_gbz_to_triplets, convert_gbz_list_to_triplets,
+    solve_SGBZ_for_E, collect_GBZ_subsets,
 )
 
 __all__ = [
-    "ComplexEqConverter",
-    "complex_root",
     "poly_to_np_coefficients",
     "calculate_point_roots",
     "get_minor_degrees",
@@ -41,11 +36,9 @@ __all__ = [
     "WindingFun",
     "MatWindingFun",
     "get_winding_number",
-    "SGBZSolver",
+    "solve_SGBZ_for_E",
 
-    "check_SGBZ",
-    "convert_gbz_to_triplets",
-    "convert_gbz_list_to_triplets",
+    "collect_GBZ_subsets",
     "PointSubset",
     "LineSubset",
     "GBZResult",

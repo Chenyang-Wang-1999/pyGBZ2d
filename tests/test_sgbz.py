@@ -59,27 +59,27 @@ class TestSGBZ10:
 
     def test_returns_gbzresult(self, poly_A):
         coeffs, degs = poly_A
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
         assert isinstance(gbz, GBZResult)
         assert gbz.E_ref == 1.0 + 0j
 
     def test_inside_spectrum(self, poly_A):
         coeffs, degs = poly_A
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
         assert gbz.is_gbz
         assert not gbz.is_empty
         assert gbz.index != (0, 0)
 
     def test_outside_spectrum(self, poly_A):
         coeffs, degs = poly_A
-        gbz = bfs.check_SGBZ(coeffs, degs, 5.0 + 0j, 0.0, N_points=101)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 5.0 + 0j, 0.0, N_points=101)
         assert not gbz.is_gbz
         assert gbz.is_empty
         assert gbz.index == (0, 0)
 
     def test_mu1_matches_analytic(self, poly_A, params_A):
         coeffs, degs = poly_A
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
         assert gbz.is_gbz
         for s in gbz.subsets:
             if isinstance(s, PointSubset):
@@ -89,7 +89,7 @@ class TestSGBZ10:
 
     def test_beta_magnitudes_analytic(self, poly_A, params_A):
         coeffs, degs = poly_A
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
         gamma_1, gamma_2 = params_A["gamma_1"], params_A["gamma_2"]
         for s in gbz.subsets:
             if isinstance(s, PointSubset):
@@ -101,13 +101,13 @@ class TestSGBZ10:
 
     def test_subsets_valid_types(self, poly_A):
         coeffs, degs = poly_A
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
         for s in gbz.subsets:
             assert isinstance(s, (PointSubset, LineSubset))
 
     def test_index_consistent(self, poly_A):
         coeffs, degs = poly_A
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
         n_0d = sum(1 for s in gbz.subsets if isinstance(s, PointSubset))
         n_1d = sum(1 for s in gbz.subsets if isinstance(s, LineSubset))
         assert gbz.index == (n_0d, n_1d)
@@ -120,23 +120,23 @@ class TestSGBZ11:
 
     def test_returns_gbzresult(self, poly_A_11):
         coeffs, degs = poly_A_11
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
         assert isinstance(gbz, GBZResult)
 
     def test_inside_spectrum(self, poly_A_11):
         coeffs, degs = poly_A_11
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
         assert gbz.is_gbz
         assert not gbz.is_empty
 
     def test_outside_spectrum(self, poly_A_11):
         coeffs, degs = poly_A_11
-        gbz = bfs.check_SGBZ(coeffs, degs, 5.0 + 0j, 0.0, N_points=101)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 5.0 + 0j, 0.0, N_points=101)
         assert not gbz.is_gbz
 
     def test_mu1_matches_analytic(self, poly_A_11, params_A):
         coeffs, degs = poly_A_11
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
         assert gbz.is_gbz
         expected_mu = params_A["gamma_1"] + params_A["gamma_2"]  # = 0.5
         for s in gbz.subsets:
@@ -147,46 +147,11 @@ class TestSGBZ11:
 
     def test_beta1_magnitude_analytic(self, poly_A_11, params_A):
         coeffs, degs = poly_A_11
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
         expected_r = exp(params_A["gamma_1"] + params_A["gamma_2"])
         for s in gbz.subsets:
             if isinstance(s, PointSubset):
                 assert abs(s.beta1) == pytest.approx(expected_r, rel=1e-4)
-
-
-# ---- triplet conversion tests ----
-
-class TestTripletConversion:
-    def test_convert_returns_list(self, poly_A):
-        coeffs, degs = poly_A
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
-        triplets = bfs.convert_gbz_to_triplets(gbz)
-        assert isinstance(triplets, list)
-        assert len(triplets) > 0
-
-    def test_triplet_structure(self, poly_A):
-        coeffs, degs = poly_A
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
-        triplets = bfs.convert_gbz_to_triplets(gbz)
-        for t in triplets:
-            assert len(t) == 3
-            E, k1, k2 = t
-            assert isinstance(E, complex)
-            assert isinstance(k1, complex)
-            assert isinstance(k2, complex)
-            # Im(k1) = -mu1 (-gamma_1 for [10]-SGBZ)
-            assert k1.imag == pytest.approx(-0.2, rel=1e-4)
-
-    def test_convert_empty(self):
-        gbz = GBZResult(E_ref=0j, subsets=[], index=(0, 0))
-        triplets = bfs.convert_gbz_to_triplets(gbz)
-        assert triplets == []
-
-    def test_convert_list(self, poly_A):
-        coeffs, degs = poly_A
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=101)
-        triplets = bfs.convert_gbz_list_to_triplets([gbz])
-        assert len(triplets) > 0
 
 
 # ---- Hermitian limit tests (γ = 0 → GBZ = BZ) ----
@@ -214,7 +179,7 @@ class TestHermitianLimit:
 
     def test_sgbz10_mu1_zero(self, poly_hermitian):
         coeffs, degs = poly_hermitian
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
         assert gbz.is_gbz
         for s in gbz.subsets:
             mu = s.mu1 if isinstance(s, PointSubset) else s.mu1
@@ -222,7 +187,7 @@ class TestHermitianLimit:
 
     def test_sgbz10_beta_on_unit_circle(self, poly_hermitian):
         coeffs, degs = poly_hermitian
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
         for s in gbz.subsets:
             if isinstance(s, PointSubset):
                 assert abs(s.beta1) == pytest.approx(1.0, rel=1e-4)
@@ -230,7 +195,7 @@ class TestHermitianLimit:
 
     def test_sgbz11_mu1_zero(self, poly_hermitian_11):
         coeffs, degs = poly_hermitian_11
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
         assert gbz.is_gbz
         for s in gbz.subsets:
             mu = s.mu1 if isinstance(s, PointSubset) else s.mu1
@@ -238,7 +203,7 @@ class TestHermitianLimit:
 
     def test_sgbz11_beta_on_unit_circle(self, poly_hermitian_11):
         coeffs, degs = poly_hermitian_11
-        gbz = bfs.check_SGBZ(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
+        gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0, N_points=201)
         for s in gbz.subsets:
             if isinstance(s, PointSubset):
                 assert abs(s.beta1) == pytest.approx(1.0, rel=1e-4)
@@ -250,8 +215,8 @@ class TestHermitianLimit:
 
         import brute_force_amoeba as bfa
 
-        gbz10 = bfs.check_SGBZ(coeffs10, degs10, 1.0 + 0j, 0.0, N_points=201)
-        gbz11 = bfs.check_SGBZ(coeffs11, degs11, 1.0 + 0j, 0.0, N_points=201)
+        gbz10 = bfs.collect_GBZ_subsets(coeffs10, degs10, 1.0 + 0j, 0.0, N_points=201)
+        gbz11 = bfs.collect_GBZ_subsets(coeffs11, degs11, 1.0 + 0j, 0.0, N_points=201)
         gbz_amoeba = bfa.collect_GBZ_subsets(coeffs10, degs10, 1.0 + 0j, 0.0)
 
         assert gbz10.is_gbz
@@ -270,13 +235,12 @@ class TestHermitianLimit:
 def test_all_exports():
     """Verify all expected symbols are exported."""
     expected = [
-        "ComplexEqConverter", "complex_root", "poly_to_np_coefficients",
+        "poly_to_np_coefficients",
         "calculate_point_roots",
         "get_minor_degrees", "get_roots_and_PMGBZ", "get_loop_winding",
         "get_strip_winding",
         "PolyDiffContext", "WindingFun", "MatWindingFun", "get_winding_number",
-        "SGBZSolver", "check_SGBZ",
-        "convert_gbz_to_triplets", "convert_gbz_list_to_triplets",
+        "solve_SGBZ_for_E", "collect_GBZ_subsets",
         "PointSubset", "LineSubset", "GBZResult", "ConnectedSubset",
     ]
     for name in expected:
@@ -456,6 +420,8 @@ class TestLoopWindingTheta2:
             w, _ = bfs.get_strip_winding(
                 self._build_poly_and_mu2(mu1)[0], self._E_ref, mu1, N_points=301,
             )
+            if w is None:
+                continue  # continuum detected — skip (unexpected in this range)
             if isinstance(w, tuple):
                 w = float(np.nanmean(w))
             w_vals.append(float(w))

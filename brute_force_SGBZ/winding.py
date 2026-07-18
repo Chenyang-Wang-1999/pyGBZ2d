@@ -39,6 +39,12 @@ class PolyDiffContext:
 
 
 class WindingFun:
+    """Winding integrand of the characteristic polynomial along a loop.
+
+    Calling the instance at parameter t returns Im[f'(t)/f(t)], i.e.
+    d/dt Im log f(param(t)); its integral over loop_range divided by 2*pi
+    is the winding number of f around zero (see get_winding_number).
+    """
     poly_diff: PolyDiffContext
     char_poly: pt.CLaurent
     loop_fun: callable  # Input: t. Output: param, dparam/dt
@@ -46,6 +52,13 @@ class WindingFun:
     loop_range: tuple[float, float]
 
     def __init__(self, char_poly: pt.CLaurent, loop_fun: callable, loop_range: tuple[float, float]):
+        """
+        Parameters:
+            char_poly: characteristic Laurent polynomial f(vars).
+            loop_fun: loop in variable space, t -> (param, dparam/dt) where
+                param collects the polynomial variables at t.
+            loop_range: (t_start, t_end) parameter range of the closed loop.
+        """
         self.poly_diff = PolyDiffContext(char_poly)
         # Keep compatibility with existing code that accesses these attributes.
         self.char_poly = self.poly_diff.char_poly
@@ -62,6 +75,13 @@ class WindingFun:
 
 
 class MatWindingFun(WindingFun):
+    """Winding integrand of det(E_ref - H(beta)) built from the Bloch matrix.
+
+    Matrix counterpart of WindingFun for models given as H(beta) rather
+    than an explicit characteristic polynomial, using
+    d/dt log det(E - H) = tr[(E - H)^{-1} (-dH/dt)].
+    Only the sparse-matrix path is implemented.
+    """
     mat_fun: callable  # foo(beta)
     dmat_fun: callable  # foo(beta, diff_orders)
     param_fun: callable # t -> beta(t), dbeta(t)
@@ -99,7 +119,15 @@ class MatWindingFun(WindingFun):
 
 def get_winding_number(winding_fun: WindingFun, N_seg=1) -> float:
     '''
-    Calculate winding number.
+    Integrate winding_fun over its loop range and divide by 2*pi.
+
+    The loop is split into N_seg equal segments, each handled by
+    scipy.integrate.quad; splitting helps convergence when the integrand
+    is sharply peaked (loop passing close to a root).
+
+    Returns:
+        Real-valued winding number (unrounded; integer only in exact
+        arithmetic — callers round as needed).
     '''
     int_tot = 0.0
     intervals = np.linspace(winding_fun.loop_range[0], winding_fun.loop_range[1], N_seg + 1)

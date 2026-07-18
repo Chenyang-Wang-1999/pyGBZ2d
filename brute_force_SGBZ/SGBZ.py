@@ -2,15 +2,20 @@
 author:        wangchenyang <cy-wang21@mails.tsinghua.edu.cn>
 date:          2025-11-23
 Copyright © Department of Physics, Tsinghua University. All rights reserved
+
+Top-level SGBZ solver.
+
+Locates the mu1 = log|beta1| at which the strip winding number vanishes
+(via bracket expansion + plain bisection with continuum interception),
+classifies the result with an optional zero-plateau probe, and packages the
+GBZ points of a reference energy as a GBZResult of connected subsets.
+Entry point: collect_GBZ_subsets.
 '''
 
 import numpy as np
 import poly_tools as pt
-from math import pi
-from cmath import exp, log
+from cmath import log
 from typing import Optional
-
-from scipy import optimize
 
 from .strip_winding_number import get_strip_winding
 from .winding import PolyDiffContext
@@ -18,25 +23,96 @@ from .pmgbz_detector import get_roots_and_PMGBZ
 
 from gbz_types import (
     PointSubset, LineSubset, GBZResult, ConnectedSubset,
-    get_minor_degrees, generate_probe_steps,
+    generate_probe_steps,
 )
 
 
 # ---- internal helpers ----
 
-def _scalar_winding(winding) -> float:
-    if isinstance(winding, tuple):
-        return float(np.nanmean(winding))
-    return float(winding)
+def _check_pmgbz_points_clustered(
+    gbz: GBZResult,
+    tol_normalized: float = 1e-2,
+) -> bool:
+    """Check whether every PMGBZ point theta1 has a neighbour within tol.
+
+    Port of amoeba's ``_check_zeros_are_clustered`` (amoeba.py:32-75):
+    at a genuine GBZ point the PMGBZ zeros are well-separated (they
+    partition the circle into meaningful segments).  At a zero-plateau
+    boundary all zeros cluster into nearly degenerate pairs — each zero
+    sits within ``tol_normalized`` of a neighbour.
+
+    Returns True when ALL points have a neighbour (suspicious →
+    run probe), False when any point is isolated (genuine GBZ →
+    skip expensive probe).
+    """
+    from math import pi as _pi
+    import cmath
+    thetas = []
+    for s in gbz.subsets:
+        if isinstance(s, PointSubset):
+            thetas.append(cmath.phase(s.beta1) % (2 * _pi))
+    if len(thetas) < 2:
+        return False
+    tol_rad = tol_normalized * 2 * _pi
+    for i, t in enumerate(thetas):
+        has_neighbor = False
+        for j, t2 in enumerate(thetas):
+            if i == j:
+                continue
+            d = abs(t - t2)
+            d = min(d, 2 * _pi - d)
+            if d < tol_rad:
+                has_neighbor = True
+                break
+        if not has_neighbor:
+            return False
+    return True
 
 
 def _is_zero_plateau_probe(point: dict, zero_tol: float) -> bool:
+    """Check whether a probe point lies on a zero plateau.
+
+    True iff the probe succeeded, is not a continuum point, found an empty
+    GBZ, and its winding vanishes within zero_tol.
+    """
     return (
         point["success"]
         and (not point["is_continuum"])
         and point["gbz_count"] == 0
         and abs(point["winding"]) <= zero_tol
     )
+
+
+def _resolve_continuum_winding(
+    poly_diff: PolyDiffContext,
+    E_ref: complex,
+    mu1: float,
+    N_points: int = 301,
+    continuum_perturb: float = 1e-2,
+) -> tuple[Optional[float], Optional[float]]:
+    """Compute the left / right winding limits at a continuum-degenerate mu1.
+
+    Mirrors amoeba's _resolve_continuum (bisect.py:215): tries
+    perturbation scales (1, 2, 4, 8) to escape the degenerate band.
+    Both sides are evaluated in sweep mode (refine_continuum=False).
+
+    Returns:
+        (w_left, w_right) — each is float or None (if all scales still
+        degenerate on that side).
+    """
+    for scale in (1.0, 2.0, 4.0, 8.0):
+        eps = continuum_perturb * scale
+        w_left, _ = get_strip_winding(
+            poly_diff, E_ref, mu1 - eps, N_points,
+            refine_continuum=False,
+        )
+        w_right, _ = get_strip_winding(
+            poly_diff, E_ref, mu1 + eps, N_points,
+            refine_continuum=False,
+        )
+        if (w_left is not None) and (w_right is not None):
+            return w_left, w_right
+    return None, None
 
 
 def _probe_zero_plateau_near_mu1(
@@ -77,11 +153,12 @@ def _probe_zero_plateau_near_mu1(
                 poly_diff, E_ref, mu1_probe, N_points,
                 continuum_perturb=continuum_perturb,
                 zero_tol=zero_tol,
+                refine_continuum=False,
             )
-            is_continuum = isinstance(winding, tuple)
+            is_continuum = (winding is None)
             point.update({
                 "success": True,
-                "winding": _scalar_winding(winding),
+                "winding": float(winding) if winding is not None else np.nan,
                 "raw_winding": winding,
                 "gbz_count": len(gbz.subsets),
                 "is_continuum": is_continuum,
@@ -123,101 +200,228 @@ def _probe_zero_plateau_near_mu1(
     }
 
 
-# ---- solver classes ----
+# ---- SGBZ solver (process-level, mirroring amoeba's bisect_amoeba_ronkin_min) ----
 
-class SGBZSolver:
-    char_poly: pt.CLaurent
-    poly_diff: PolyDiffContext
+def solve_SGBZ_for_E(
+    poly_diff: PolyDiffContext,
+    E_ref: complex,
+    mu1_guess: tuple[float, float] = (-1, 1),
+    zero_tol: float = 1e-10,
+    N_points: int = 101,
+    continuum_perturb: float = 1e-2,
+    refine: bool = True,
+    max_iter: int = 60,
+    xtol: float = 2e-12,
+) -> dict:
+    """Locate the strip-winding zero in mu1 and return solve diagnostics.
 
-    def __init__(self, char_poly: pt.CLaurent):
-        self.char_poly = char_poly
-        self.poly_diff = PolyDiffContext(char_poly)
+    Uses bracket expansion + plain bisection (midpoint) that explicitly
+    handles continuum-degenerate mu1 values: when the winding evaluates
+    to None (continuum), the left/right limits are computed via
+    _resolve_continuum_winding.  If they straddle zero the current mu1
+    is the SGBZ boundary and the loop returns immediately with
+    is_continuum=True.
 
-    def solve_for_E(
-        self,
-        E_ref: complex,
-        mu1_guess: tuple[float, float] = (-1, 1),
-        zero_tol: float = 1e-10,
-        N_points: int = 101
-    ):
-        result = self.solve_for_E_info(E_ref, mu1_guess, zero_tol, N_points)
-        return result["mu1"], result["gbz"]
+    Plain bisection is chosen over false-position methods because the
+    strip winding has flat plateaus (±1) with a narrow transition zone;
+    false position stalls on this shape while midpoint bisection
+    guarantees bracket halving every step (mirrors amoeba's
+    _find_mu2_for_w2_zero).
 
-    def solve_for_E_info(
-        self,
-        E_ref: complex,
-        mu1_guess: tuple[float, float] = (-1, 1),
-        zero_tol: float = 1e-10,
-        N_points: int = 101,
-    ) -> dict:
-        # 1. Determine mu1_left and mu1_right
-        mu1_left = mu1_guess[0]
-        mu1_right = None
+    Parameters:
+        poly_diff: polynomial evaluation context.
+        E_ref: reference energy.
+        mu1_guess: initial (left, right) bracket for mu1; each side is
+            expanded in unit steps until the winding changes sign.
+        zero_tol: tolerance for treating a winding value as zero.
+        N_points: theta1 mesh size passed to get_strip_winding.
+        continuum_perturb: mu1 offset used for continuum limits.
+        refine: if True (default), crisp the gbz for continuum results
+            via a full-mode get_roots_and_PMGBZ call before returning.
+        max_iter: maximum bisection iterations.
+        xtol: minimum bracket width for convergence.
 
+    Returns:
+        dict with keys "mu1", "gbz" (GBZResult), "winding" (float or
+        None for continuum), "is_continuum", plus debug fields
+        "_mu1_bracket", "_winding_bracket", "_w_limits" (continuum
+        only), "_exit_reason".
+    """
+
+    # --- winding_at: evaluate strip winding in sweep mode ---
+    def winding_at(mu1_val: float):
+        w, gbz = get_strip_winding(
+            poly_diff, E_ref, mu1_val, N_points,
+            continuum_perturb=continuum_perturb,
+            refine_continuum=False,
+        )
+        return w, gbz
+
+    # --- handle_continuum: shared logic for bracket/midpoint continuum ---
+    def handle_continuum(mu1_val: float, gbz_val: GBZResult):
+        """Try to resolve a continuum-degenerate mu1.
+
+        Returns (is_boundary, proxy_w, result_dict).
+        is_boundary=True means the winding limits straddle zero →
+        this mu1 is the SGBZ point.
+        """
+        w_l, w_r = _resolve_continuum_winding(
+            poly_diff, E_ref, mu1_val, N_points,
+            continuum_perturb=continuum_perturb,
+        )
+        if w_l is None or w_r is None:
+            raise ValueError(
+                f"Cannot resolve continuum at mu1={mu1_val:.8g}: "
+                f"all perturbation scales still degenerate."
+            )
+        if w_l * w_r <= 0:
+            return True, None, {
+                "mu1": mu1_val,
+                "gbz": gbz_val,
+                "winding": None,
+                "is_continuum": True,
+                "_mu1_bracket": (mu1_low, mu1_high),
+                "_winding_bracket": (w_low, w_high),
+                "_w_limits": (w_l, w_r),
+                "_exit_reason": "continuum_boundary",
+            }
+        return False, w_l, None  # proxy = w_l (amoeba convention)
+
+    # --- Step 1: bracket expansion ---
+    mu1_low = mu1_guess[0]
+    mu1_ext_right = None
+
+    while True:
+        w_low, gbz_low = winding_at(mu1_low)
+        if w_low is None:
+            is_boundary, proxy_w, result = handle_continuum(mu1_low, gbz_low)
+            if is_boundary:
+                return result
+            w_low = proxy_w  # use resolved proxy value
+
+        if w_low < zero_tol:
+            break
+        else:
+            mu1_ext_right = mu1_low
+            mu1_low -= 1
+
+    if w_low > -zero_tol:
+        return {
+            "mu1": mu1_low,
+            "gbz": gbz_low,
+            "winding": w_low,
+            "is_continuum": False,
+            "_mu1_bracket": (mu1_low, mu1_low),
+            "_winding_bracket": (w_low, w_low),
+            "_exit_reason": "left_endpoint_zero",
+        }
+
+    # Step 1.2: right bracket endpoint
+    if mu1_ext_right is None:
+        mu1_ext_right = mu1_guess[1]
         while True:
-            left_winding, left_gbz = get_strip_winding(self.poly_diff, E_ref, mu1_left, N_points)
-            left_winding_scalar = _scalar_winding(left_winding)
-            if left_winding_scalar < zero_tol:
+            w_high, gbz_high = winding_at(mu1_ext_right)
+            if w_high is None:
+                is_boundary, proxy_w, result = handle_continuum(mu1_ext_right, gbz_high)
+                if is_boundary:
+                    return result
+                w_high = proxy_w
+
+            if w_high > -zero_tol:
                 break
             else:
-                mu1_right = mu1_left
-                mu1_left -= 1
+                mu1_ext_right += 1
 
-        if left_winding_scalar > -zero_tol:
+        if w_high < zero_tol:
             return {
-                "mu1": mu1_left,
-                "gbz": left_gbz,
-                "winding": left_winding,
-                "_mu1_bracket": (mu1_left, mu1_left),
-                "_winding_bracket": (left_winding_scalar, left_winding_scalar),
-                "_exit_reason": "left_endpoint_zero",
+                "mu1": mu1_ext_right,
+                "gbz": gbz_high,
+                "winding": w_high,
+                "is_continuum": False,
+                "_mu1_bracket": (mu1_ext_right, mu1_ext_right),
+                "_winding_bracket": (w_high, w_high),
+                "_exit_reason": "right_endpoint_zero",
+            }
+    else:
+        w_high, _ = winding_at(mu1_ext_right)
+        if w_high is None:
+            is_boundary, proxy_w, _ = handle_continuum(mu1_ext_right, gbz_high)
+            w_high = proxy_w
+
+    mu1_high = mu1_ext_right
+
+    # --- Step 2: plain bisection with continuum interception ---
+    # The strip winding has flat plateaus (±1) with a narrow transition
+    # zone; false-position methods stall on this shape.  Plain midpoint
+    # bisection guarantees bracket halving every step (mirrors amoeba's
+    # _find_mu2_for_w2_zero and bisect_amoeba_ronkin_min).
+
+    for _ in range(max_iter):
+        mu1_mid = 0.5 * (mu1_low + mu1_high)
+
+        w_mid, gbz_mid = winding_at(mu1_mid)
+
+        if w_mid is None:
+            is_boundary, proxy_w, result = handle_continuum(mu1_mid, gbz_mid)
+            if is_boundary:
+                if refine:
+                    gbz_refined = get_roots_and_PMGBZ(
+                        poly_diff, E_ref, mu1_mid, N_points,
+                    )[0]
+                    result["gbz"] = gbz_refined
+                return result
+            f_mid = proxy_w
+        else:
+            f_mid = w_mid
+
+        # Convergence check
+        if abs(f_mid) <= zero_tol or (mu1_high - mu1_low) < xtol:
+            exit_reason = "w_zero" if abs(f_mid) <= zero_tol else "bracket_xtol"
+            gbz_final = gbz_mid
+            winding_final = w_mid
+            is_continuum = (w_mid is None)
+            if is_continuum and refine:
+                gbz_final = get_roots_and_PMGBZ(
+                    poly_diff, E_ref, mu1_mid, N_points,
+                )[0]
+            return {
+                "mu1": mu1_mid,
+                "gbz": gbz_final,
+                "winding": winding_final,
+                "is_continuum": is_continuum,
+                "_mu1_bracket": (mu1_low, mu1_high),
+                "_winding_bracket": (w_low, w_high),
+                "_exit_reason": exit_reason,
             }
 
-        # 1.2 mu1_right
-        if mu1_right is None:
-            mu1_right = mu1_guess[1]
-            while True:
-                right_winding, right_gbz = get_strip_winding(self.poly_diff, E_ref, mu1_right, N_points)
-                right_winding_scalar = _scalar_winding(right_winding)
-                if right_winding_scalar > -zero_tol:
-                    break
-                else:
-                    mu1_right += 1
-
-            if right_winding_scalar < zero_tol:
-                return {
-                    "mu1": mu1_right,
-                    "gbz": right_gbz,
-                    "winding": right_winding,
-                    "_mu1_bracket": (mu1_right, mu1_right),
-                    "_winding_bracket": (right_winding_scalar, right_winding_scalar),
-                    "_exit_reason": "right_endpoint_zero",
-                }
+        # Bracket update
+        if w_low * f_mid < 0:
+            mu1_high = mu1_mid
         else:
-            right_winding, _ = get_strip_winding(self.poly_diff, E_ref, mu1_right, N_points)
-            right_winding_scalar = _scalar_winding(right_winding)
+            mu1_low = mu1_mid
 
-        # 2. Find zero of the strip winding number
-        def strip_winding_fun(mu1: float):
-            w = get_strip_winding(self.poly_diff, E_ref, mu1, N_points)[0]
-            return _scalar_winding(w)
-
-        mu1_0 = optimize.brentq(strip_winding_fun, mu1_left, mu1_right)
-        winding_0, gbz_0 = get_strip_winding(self.poly_diff, E_ref, mu1_0, N_points)
-
-        return {
-            "mu1": mu1_0,
-            "gbz": gbz_0,
-            "winding": winding_0,
-            "_mu1_bracket": (mu1_left, mu1_right),
-            "_winding_bracket": (left_winding_scalar, right_winding_scalar),
-            "_exit_reason": "brentq_zero",
-        }
+    # Max iterations exhausted — last midpoint as fallback
+    mu1_final = 0.5 * (mu1_low + mu1_high)
+    w_final, gbz_final = winding_at(mu1_final)
+    is_continuum = (w_final is None)
+    if is_continuum and refine:
+        gbz_final = get_roots_and_PMGBZ(
+            poly_diff, E_ref, mu1_final, N_points,
+        )[0]
+    return {
+        "mu1": mu1_final,
+        "gbz": gbz_final,
+        "winding": w_final,
+        "is_continuum": is_continuum,
+        "_mu1_bracket": (mu1_low, mu1_high),
+        "_winding_bracket": (w_low, w_high),
+        "_exit_reason": "max_iter",
+    }
 
 
 # ---- main entry point ----
 
-def check_SGBZ(
+def collect_GBZ_subsets(
     coeffs: np.ndarray,
     degs: np.ndarray,
     E_ref: complex,
@@ -225,7 +429,28 @@ def check_SGBZ(
     debug_mode: bool = False,
     **options,
 ) -> GBZResult:
-    """Check SGBZ condition and return GBZ points for a reference energy.
+    """Check the SGBZ condition and return GBZ points for a reference energy.
+
+    Batch entry point: builds the characteristic polynomial from
+    (coeffs, degs), solves for the mu1 where the strip winding number
+    vanishes using plain bisection with continuum interception, and
+    (optionally) reclassifies the candidate as empty when a zero plateau
+    exists right next to it.
+
+    For continuum results, the precise beta2 roots are computed once after
+    the plateau check, so plateau-detected false positives cost nothing.
+
+    Parameters:
+        coeffs: complex coefficients of the characteristic Laurent polynomial
+            f(E, beta1, beta2).
+        degs: (n_terms, 3) integer exponents of (E, beta1, beta2) per term.
+        E_ref: reference energy to test.
+        perc: progress fraction in [0, 1], printed as a percentage.
+        debug_mode: if True, re-raise solver exceptions instead of returning
+            a failed GBZResult.
+        **options: solver options — "mu1_guess" (default (-1, 1)),
+            "zero_tol" (1e-10), "N_points" (301), "continuum_perturb" (1e-2),
+            "plateau_check" (True), "plateau_probe_radius" (None).
 
     Returns:
         GBZResult with connected subsets.  ``gbz.is_empty`` / ``gbz.index == (0,0)``
@@ -236,7 +461,7 @@ def check_SGBZ(
     degs_ct = pt.CLaurentIndexVec(degs.flatten())
     char_poly = pt.CLaurent(3)
     char_poly.set_Laurent_by_terms(coeffs_ct, degs_ct)
-    solver = SGBZSolver(char_poly)
+    poly_diff = PolyDiffContext(char_poly)
 
     solver_options = dict(options)
     plateau_check = solver_options.pop("plateau_check", True)
@@ -247,11 +472,14 @@ def check_SGBZ(
     continuum_perturb = solver_options.pop("continuum_perturb", 1e-2)
 
     try:
-        sgbz_res = solver.solve_for_E_info(
-            E_ref, mu1_guess=mu1_guess, zero_tol=zero_tol, N_points=N_points,
+        sgbz_res = solve_SGBZ_for_E(
+            poly_diff, E_ref, mu1_guess=mu1_guess, zero_tol=zero_tol,
+            N_points=N_points, continuum_perturb=continuum_perturb,
+            refine=False,
         )
         gbz: GBZResult = sgbz_res["gbz"]
         mu1 = sgbz_res["mu1"]
+        is_continuum = sgbz_res["is_continuum"]
     except Exception as e:
         if debug_mode:
             raise e
@@ -259,66 +487,32 @@ def check_SGBZ(
         return GBZResult(E_ref=E_ref, success=False, error=str(e))
 
     if not gbz.is_empty:
-        # Run plateau check
-        classification_reason = "nonempty_gbz"
+        # Run plateau check with lightweight pre-filter (mirrors amoeba).
         if plateau_check:
-            plateau_info = _probe_zero_plateau_near_mu1(
-                solver.poly_diff, E_ref, mu1, sgbz_res.get("_mu1_bracket"),
-                N_points=N_points, zero_tol=zero_tol,
-                continuum_perturb=continuum_perturb,
-                probe_radius=plateau_probe_radius,
-            )
-            if plateau_info["found"]:
-                gbz = GBZResult(E_ref=E_ref, subsets=[], index=(0, 0))
-                classification_reason = "nearby_zero_plateau"
-            elif plateau_info["status"] == "not_found":
-                classification_reason = "nonempty_gbz_no_plateau"
+            should_probe = False
+            if is_continuum:
+                # Continuum boundary — genuine GBZ, no plateau to detect.
+                should_probe = False
             else:
-                classification_reason = "gbz_plateau_check_inconclusive"
-    else:
-        classification_reason = "empty_gbz_zero_plateau"
+                # Point case: only probe when PMGBZ zeros are suspiciously
+                # clustered (plateau signature).  Well-separated zeros →
+                # genuine GBZ, skip expensive probe.
+                should_probe = _check_pmgbz_points_clustered(gbz)
+
+            if should_probe:
+                plateau_info = _probe_zero_plateau_near_mu1(
+                    poly_diff, E_ref, mu1, sgbz_res.get("_mu1_bracket"),
+                    N_points=N_points, zero_tol=zero_tol,
+                    continuum_perturb=continuum_perturb,
+                    probe_radius=plateau_probe_radius,
+                )
+                if plateau_info["found"]:
+                    gbz = GBZResult(E_ref=E_ref, subsets=[], index=(0, 0))
+
+    # Deferred precise solve for continuum results (after plateau check).
+    if is_continuum and gbz.is_gbz:
+        gbz = get_roots_and_PMGBZ(
+            poly_diff, E_ref, mu1, N_points,
+        )[0]
 
     return gbz
-
-
-# ---- triplet conversion ----
-
-def convert_gbz_to_triplets(
-    gbz: GBZResult,
-) -> list[tuple[complex, complex, complex]]:
-    """Convert a single GBZResult to (E, k1, k2) triplets.
-
-    PointSubset: directly from beta1, beta2.
-    LineSubset: calls fill_beta2() (lazy load, cached on first call).
-    """
-    triplets: list[tuple[complex, complex, complex]] = []
-    for subset in gbz.subsets:
-        if isinstance(subset, PointSubset):
-            k1 = -1j * log(subset.beta1)
-            k2 = -1j * log(subset.beta2)
-            triplets.append((subset.E, k1, k2))
-        elif isinstance(subset, LineSubset):
-            subset.fill_beta2()
-            if subset.beta2_arr is None:
-                continue
-            n_pts = len(subset.beta2_arr)
-            theta_arr = np.linspace(
-                subset.theta1_start, subset.theta1_end, n_pts, endpoint=False,
-            )
-            for i in range(n_pts):
-                theta1 = theta_arr[i]
-                k1 = theta1 - 1j * subset.mu1
-                for j in range(subset.beta2_arr.shape[1]):
-                    k2 = -1j * log(subset.beta2_arr[i, j])
-                    triplets.append((subset.E, k1, k2))
-    return triplets
-
-
-def convert_gbz_list_to_triplets(
-    gbz_list: list[GBZResult],
-) -> list[tuple[complex, complex, complex]]:
-    """Convert a list of GBZResult to (E, k1, k2) triplets."""
-    all_triplets: list[tuple[complex, complex, complex]] = []
-    for gbz in gbz_list:
-        all_triplets.extend(convert_gbz_to_triplets(gbz))
-    return all_triplets

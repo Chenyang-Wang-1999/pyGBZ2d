@@ -183,7 +183,7 @@ def sweep_SGBZ_a1():
     E_list = E_mesh.flatten()
 
     pool = mp.Pool(mp.cpu_count())
-    results = pool.starmap(bfs.check_SGBZ, [(coeffs, degs, E, j / len(E_list), True) for j, E in enumerate(E_list)])
+    results = pool.starmap(bfs.collect_GBZ_subsets, [(coeffs, degs, E, j / len(E_list), True) for j, E in enumerate(E_list)])
     pool.close()
     pool.join()
 
@@ -219,7 +219,7 @@ def sweep_SGBZ_a2():
     E_list = E_mesh.flatten()
 
     pool = mp.Pool(mp.cpu_count())
-    results = pool.starmap(bfs.check_SGBZ, [(coeffs, degs, E, j / len(E_list)) for j, E in enumerate(E_list)])
+    results = pool.starmap(bfs.collect_GBZ_subsets, [(coeffs, degs, E, j / len(E_list)) for j, E in enumerate(E_list)])
     pool.close()
     pool.join()
 
@@ -255,7 +255,7 @@ def sweep_SGBZ_x():
     E_list = E_mesh.flatten()
 
     pool = mp.Pool(mp.cpu_count())
-    results = pool.starmap(bfs.check_SGBZ, [(coeffs, degs, E, j / len(E_list)) for j, E in enumerate(E_list)])
+    results = pool.starmap(bfs.collect_GBZ_subsets, [(coeffs, degs, E, j / len(E_list)) for j, E in enumerate(E_list)])
     pool.close()
     pool.join()
 
@@ -293,7 +293,7 @@ def sweep_SGBZ_y():
     E_list = E_mesh.flatten()
 
     pool = mp.Pool(mp.cpu_count())
-    results = pool.starmap(bfs.check_SGBZ, [(coeffs, degs, E, j / len(E_list)) for j, E in enumerate(E_list)])
+    results = pool.starmap(bfs.collect_GBZ_subsets, [(coeffs, degs, E, j / len(E_list)) for j, E in enumerate(E_list)])
     pool.close()
     pool.join()
 

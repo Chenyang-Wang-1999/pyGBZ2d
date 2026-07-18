@@ -55,7 +55,7 @@ The diagnostic sweep found:
 - Added SGBZ zero-plateau probing based on strip winding:
   - A probe point is considered on a plateau when `abs(W) <= zero_tol`,
     `PMGBZ_points == []`, and the point is not a continuum point.
-- Updated `check_SGBZ(...)`:
+- Updated `collect_GBZ_subsets(...)`:
   - Empty `PMGBZ_points` at the returned root is classified as
     `is_PMGBZ=False`.
   - Non-empty `PMGBZ_points` are post-checked with multi-scale perturbations.

@@ -116,7 +116,11 @@ class LineSubset:
         return self.beta2_arr is not None
 
     def fill_beta2(self, N_points: int = 301) -> None:
-        """Lazy-load beta2_arr by calling get_roots_and_PMGBZ.
+        """Lazy-load beta2_arr by solving roots on a uniform theta1 mesh.
+
+        Uses a lightweight roots-only solver (no PMGBZ detection) that
+        explicitly includes the interval endpoints, producing a result
+        identical to the old get_roots_and_PMGBZ-based path.
 
         Uses a lazy import to avoid a module-level circular dependency
         between gbz_types and brute_force_SGBZ.pmgbz_detector.
@@ -124,10 +128,11 @@ class LineSubset:
         if self.beta2_arr is not None:
             return
         # Lazy import — breaks circular dependency at module level.
-        from brute_force_SGBZ.pmgbz_detector import get_roots_and_PMGBZ  # noqa: E402
+        from brute_force_SGBZ.root_solver import solve_roots_on_mesh  # noqa: E402
 
-        _gbz, theta1_arr, sols_arr, _info = get_roots_and_PMGBZ(
+        theta1_arr, sols_arr = solve_roots_on_mesh(
             self._poly_diff, self.E, self.mu1, N_points,
+            extra_thetas=(self.theta1_start, self.theta1_end),
         )
 
         # Build a boolean mask for theta1 values inside the interval.

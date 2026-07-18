@@ -4,18 +4,36 @@ date:          2025-11-18
 Copyright © Department of Physics, Tsinghua University. All rights reserved
 '''
 
-''' Calculations of the strip winding number '''
+''' Strip winding number calculation.
+
+The strip winding number at (E_ref, mu1) is the winding of the
+characteristic polynomial f(E_ref, beta1, beta2) along the loop
+beta1 = exp(mu1 + i*theta1), beta2 = exp(mu2(theta1) + i*theta2), where
+mu2(theta1) is a periodic spline through the middle of the gap between
+the M-th and (M+1)-th smallest |beta2| roots.  theta2 is chosen to keep
+the loop as far from all roots as possible; PMGBZ points (accidental
+equal-modulus crossings) contribute fractional angle corrections.
+
+The zero of the strip winding number as a function of mu1 defines the
+SGBZ (see solve_SGBZ_for_E).  Continuum-degenerate mu1 values have no
+well-defined winding; the winding value is returned as None.  The
+caller is responsible for resolving the continuum via left/right limits
+at mu1 ± epsilon.
+'''
 
 import numpy as np
-import poly_tools as pt
 from math import pi
 from cmath import exp
+from typing import Optional
 from scipy import interpolate
-from scipy import optimize
 
 from .winding import WindingFun, PolyDiffContext, get_winding_number
 from .pmgbz_detector import get_roots_and_PMGBZ
 from gbz_types import GBZResult
+
+# Winding value: float at normal points, None at continuum points.
+StripWinding = Optional[float]
+StripWindingResult = tuple[StripWinding, GBZResult]
 
 
 def get_loop_winding(
@@ -26,6 +44,23 @@ def get_loop_winding(
     theta2: float,
     N_seg: int = 5
 ) -> float:
+    """Winding number of the characteristic polynomial along a mid-gap loop.
+
+    The loop is parameterized by theta1 in [0, 2*pi):
+    beta1 = exp(mu1 + i*theta1), beta2 = exp(mu2(theta1) + i*theta2).
+
+    Parameters:
+        poly_diff: polynomial evaluation context.
+        E_ref: reference energy.
+        mu1: log|beta1| of the strip.
+        mu2_fun: periodic spline theta1 -> mu2 (mid-gap log-radius of beta2).
+        theta2: fixed phase of beta2 along the loop.
+        N_seg: number of integration segments passed to get_winding_number.
+
+    Returns:
+        Real-valued winding number of f around zero along the loop
+        (unrounded; the caller rounds to an integer).
+    """
     def param_fun(theta1: float):
         mu2_val = mu2_fun(theta1, extrapolate="periodic")
         mu2_prime = mu2_fun(theta1, extrapolate="periodic", nu=1)
@@ -53,17 +88,12 @@ def _strip_winding_from_result(
     theta1_arr: np.ndarray,
     sols_arr: np.ndarray,
     info: dict,
-    N_points: int = 301,
-    with_gap_info: bool = False,
-    continuum_perturb: float = 1e-2,
-    zero_tol: float = 1e-10,
-    GBZ_check_tol: float = 1e-6,
-):
+) -> StripWindingResult:
     """Compute strip winding from pre-computed root results.
 
-    Accepts pre-computed (gbz_result, theta1_arr, sols_arr, info) so
-    that continuum recursion can pass through already-computed results,
-    avoiding redundant root solving (optimization C).
+    At a continuum-degenerate mu1 the winding is undefined; the function
+    returns None for the winding value.  The caller (solve_SGBZ_for_E) is
+    responsible for resolving the continuum via left/right limits.
     """
     # Sort sols_arr by norm at each row
     for row_ind in range(sols_arr.shape[0]):
@@ -73,35 +103,8 @@ def _strip_winding_from_result(
     PMGBZ_raw = info.get("_pmgbz_raw", [])
 
     if info["continuum_flag"]:
-        # --- Continuum case: perturb mu1 to find winding limits ---
-        gbz_left, t1_l, sols_l, info_l = get_roots_and_PMGBZ(
-            poly_diff, E_ref, mu1 - continuum_perturb, N_points, zero_tol, GBZ_check_tol,
-        )
-        if info_l["continuum_flag"]:
-            W_left = np.nan
-        else:
-            W_left = _strip_winding_from_result(
-                poly_diff, E_ref, mu1 - continuum_perturb,
-                gbz_left, t1_l, sols_l, info_l,
-                N_points, with_gap_info, continuum_perturb, zero_tol, GBZ_check_tol,
-            )[0]
-
-        gbz_right, t1_r, sols_r, info_r = get_roots_and_PMGBZ(
-            poly_diff, E_ref, mu1 + continuum_perturb, N_points, zero_tol, GBZ_check_tol,
-        )
-        if info_r["continuum_flag"]:
-            W_right = np.nan
-        else:
-            W_right = _strip_winding_from_result(
-                poly_diff, E_ref, mu1 + continuum_perturb,
-                gbz_right, t1_r, sols_r, info_r,
-                N_points, with_gap_info, continuum_perturb, zero_tol, GBZ_check_tol,
-            )[0]
-
-        if with_gap_info:
-            return (W_left, W_right), gbz_result, None
-        else:
-            return (W_left, W_right), gbz_result
+        # Continuum-degenerate mu1 — winding undefined, caller resolves via limits.
+        return None, gbz_result
 
     # --- Normal winding computation ---
     mu2_max_arr = np.log(np.abs(sols_arr[:, M]))
@@ -166,53 +169,7 @@ def _strip_winding_from_result(
         theta2_neg = np.angle(PMGBZ_beta2_neg / exp(1j * theta2_median)) % (2 * pi)
         W_strip = w0 + (np.sum(theta2_neg) - np.sum(theta2_pos)) / (2 * pi)
 
-    if with_gap_info:
-        if PMGBZ_raw:
-            gap_info = None
-        else:
-            mu2_max_ind = np.argmin(mu2_max_arr)
-            mu2_min_ind = np.argmax(mu2_min_arr)
-
-            def beta2_solving_fun(beta2, theta1):
-                var_ctype = pt.CScalarVec([E_ref, exp(mu1 + 1j * theta1), beta2])
-                return poly_diff.char_poly.eval(var_ctype), poly_diff.dchar_poly[2].eval(var_ctype)
-
-            def derivative_fun(theta1, beta2_initial):
-                res = optimize.root_scalar(
-                    beta2_solving_fun,
-                    args=(theta1,),
-                    x0=beta2_initial,
-                    fprime=True
-                )
-                beta2_val = res.root
-                return poly_diff.eval_dmu2([E_ref, exp(mu1 + 1j * theta1), beta2_val])[1]
-
-            theta1_extended = np.hstack(([theta1_arr[-2] - 2 * pi], theta1_arr, [theta1_arr[1] + 2 * pi]))
-            theta1_max = optimize.brentq(derivative_fun, theta1_extended[mu2_max_ind], theta1_extended[mu2_max_ind + 2],
-                    args=(sols_arr[mu2_max_ind, M],))
-            theta1_min = optimize.brentq(derivative_fun, theta1_extended[mu2_min_ind], theta1_extended[mu2_min_ind + 2],
-                    args=(sols_arr[mu2_min_ind, M - 1],))
-
-            beta2_max = optimize.root_scalar(
-                beta2_solving_fun, args=(theta1_max,),
-                x0=sols_arr[mu2_max_ind, M], fprime=True
-            ).root
-            beta2_min = optimize.root_scalar(
-                beta2_solving_fun, args=(theta1_min,),
-                x0=sols_arr[mu2_min_ind, M - 1], fprime=True
-            ).root
-
-            gap_info = {
-                "point_max": (E_ref, exp(mu1 + 1j * theta1_max), beta2_max),
-                "point_min": (E_ref, exp(mu1 + 1j * theta1_min), beta2_min),
-                "mu2_diff": mu2_max_arr[mu2_max_ind] - mu2_min_arr[mu2_min_ind],
-                "dmu2_diff": poly_diff.eval_dmu2([E_ref, exp(mu1 + 1j * theta1_max), beta2_max])[0]
-                           - poly_diff.eval_dmu2([E_ref, exp(mu1 + 1j * theta1_min), beta2_min])[0]
-            }
-
-        return W_strip, gbz_result, gap_info
-    else:
-        return W_strip, gbz_result
+    return W_strip, gbz_result
 
 
 def get_strip_winding(
@@ -220,23 +177,37 @@ def get_strip_winding(
     E_ref: complex,
     mu1: float,
     N_points: int = 301,
-    with_gap_info: bool = False,
     continuum_perturb: float = 1e-2,
     zero_tol: float = 1e-10,
     GBZ_check_tol: float = 1e-6,
-):
+    refine_continuum: bool = True,
+) -> StripWindingResult:
     """Compute the strip winding number and GBZ points at (E_ref, mu1).
+
+    Convenience wrapper: runs get_roots_and_PMGBZ to solve the beta2 roots
+    and detect PMGBZ points, then delegates to _strip_winding_from_result.
+
+    Parameters:
+        poly_diff: polynomial evaluation context.
+        E_ref: reference energy.
+        mu1: log|beta1| of the strip.
+        N_points: number of theta1 mesh points on [0, 2*pi).
+        continuum_perturb: mu1 offset for continuum left/right limits.
+        zero_tol: PMGBZ gap zero-threshold.
+        GBZ_check_tol: equal-modulus cluster detection tolerance.
+        refine_continuum: forwarded to get_roots_and_PMGBZ.  When False,
+            continuum detection skips boundary refinement and stage-3
+            accidental-point detection.
 
     Returns:
         (winding, GBZResult) — winding is float for normal points or
-        (W_left, W_right) tuple for continuum points.
-        If with_gap_info, a third gap_info element is included.
+        None for continuum points.
     """
     gbz_result, theta1_arr, sols_arr, info = get_roots_and_PMGBZ(
         poly_diff, E_ref, mu1, N_points, zero_tol, GBZ_check_tol,
+        refine_continuum=refine_continuum,
     )
     return _strip_winding_from_result(
         poly_diff, E_ref, mu1,
         gbz_result, theta1_arr, sols_arr, info,
-        N_points, with_gap_info, continuum_perturb, zero_tol, GBZ_check_tol,
     )

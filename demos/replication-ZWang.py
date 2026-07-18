@@ -64,13 +64,13 @@ def sweep_general(E_re, E_im, which="amoeba", params=DEFAULT_PARAMS, N_process=1
         fname_prefix = "data/ZWang_x-SGBZ"
         data_pack = [(coeffs, degs, E_list[j], j / len(E_list), True) for j in range(len(E_list))]
         with mp.Pool(N_process) as pool:
-            res = pool.starmap(bfs.check_SGBZ, data_pack)
+            res = pool.starmap(bfs.collect_GBZ_subsets, data_pack)
     elif which == "y-SGBZ":
         fname_prefix = "data/ZWang_y-SGBZ"
         degs = degs[:, [0, 2, 1]]
         data_pack = [(coeffs, degs, E_list[j], j / len(E_list), True) for j in range(len(E_list))]
         with mp.Pool(N_process) as pool:
-            res = pool.starmap(bfs.check_SGBZ, data_pack)
+            res = pool.starmap(bfs.collect_GBZ_subsets, data_pack)
     else:
         raise ValueError(f"Unknown type: {which}")
 

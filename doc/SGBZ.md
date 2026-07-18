@@ -49,7 +49,39 @@ Winding number computation shells:
 - `WindingFun`: polynomial winding, parametrized loop + analytical derivatives
 - `MatWindingFun`: matrix winding (sparse solver), for large matrix models
 
-### 2.3 `process_interval()` (`strip_winding_number.py`)
+### 2.3 Continuum Detection & Winding Solver
+
+**Continuum detection** (`pmgbz_detector.py`):
+
+The `get_roots_and_PMGBZ` call with `refine_continuum=False` (sweep mode)
+uses a cheap existence-only check: degenerate mesh runs of ≥2 consecutive
+points are classified as continuum directly (their refined width is
+provably > point_like_theta_tol).  Single-point runs retain the full
+refinement path to distinguish accidental points from pinched continua.
+This mirrors amoeba's `_compute_winding_from_tracks(refine_crossings=False)`.
+
+**Winding evaluation** (`strip_winding_number.py`):
+
+`get_strip_winding` returns `(winding, gbz_product)` where `winding` is
+`None` when a continuum is detected — the perturbation analysis is moved
+to the solver layer.
+
+**μ₁ solver** (`SGBZ.py`):
+
+`solve_SGBZ_for_E` uses an Illinois false-position method with
+explicit continuum interception at every iterate.  When the winding is
+`None` (continuum), `_resolve_continuum_winding` computes perturbed left/
+right limits; opposite signs signal the SGBZ boundary (`is_continuum=True`,
+immediate return); same sign → bracket update with proxy winding.
+This matches amoeba's `bisect_amoeba_ronkin_min` / `_resolve_continuum`.
+
+**Deferred precise solve** (`collect_GBZ_subsets`):
+
+After the plateau check, continuum results undergo one full-mode
+`get_roots_and_PMGBZ` call to crisp the `GBZResult`.  Plateau false
+positives skip this step entirely (zero cost).
+
+### 2.4 `process_interval()` (`pmgbz_detector.py`)
 
 Unified recursive interval processor (core of this refactoring round):
 
@@ -110,14 +142,36 @@ def get_roots_and_PMGBZ(
     N_points: int = 301,
     zero_tol: float = 1e-10,
     GBZ_check_tol: float = 1e-6,
-) -> tuple[list[dict], np.ndarray, np.ndarray, dict]:
+    refine_continuum: bool = True,
+) -> tuple[GBZResult, np.ndarray, np.ndarray, dict]:
 ```
 
-**Returns**: `(PMGBZ_points, theta1_arr, sols_arr, info)`
-- `PMGBZ_points`: list of PMGBZ points, each containing `theta1`, `beta2_sols`, `is_continuum`
-- `theta1_arr`: extended θ₁ grid (with periodic closure)
+**Returns**: `(gbz_result, theta1_arr, sols_arr, info)`
+- `gbz_result`: `GBZResult` with `PointSubset` / `LineSubset` entries
+- `theta1_arr`: extended θ₁ grid (with periodic closure; when `refine_continuum=False` and continuum detected, uses only the base mesh)
 - `sols_arr`: corresponding sorted root array
-- `info`: `{"M", "N", "continuum_flag"}`
+- `info`: `{"M", "N", "continuum_flag", "_pmgbz_raw"}`
+
+`refine_continuum=False` (sweep mode) skips boundary refinement and
+stage-3 accidental-point detection when any continuum interval with ≥2
+consecutive degenerate mesh points is found — a cheap existence-only
+detection that is sufficient for winding-zero search.
+
+### 3.2a `solve_roots_on_mesh`
+
+```python
+def solve_roots_on_mesh(
+    poly_diff: PolyDiffContext,
+    E_ref: complex,
+    mu1: float,
+    N_points: int = 301,
+    extra_thetas: tuple[float, ...] = (),
+) -> tuple[np.ndarray, np.ndarray]:
+```
+
+Lightweight root-only solver: uniform mesh ∪ extra_thetas, no PMGBZ
+detection.  Returns `(theta1_arr, sols_arr)` with periodic closure.
+Used internally by `LineSubset.fill_beta2`.
 
 ### 3.3 `get_strip_winding`
 
@@ -131,12 +185,14 @@ def get_strip_winding(
     continuum_perturb: float = 1e-2,
     zero_tol: float = 1e-10,
     GBZ_check_tol: float = 1e-6,
+    refine_continuum: bool = True,
 ) -> tuple:
 ```
 
-**Returns**: `(W_strip, PMGBZ_points)` or `(W_strip, PMGBZ_points, gap_info)`
+**Returns**: `(winding, gbz_result)` or `(winding, gbz_result, gap_info)`
 
-When continuum exists, $W_{\text{strip}}$ is a $(W_{\text{left}}, W_{\text{right}})$ tuple.
+When continuum exists, `winding` is `None`.  The caller (`solve_SGBZ_for_E`)
+resolves the continuum via `_resolve_continuum_winding`.
 
 ### 3.4 `get_loop_winding`
 
@@ -153,32 +209,52 @@ def get_loop_winding(
 
 Single-loop winding number (fixed θ₂, along the PMGBZ curve).
 
-### 3.5 `SGBZSolver`
+### 3.5 `solve_SGBZ_for_E`
 
 ```python
-class SGBZSolver:
-    def __init__(self, char_poly: pt.CLaurent)
-    def solve_for_E(
-        self, E_ref: complex,
-        mu1_guess: tuple[float, float] = (-1, 1),
-        zero_tol: float = 1e-10,
-        N_points: int = 101,
-    ) -> tuple[float, list[dict]]:
-```
-
-Bisect μ₁ so that strip winding = 0. Returns (μ₁, PMGBZ_points).
-
-### 3.6 `check_SGBZ`
-
-```python
-def check_SGBZ(
-    coeffs: np.ndarray, degs: np.ndarray,
-    E_ref: complex, perc: float,
-    debug_mode: bool = False,
+def solve_SGBZ_for_E(
+    poly_diff: PolyDiffContext,
+    E_ref: complex,
+    mu1_guess: tuple[float, float] = (-1, 1),
+    zero_tol: float = 1e-10,
+    N_points: int = 101,
+    continuum_perturb: float = 1e-2,
+    refine: bool = True,
+    max_iter: int = 60,
+    xtol: float = 2e-12,
 ) -> dict:
 ```
 
-Batch checking entry point — given polynomial coefficients, energy, and progress percentage, returns SGBZ determination results.
+Process-level solver (no class — mirrors amoeba's `bisect_amoeba_ronkin_min`).
+Returns a dict with `"mu1"`, `"gbz"`, `"winding"` (float or None for
+continuum), `"is_continuum"`, and debug fields.
+
+### 3.5a `_resolve_continuum_winding`
+
+```python
+def _resolve_continuum_winding(
+    poly_diff, E_ref, mu1, N_points=301,
+    continuum_perturb=1e-2,
+) -> tuple[float | None, float | None]:
+```
+
+Perturbs `mu1 ± scale·epsilon` for `scale ∈ (1, 2, 4, 8)` until both
+sides escape the degenerate band, returning `(w_left, w_right)`.
+Mirrors amoeba's `_resolve_continuum` (bisect.py).
+
+### 3.6 `collect_GBZ_subsets`
+
+```python
+def collect_GBZ_subsets(
+    coeffs: np.ndarray, degs: np.ndarray,
+    E_ref: complex, perc: float,
+    debug_mode: bool = False,
+) -> GBZResult:
+```
+
+Batch checking entry point.  Runs the solver sweep in `refine=False`
+mode, performs the plateau check, and **only then** computes a precise
+continuum GBZ if needed — plateau-detected false positives cost nothing.
 
 ### 3.7 Other Exports
 
@@ -187,18 +263,23 @@ Batch checking entry point — given polynomial coefficients, energy, and progre
 | `complex_root` | Complex equation root finding (with analytical Jacobian) |
 | `ComplexEqConverter` | Complex → real equation Jacobian conversion |
 | `poly_to_np_coefficients` | Laurent polynomial → numpy coefficient array |
+| `calculate_point_roots` | Solve β₂ roots at a single (E, β₁) point |
 | `get_winding_number` | Numerical integration for winding number |
 | `get_minor_degrees` | Extract (M, N) |
+| `solve_roots_on_mesh` | Lightweight root solver (no PMGBZ detection) |
 
 ## 5. Key Numerical Parameters
 
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
-| `zero_tol` | 1e-10 | PMGBZ gap zero-threshold |
+| `zero_tol` | 1e-10 | PMGBZ gap zero-threshold; Illinois convergence tolerance |
 | `GBZ_check_tol` | 1e-6 | Equimodular cluster boundary detection tolerance |
 | `match_confidence_tol` | 1e-3 | Hungarian matching confidence relative margin |
-| `continuum_perturb` | 1e-2 | μ₁ perturbation amount for continuum |
+| `continuum_perturb` | 1e-2 | μ₁ perturbation amount for continuum resolution |
 | `double_root_tol` | `GBZ_check_tol` | Double root detection tolerance |
+| `xtol` | 2e-12 | Minimum μ₁ bracket width for Illinois convergence |
+| `max_iter` | 60 | Maximum Illinois iterations |
+| `refine_continuum` | True | When False, skip continuum boundary refinement and stage-3 detection |
 
 `match_confidence_tol` is an empirical threshold and may need tuning based on actual model scan results.
 

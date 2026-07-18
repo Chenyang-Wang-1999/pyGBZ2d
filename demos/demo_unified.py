@@ -7,11 +7,10 @@ Demonstration of the unified GBZ API using the 2D HN model.
 
 Shows:
   - Building a characteristic polynomial
-  - Running check_SGBZ (returns GBZResult directly)
+  - Running collect_GBZ_subsets (returns GBZResult directly)
   - Running collect_GBZ_subsets (returns GBZResult directly)
   - Iterating over subsets with match/case
   - Lazy beta2_arr fill for LineSubset
-  - Converting to (E, k1, k2) triplets
 '''
 
 import sys
@@ -64,8 +63,8 @@ def main():
     print("=" * 60)
 
     # ---- SGBZ ----
-    print("\n--- check_SGBZ ([10]-SGBZ) ---")
-    gbz_sgbz = bfs.check_SGBZ(coeffs, degs, E_test, 0.0, N_points=201)
+    print("\n--- collect_GBZ_subsets ([10]-SGBZ) ---")
+    gbz_sgbz = bfs.collect_GBZ_subsets(coeffs, degs, E_test, 0.0, N_points=201)
     print(f"  is_gbz: {gbz_sgbz.is_gbz}")
     print(f"  index: {gbz_sgbz.index} (n_0D={gbz_sgbz.index[0]}, n_1D={gbz_sgbz.index[1]})")
     print(f"  n_subsets: {len(gbz_sgbz.subsets)}")
@@ -100,20 +99,9 @@ def main():
         elif isinstance(subset, LineSubset):
             print(f"\n  [{i}] LineSubset: mu1={subset.mu1:.6f}")
 
-    # ---- Triplet conversion ----
-    print("\n--- Triplet conversion ---")
-    triplets = bfs.convert_gbz_to_triplets(gbz_sgbz)
-    print(f"  n_triplets: {len(triplets)}")
-    for i, (E, k1, k2) in enumerate(triplets[:5]):
-        print(f"  [{i}] E={E.real:.4f}{E.imag:+.4f}j, "
-              f"k1={k1.real:.4f}{k1.imag:+.4f}j, "
-              f"k2={k2.real:.4f}{k2.imag:+.4f}j")
-    if len(triplets) > 5:
-        print(f"  ... ({len(triplets) - 5} more)")
-
     # ---- Outside spectrum ----
     print("\n--- Outside spectrum (E=5.0) ---")
-    gbz_out = bfs.check_SGBZ(coeffs, degs, 5.0 + 0j, 0.0, N_points=101)
+    gbz_out = bfs.collect_GBZ_subsets(coeffs, degs, 5.0 + 0j, 0.0, N_points=101)
     print(f"  is_gbz: {gbz_out.is_gbz}, index: {gbz_out.index}")
 
 
