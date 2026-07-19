@@ -7,20 +7,17 @@ Root tracking via Hungarian matching for amoeba GBZ computation.
 '''
 
 import numpy as np
-import poly_tools as pt
 from math import pi
 from cmath import exp
 
-from brute_force_SGBZ.root_solver import calculate_point_roots
-from brute_force_SGBZ.winding import PolyDiffContext
 from gbz_types import (
-    get_minor_degrees, sort_by_root_abs,
+    CharPoly, sort_by_root_abs,
     hungarian_match_indices,
 )
 
 
 def get_hungarian_sorted_roots(
-    char_poly: pt.CLaurent,
+    char_poly: CharPoly,
     E_ref: complex,
     mu1: float,
     N_points: int = 301,
@@ -38,19 +35,14 @@ def get_hungarian_sorted_roots(
         M: denominator order in beta2
         N: numerator max degree minus M
     """
-    M, N = get_minor_degrees(PolyDiffContext(char_poly))
+    M, N = char_poly.M, char_poly.N
     n_roots = M + N
     theta1_arr = np.linspace(0.0, 2 * pi, N_points, endpoint=False)
-
-    param_ind = pt.CIndexVec((0, 1))
-    var_ind = pt.CIndexVec([2])
 
     all_roots = []
     for theta1 in theta1_arr:
         beta1 = exp(mu1 + 1j * theta1)
-        roots = calculate_point_roots(
-            char_poly, param_ind, (E_ref, beta1), var_ind, M, N,
-        )
+        roots = char_poly.solve_roots_1d((0, 1), (E_ref, beta1), (2,))
         all_roots.append(np.asarray(roots, dtype=complex))
 
     tracked = np.empty((N_points, n_roots), dtype=complex)
@@ -68,7 +60,7 @@ def get_hungarian_sorted_roots(
 
 
 def _compute_root_tracks(
-    char_poly: pt.CLaurent,
+    char_poly: CharPoly,
     E_ref: complex,
     mu1: float,
     N_points: int = 301,
@@ -79,7 +71,7 @@ def _compute_root_tracks(
     NOT on mu2.  Cache this when scanning over mu2 at fixed (E, mu1).
 
     Returns a dict with keys:
-        theta1_arr, tracked, M, N, theta1_ext, tracked_ext, poly_diff
+        theta1_arr, tracked, M, N, theta1_ext, tracked_ext, char_poly
     """
     theta1_arr, tracked, M, N = get_hungarian_sorted_roots(
         char_poly, E_ref, mu1, N_points,
@@ -110,10 +102,8 @@ def _compute_root_tracks(
     return {
         "theta1_arr": theta1_arr,
         "tracked": tracked,
-        "M": M,
-        "N": N,
         "theta1_ext": theta1_ext,
         "tracked_ext": tracked_ext,
         "log_abs_tracked_ext": log_abs_tracked_ext,
-        "poly_diff": PolyDiffContext(char_poly),
+        "char_poly": char_poly,
     }

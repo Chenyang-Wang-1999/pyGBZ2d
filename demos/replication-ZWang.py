@@ -10,13 +10,13 @@ import numpy as np
 import multiprocessing as mp
 import pickle
 import matplotlib.pyplot as plt
-import poly_tools as pt
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import brute_force_SGBZ as bfs
 print("GBZ path: ", bfs.__file__)
 import brute_force_amoeba as bfa
+from gbz_types import CharPoly
 
 DEFAULT_PARAMS = {
     "t": 1,
@@ -139,11 +139,7 @@ def plot_SGBZ(which="x"):
 def check_roots():
     model = get_model(**DEFAULT_PARAMS)
     coeffs, degs = model.get_characteristic_polynomial_data()
-    char_poly = pt.CLaurent(3)
-    char_poly.set_Laurent_by_terms(
-        pt.CScalarVec(coeffs),
-        pt.CLaurentIndexVec(degs.flatten())
-    )
+    char_poly = CharPoly(coeffs, degs)
 
     E_ref = -2.4 - 0.1408j
     root_track = bfa._compute_root_tracks(char_poly, E_ref, 0.0)

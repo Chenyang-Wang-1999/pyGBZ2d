@@ -24,8 +24,142 @@ import numpy as np
 import poly_tools as pt
 from scipy.optimize import linear_sum_assignment
 
-if TYPE_CHECKING:
-    from brute_force_SGBZ.winding import PolyDiffContext
+# ---- characteristic polynomial wrapper ----
+
+class CharPoly:
+    """Characteristic Laurent polynomial f(E, beta1, beta2).
+
+    The single entry point for polynomial construction, evaluation, and
+    root-solving.  Wraps poly_tools.CLaurent internally — no other file
+    in the project needs to import poly_tools directly.
+
+    Parameters:
+        coeffs: 1-D complex ndarray of polynomial coefficients.
+        degs: (n_terms, 3) integer ndarray of (E, beta1, beta2) exponents.
+    """
+
+    def __init__(self, coeffs: np.ndarray, degs: np.ndarray):
+        self._coeffs = np.asarray(coeffs, dtype=complex)
+        self._degs = np.asarray(degs, dtype=int)
+        self._claurent = pt.CLaurent(3)
+        self._claurent.set_Laurent_by_terms(
+            pt.CScalarVec(self._coeffs),
+            pt.CLaurentIndexVec(self._degs.flatten()),
+        )
+        # Pre-compute partial derivatives (absorbs PolyDiffContext logic).
+        self._dclaurent = [
+            self._claurent.derivative(i) for i in range(self._claurent.dim)
+        ]
+        # Pre-compute minor degrees for both directions.
+        coeffs_ct = pt.CScalarVec([])
+        degs_ct = pt.CIndexVec([])
+        self._claurent.num.batch_get_data(coeffs_ct, degs_ct)
+        for d in (1, 2):
+            M_plus_N = max(degs_ct[d::3])
+            M_val = self._claurent.denom_orders[d]
+            N_val = M_plus_N - M_val
+            if d == 2:
+                self._M, self._N = M_val, N_val
+            else:
+                self._M1, self._N1 = M_val, N_val
+
+    # -- Properties --
+
+    @property
+    def dim(self) -> int:
+        """Number of variables (always 3)."""
+        return self._claurent.dim
+
+    @property
+    def M(self) -> int:
+        """Denominator order in beta2 (direction=2)."""
+        return self._M
+
+    @property
+    def N(self) -> int:
+        """Numerator max degree minus M in beta2 (direction=2)."""
+        return self._N
+
+    # -- Evaluation --
+
+    def eval_val(self, var: tuple) -> complex:
+        """Evaluate f(E, beta1, beta2) at the given variable tuple."""
+        return self._claurent.eval(pt.CScalarVec(var))
+
+    def eval_partials(self, var: tuple) -> list:
+        """Evaluate all first partial derivatives at the given variable tuple."""
+        var_ctype = pt.CScalarVec(var)
+        return [dcl.eval(var_ctype) for dcl in self._dclaurent]
+
+    def eval_dmu2(self, var: tuple) -> tuple:
+        """Return (dmu2/dmu1, dmu2/dtheta1) from partial derivative ratios."""
+        partials = self.eval_partials(var)
+        complex_diff = var[1] * partials[1] / (var[2] * partials[2])
+        return (-complex_diff.real, complex_diff.imag)
+
+    # -- Degree info --
+
+    def get_minor_degrees(self, direction: int = 2) -> tuple:
+        """Extract (M, N) denominator / numerator minor degrees.
+
+        Parameters:
+            direction: Variable index (1 = beta1, 2 = beta2).  Default is 2.
+
+        Returns:
+            (M, N) tuple.
+        """
+        if direction == 2:
+            return self._M, self._N
+        return self._M1, self._N1
+
+    # -- Root solving --
+
+    def solve_roots_1d(self, param_indices, param_vals, var_indices, M=None, N=None) -> list:
+        """Partial-evaluate fixing param variables, solve 1D polynomial.
+
+        Replaces the ``calculate_point_roots`` / ``partial_eval`` /
+        ``batch_get_data`` pattern with a single method.
+
+        Parameters:
+            param_indices: e.g. ``(0, 1)`` to fix E and beta1.
+            param_vals: values for the fixed variables, e.g. ``(E_ref, beta1)``.
+            var_indices: e.g. ``(2,)`` to solve for beta2.
+            M, N: minor degrees for root padding.  Defaults to ``self.M, self.N``
+                (direction=2).
+
+        Returns:
+            List of complex roots (unsorted).
+        """
+        if M is None:
+            M = self._M
+        if N is None:
+            N = self._N
+        poly_1d = self._claurent.partial_eval(
+            pt.CScalarVec(param_vals),
+            pt.CIndexVec(param_indices),
+            pt.CIndexVec(var_indices),
+        )
+        coeffs_ct = pt.CScalarVec([])
+        degs_ct = pt.CIndexVec([])
+        poly_1d.num.batch_get_data(coeffs_ct, degs_ct)
+        deg_M = poly_1d.denom_orders[0]
+
+        # Convert poly_tools containers → numpy for np.roots.
+        coeffs_list = list(coeffs_ct)
+        degs_list = list(degs_ct)
+        max_deg = max(degs_list)
+        np_coeffs = np.zeros(max_deg + 1, dtype=complex)
+        for c, d in zip(coeffs_list, degs_list):
+            np_coeffs[max_deg - d] = c
+        curr_roots = list(np.roots(np_coeffs))
+
+        # Pad with 0 / inf for deficient root count.
+        if len(curr_roots) < M + N:
+            if deg_M < M:
+                curr_roots.append(0)
+            if len(curr_roots) - deg_M < N:
+                curr_roots.append(np.inf)
+        return curr_roots
 
 
 # ---- data classes ----
@@ -84,11 +218,6 @@ class LineSubset:
     theta1_end: float
     beta2_arr: Optional[np.ndarray] = None  # shape (N, 2), lazy
 
-    # Internal storage for lazy fill — not part of the public API.
-    _M: int = 0
-    _N: int = 0
-    _poly_diff: Any = None  # PolyDiffContext
-
     @property
     def theta1_width(self) -> float:
         """Angular width of the interval (radians), handling 2π wrap."""
@@ -115,7 +244,7 @@ class LineSubset:
         """True if beta2_arr has been filled."""
         return self.beta2_arr is not None
 
-    def fill_beta2(self, N_points: int = 301) -> None:
+    def fill_beta2(self, poly: Any, N_points: int = 301) -> None:
         """Lazy-load beta2_arr by solving roots on a uniform theta1 mesh.
 
         Uses a lightweight roots-only solver (no PMGBZ detection) that
@@ -124,6 +253,10 @@ class LineSubset:
 
         Uses a lazy import to avoid a module-level circular dependency
         between gbz_types and brute_force_SGBZ.pmgbz_detector.
+
+        Parameters:
+            poly: CharPoly for root solving and boundary-root selection.
+            N_points: number of uniform theta1 mesh points.
         """
         if self.beta2_arr is not None:
             return
@@ -131,7 +264,7 @@ class LineSubset:
         from brute_force_SGBZ.root_solver import solve_roots_on_mesh  # noqa: E402
 
         theta1_arr, sols_arr = solve_roots_on_mesh(
-            self._poly_diff, self.E, self.mu1, N_points,
+            poly, self.E, self.mu1, N_points,
             extra_thetas=(self.theta1_start, self.theta1_end),
         )
 
@@ -144,7 +277,7 @@ class LineSubset:
             mask = (theta1_arr[:-1] >= t_start) | (theta1_arr[:-1] <= t_end)
 
         # Store the two boundary roots (M-1 and M) for each theta1.
-        M = self._M
+        M = poly.M
         self.beta2_arr = np.column_stack([
             sols_arr[:-1, M - 1][mask],
             sols_arr[:-1, M][mask],
@@ -220,6 +353,17 @@ def to_sphere_r3(roots: np.ndarray) -> np.ndarray:
     return r3
 
 
+def cost_from_sphere_r3(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
+    """Pairwise Euclidean distances between two sets of R^3 sphere points.
+
+    Projection-free core of :func:`chordal_cost_matrix` — use it directly
+    when the :func:`to_sphere_r3` projections are shared across several
+    cost matrices (see ``_PmgbzScan.analyze_boundary_matching``).
+    """
+    diff = p1[:, None, :] - p2[None, :, :]
+    return np.sqrt(np.sum(diff * diff, axis=2), dtype=float)
+
+
 def chordal_cost_matrix(arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
     """Chordal-distance cost matrix between two root arrays.
 
@@ -232,10 +376,7 @@ def chordal_cost_matrix(arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
     Returns:
         2-D array ``cost[i, j]`` = chordal distance between arr1[i] and arr2[j].
     """
-    p1 = to_sphere_r3(arr1)
-    p2 = to_sphere_r3(arr2)
-    diff = p1[:, None, :] - p2[None, :, :]
-    return np.sqrt(np.sum(diff * diff, axis=2), dtype=float)
+    return cost_from_sphere_r3(to_sphere_r3(arr1), to_sphere_r3(arr2))
 
 
 def hungarian_match_indices(
@@ -289,29 +430,22 @@ def find_cyclic_true_intervals(mask: np.ndarray) -> list[tuple[int, int]]:
 
 
 def get_minor_degrees(
-    poly_diff: PolyDiffContext,
+    poly: CharPoly,
     direction: int = 2,
 ) -> tuple[int, int]:
     """Extract (M, N) denominator / numerator minor degrees.
 
-    For a CLaurent polynomial in 3 variables (E, beta1, beta2):
-      - M = denominator order in the ``direction`` variable.
-      - N = (max numerator degree) - M.
+    Thin wrapper around :meth:`CharPoly.get_minor_degrees`.  Kept for
+    backward compatibility; prefer ``poly.M, poly.N`` in new code.
 
     Parameters:
-        poly_diff: Polynomial context wrapping the characteristic polynomial.
+        poly: CharPoly instance.
         direction: Variable index (1 = beta1, 2 = beta2).  Default is 2.
 
     Returns:
         (M, N) tuple.
     """
-    coeffs = pt.CScalarVec([])
-    degs = pt.CIndexVec([])
-    poly_diff.char_poly.num.batch_get_data(coeffs, degs)
-    M_plus_N = max(degs[direction::3])
-    M = poly_diff.char_poly.denom_orders[direction]
-    N = M_plus_N - M
-    return M, N
+    return poly.get_minor_degrees(direction)
 
 
 def generate_probe_steps(

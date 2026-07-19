@@ -5,7 +5,7 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 '''
 
 from gbz_types import (
-    PointSubset, LineSubset, GBZResult, ConnectedSubset,
+    PointSubset, LineSubset, GBZResult, ConnectedSubset, CharPoly,
 )
 
 from .tracks import (
@@ -24,6 +24,7 @@ from .amoeba import (
 )
 
 __all__ = [
+    "CharPoly",
     "get_hungarian_sorted_roots",
     "get_a2_average_winding",
     "get_a1_average_winding",

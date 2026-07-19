@@ -3,12 +3,11 @@
 import numpy as np
 import pytest
 from cmath import exp
-import poly_tools as pt
 
 import brute_force_amoeba as bfa
 from brute_force_amoeba.bisect import _resolve_continuum
 from brute_force_amoeba.tracks import _compute_root_tracks
-from gbz_types import PointSubset, LineSubset, GBZResult
+from gbz_types import PointSubset, LineSubset, GBZResult, CharPoly
 
 
 def build_HN2D_polynomial(J1, J2, gamma_1, gamma_2, delta_1, delta_2, basis="10"):
@@ -101,12 +100,8 @@ def test_all_exports():
 
 
 def _build_char_poly(coeffs, degs):
-    """Build a CLaurent polynomial from coefficient / degree arrays."""
-    cp = pt.CLaurent(3)
-    coeffs_ct = pt.CScalarVec(coeffs)
-    degs_ct = pt.CLaurentIndexVec(degs.flatten())
-    cp.set_Laurent_by_terms(coeffs_ct, degs_ct)
-    return cp
+    """Build a CharPoly from coefficient / degree arrays."""
+    return CharPoly(coeffs, degs)
 
 
 class TestResolveContinuum:

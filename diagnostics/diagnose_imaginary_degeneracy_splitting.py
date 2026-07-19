@@ -27,9 +27,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import numpy as np
-import poly_tools as pt
 
 import brute_force_amoeba.amoeba as amo
+from gbz_types import CharPoly
 
 
 DEMO_PATH = ROOT / "demos" / "imaginary-degeneracy-splitting.py"
@@ -60,11 +60,7 @@ def load_demo_module():
 def build_char_poly(demo_module):
     model = demo_module.get_model(**demo_module.DEFAULT_PARAMS)
     coeffs, degs = model.get_characteristic_polynomial_data()
-    char_poly = pt.CLaurent(3)
-    char_poly.set_Laurent_by_terms(
-        pt.CScalarVec(coeffs),
-        pt.CLaurentIndexVec(degs.flatten()),
-    )
+    char_poly = CharPoly(coeffs, degs)
     return char_poly, coeffs, degs
 
 

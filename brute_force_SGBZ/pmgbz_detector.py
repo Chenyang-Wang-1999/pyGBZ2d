@@ -1,7 +1,7 @@
 '''
 author:        wangchenyang <cy-wang21@mails.tsinghua.edu.cn>
-date:          2025-11-18 00:00:00
-Copyright © YourCompanyName All rights reserved
+date:          2025-11-18
+Copyright © Department of Physics, Tsinghua University. All rights reserved
 '''
 
 ''' PMGBZ detection pipeline — root solving, continuum detection, accidental point refinement.
@@ -24,19 +24,16 @@ Entry point: get_roots_and_PMGBZ.  Everything else is a helper.
 '''
 
 import numpy as np
-import poly_tools as pt
 from math import pi
 from cmath import exp
 from itertools import chain
 from scipy.optimize import linear_sum_assignment
 
 from .root_solver import _solve_sorted_roots_at, solve_roots_on_mesh
-from .winding import PolyDiffContext
 
 from gbz_types import (
-    PointSubset, LineSubset, GBZResult,
-    get_minor_degrees,
-    chordal_cost_matrix, hungarian_match_indices,
+    PointSubset, LineSubset, GBZResult, CharPoly,
+    to_sphere_r3, cost_from_sphere_r3, hungarian_match_indices,
     find_cyclic_true_intervals,
 )
 
@@ -71,6 +68,13 @@ def _unwrap_theta(theta: float, theta_left: float) -> float:
         theta += 2 * pi
     return theta
 
+def _normalize_theta(theta: float) -> float:
+    return float(theta % (2 * pi))
+
+def _theta_close(theta_a: float, theta_b: float, tol: float = 1e-8) -> bool:
+    """Cyclic closeness of two theta1 values (2*pi wrap-aware)."""
+    return abs(((theta_a - theta_b + pi) % (2 * pi)) - pi) < tol
+
 def _get_boundary_cluster_bounds(
     roots_point: np.ndarray,
     M: int,
@@ -92,109 +96,6 @@ def _get_boundary_cluster_bounds(
     start = min(candidate_inds)
     end = max(candidate_inds) + 1
     return start, end
-
-def _analyze_boundary_matching(
-    roots_left: np.ndarray,
-    roots_right: np.ndarray,
-    M: int,
-    GBZ_check_tol: float,
-    match_confidence_tol: float,
-    double_root_tol: float,
-) -> dict:
-    def detect_boundary_double_root(roots_point: np.ndarray):
-        start, end = _get_boundary_cluster_bounds(roots_point, M, GBZ_check_tol)
-        if end - start < 2:
-            return None
-
-        cluster_roots = roots_point[start:end]
-        pair_cost = chordal_cost_matrix(cluster_roots, cluster_roots)
-        np.fill_diagonal(pair_cost, np.inf)
-        min_ind = int(np.argmin(pair_cost))
-        min_dist = float(pair_cost.flat[min_ind])
-        if (not np.isfinite(min_dist)) or (min_dist > double_root_tol):
-            return None
-
-        i_local, j_local = np.unravel_index(min_ind, pair_cost.shape)
-        if i_local > j_local:
-            i_local, j_local = j_local, i_local
-        beta_a = cluster_roots[i_local]
-        beta_b = cluster_roots[j_local]
-        if np.isfinite(beta_a.real) and np.isfinite(beta_a.imag) and np.isfinite(beta_b.real) and np.isfinite(beta_b.imag):
-            beta_zero = 0.5 * (beta_a + beta_b)
-        elif np.isfinite(beta_a.real) and np.isfinite(beta_a.imag):
-            beta_zero = beta_a
-        else:
-            beta_zero = beta_b
-
-        return {
-            "inds": (start + int(i_local), start + int(j_local)),
-            "distance": min_dist,
-            "beta2_zero": beta_zero,
-        }
-
-    matches = hungarian_match_indices(roots_left, roots_right)
-    cross_matches = [
-        (i, j)
-        for i, j in matches
-        if (i < M and j >= M) or (i >= M and j < M)
-    ]
-
-    left_start, left_end = _get_boundary_cluster_bounds(roots_left, M, GBZ_check_tol)
-    right_start, right_end = _get_boundary_cluster_bounds(roots_right, M, GBZ_check_tol)
-    block_start = min(left_start, right_start)
-    block_end = max(left_end, right_end)
-    local_left = roots_left[block_start:block_end]
-    local_right = roots_right[block_start:block_end]
-
-    local_cost = chordal_cost_matrix(local_left, local_right)
-    row_ind, col_ind = linear_sum_assignment(local_cost)
-    local_match = {
-        block_start + int(i): block_start + int(j)
-        for i, j in zip(row_ind, col_ind)
-    }
-    matched_costs = local_cost[row_ind, col_ind]
-    cost_scale = max(1e-12, float(np.mean(matched_costs)))
-
-    exchange_margins = []
-    left_rows = range(block_start, min(M, block_end))
-    right_rows = range(max(M, block_start), block_end)
-    for i in left_rows:
-        if i not in local_match:
-            continue
-        j = local_match[i]
-        for k in right_rows:
-            if k not in local_match:
-                continue
-            l = local_match[k]
-
-            curr_cross = int(j >= M) + int(l < M)
-            swap_cross = int(l >= M) + int(j < M)
-            if curr_cross == swap_cross:
-                continue
-
-            curr_cost = local_cost[i - block_start, j - block_start] + local_cost[k - block_start, l - block_start]
-            swap_cost = local_cost[i - block_start, l - block_start] + local_cost[k - block_start, j - block_start]
-            exchange_margins.append(float(swap_cost - curr_cost))
-
-    if exchange_margins:
-        min_exchange_margin = min(exchange_margins)
-        confidence = min_exchange_margin / cost_scale
-        is_confident = confidence > match_confidence_tol
-    else:
-        min_exchange_margin = np.inf
-        confidence = np.inf
-        is_confident = True
-
-    return {
-        "left_double_root": detect_boundary_double_root(roots_left),
-        "right_double_root": detect_boundary_double_root(roots_right),
-        "matches": matches,
-        "cross_matches": cross_matches,
-        "is_confident": is_confident,
-        "confidence": confidence,
-        "exchange_margin": min_exchange_margin,
-        "cluster_block": (block_start, block_end),
-    }
 
 def _get_pmgbz_cluster_data(
     roots_point: np.ndarray,
@@ -234,7 +135,7 @@ def _build_limit_order(
 def _validate_pmgbz_point(
     roots_point: np.ndarray,
     M: int,
-    poly_diff: PolyDiffContext,
+    poly: CharPoly,
     E_ref: complex,
     beta1: complex,
     theta_point: float,
@@ -247,7 +148,7 @@ def _validate_pmgbz_point(
 
     scored = []
     for ind in cluster_inds:
-        dmu2_dtheta1 = poly_diff.eval_dmu2((E_ref, beta1, roots_point[ind]))[1]
+        dmu2_dtheta1 = poly.eval_dmu2((E_ref, beta1, roots_point[ind]))[1]
         scored.append((ind, dmu2_dtheta1))
 
     scored_desc = sorted(scored, key=lambda item: item[1], reverse=True)
@@ -301,69 +202,223 @@ def _validate_pmgbz_point(
     }
 
 
-def get_roots_and_PMGBZ(
-    poly_diff: PolyDiffContext,  # f(E, beta1, beta2)
-    E_ref: complex,  # reference energy
-    mu1: float,  # mu1 = log(|beta1|)
-    N_points: int = 301,  # number of points around the loop |beta1| = exp(mu1)
-    zero_tol: float = 1e-10,  # tolerance for the zero of the characteristic polynomial
-    GBZ_check_tol: float = 1e-6,
-    refine_continuum: bool = True,
-) -> tuple[GBZResult, np.ndarray, np.ndarray, dict]:
-    """Solve beta2 roots on a theta1 mesh and detect all PMGBZ points at (E_ref, mu1).
+# ---------------------------------------------------------------------------
+# Structure: one entry point orchestrating _PmgbzScan
+# ---------------------------------------------------------------------------
+# LineSubset (continuum) detection is cheap (contiguous True runs of the
+# degenerate mask + boundary bisection); PointSubset (accidental) detection
+# is expensive (Hungarian matching + recursive splitting).  Two ingredients
+# keep the single pipeline fast enough for the mu1-bisection hot path:
+#
+#   - refine_continuum=False (sweep mode) short-circuits as soon as a run of
+#     >= 2 degenerate mesh points proves a continuum exists, skipping
+#     boundary refinement and Stage 3 entirely — the mu1 bisection only
+#     needs the continuum_flag, and the precise solve happens later via
+#     refine_continuum=True in handle_continuum;
+#   - the wide-gap pre-filter skips Hungarian matching on mesh pairs where
+#     the |beta2| boundary gap stays large across consecutive mesh points:
+#     a crossing needs the gap to reach zero, so it cannot hide inside such
+#     a pair without the gap dipping visibly at a neighbouring sample.
+# ---------------------------------------------------------------------------
 
-    Parameters:
-        poly_diff: evaluation context of the characteristic polynomial
-            f(E, beta1, beta2).
-        E_ref: reference energy.
-        mu1: log|beta1| defining the loop beta1 = exp(mu1 + i*theta1).
-        N_points: number of uniform theta1 mesh points on [0, 2*pi).
-        zero_tol: relative tolerance on the gap |beta2_{M+1}| - |beta2_M|
-            for declaring a point PMGBZ-degenerate.
-        GBZ_check_tol: relative tolerance for grouping roots into the
-            equal-modulus boundary cluster during matching/validation.
+class _PmgbzScan:
+    """Shared per-call machinery for the PMGBZ pipeline.
 
-    Returns:
-        (gbz_result, theta1_arr, sols_arr, info):
-        gbz_result: GBZResult whose subsets are PointSubset (accidental
-            points / double roots) and LineSubset (continuum intervals),
-            with index = (n_0D, n_1D).
-        theta1_arr: (K+1,) sorted theta1 mesh including refined special
-            points, closed periodically (last = first + 2*pi).
-        sols_arr: (K+1, M+N) beta2 roots at each theta1, sorted by modulus.
-        info: {"M", "N", "continuum_flag", "_pmgbz_raw"} — minor degrees,
-            whether any continuum interval was found, and the raw PMGBZ
-            point dicts consumed by the strip winding formula.
+    Holds the state every stage needs (polynomial, energy, mu1, root cache,
+    mesh, derived tolerances) and provides the building blocks the entry
+    point orchestrates: mesh solving, boundary-cluster matching analysis,
+    continuum-boundary bisection, accidental-point bisection, the unified
+    interval recursion, and output assembly.
     """
-    M, N = get_minor_degrees(poly_diff)
-    theta_base = np.linspace(0.0, 2 * pi, N_points, endpoint=False)
-    if theta_base.size == 0:
-        raise ValueError("N_points must be a positive integer.")
 
-    param_ind = pt.CIndexVec((0, 1))
-    var_ind = pt.CIndexVec([2])
+    def __init__(
+        self,
+        poly: CharPoly,
+        E_ref: complex,
+        mu1: float,
+        N_points: int,
+        zero_tol: float,
+        GBZ_check_tol: float,
+    ):
+        theta_base = np.linspace(0.0, 2 * pi, N_points, endpoint=False)
+        if theta_base.size == 0:
+            raise ValueError("N_points must be a positive integer.")
 
-    def normalize_theta(theta: float) -> float:
-        return float(theta % (2 * pi))
+        self.poly = poly
+        self.E_ref = E_ref
+        self.mu1 = mu1
+        self.M = poly.M
+        self.zero_tol = zero_tol
+        self.GBZ_check_tol = GBZ_check_tol
 
-    # Shared cache across the entire PMGBZ pipeline: mesh scan, bisection
-    # refinement, and final assembly all reuse the same solved roots.
-    cache: dict = {}
+        self.theta_base = theta_base
+        self.theta_step = 2 * pi / theta_base.size
+        self.point_like_theta_tol = max(1e-8, 0.25 * self.theta_step)
+        self.recursive_theta_tol = max(1e-12, 1e-4 * self.theta_step)
+        self.match_confidence_tol = 1e-3
+        self.double_root_tol = GBZ_check_tol
+        # Wide-gap pre-filter threshold (relative to the boundary modulus
+        # scale).  Deliberately large: a mesh pair is skipped only when the
+        # gap exceeds 50% of the root scale at the pair AND its two outer
+        # neighbours, i.e. where a crossing (gap -> 0) cannot plausibly hide
+        # between samples.  Replaces the Hungarian-only sweep pre-filter.
+        self.gap_skip_tol = 0.5
 
-    def solve_sorted_roots(theta1: float) -> np.ndarray:
+        # Shared cache across the entire PMGBZ pipeline: mesh scan, bisection
+        # refinement, and final assembly all reuse the same solved roots.
+        self.cache: dict = {}
+
+        # Filled by solve_mesh().
+        self.roots_base: np.ndarray = None
+        self.degenerate_mask: np.ndarray = None
+        self.wide_gap_mask: np.ndarray = None
+        self.continuum_intervals: list[tuple[int, int]] = None
+
+    # ---- root solving ----
+
+    def solve(self, theta1: float) -> np.ndarray:
         return _solve_sorted_roots_at(
-            poly_diff, E_ref, mu1, theta1, M, N,
-            param_ind, var_ind, cache,
+            self.poly, self.E_ref, self.mu1, theta1, cache=self.cache,
         )
 
-    def is_degenerate(theta1: float) -> bool:
-        return _is_pmgbz_degenerate(solve_sorted_roots(theta1), M, zero_tol)
+    def is_degenerate(self, theta1: float) -> bool:
+        return _is_pmgbz_degenerate(self.solve(theta1), self.M, self.zero_tol)
+
+    def solve_mesh(self) -> None:
+        """Solve on the uniform theta1 mesh (fills cache), sort by |beta2|,
+        and derive the degeneracy / wide-gap masks from the boundary gap
+        |beta_M| - |beta_{M-1}| at every mesh point."""
+        _, sols_mesh = solve_roots_on_mesh(
+            self.poly, self.E_ref, self.mu1, self.theta_base.size, cache=self.cache,
+        )
+        self.roots_base = sols_mesh[:-1]
+
+        abs_roots = np.abs(self.roots_base)
+        lower = abs_roots[:, self.M - 1]
+        upper = abs_roots[:, self.M]
+        gaps = upper - lower
+        scales = np.maximum(1.0, 0.5 * (lower + upper))
+        self.degenerate_mask = gaps <= self.zero_tol * scales
+        self.wide_gap_mask = gaps > self.gap_skip_tol * scales
+        self.continuum_intervals = find_cyclic_true_intervals(self.degenerate_mask)
+
+    # ---- boundary-cluster matching analysis ----
+
+    def analyze_boundary_matching(
+        self,
+        roots_left: np.ndarray,
+        roots_right: np.ndarray,
+    ) -> dict:
+        """Hungarian matching + confidence + double-root detection for one interval.
+
+        The sphere projections and the full cost matrix are computed once and
+        reused everywhere: the global Hungarian match, the local boundary
+        block (a plain slice of the full matrix), and the double-root
+        self-cost matrices (built from slices of the cached projections).
+        """
+        M = self.M
+        r3_left = to_sphere_r3(roots_left)
+        r3_right = to_sphere_r3(roots_right)
+        cost = cost_from_sphere_r3(r3_left, r3_right)
+        if np.any(np.isnan(cost)):
+            raise ValueError(
+                f"NaN cost in boundary matching: roots_left={roots_left}, "
+                f"roots_right={roots_right}"
+            )
+
+        row_ind, col_ind = linear_sum_assignment(cost)
+        cross_matches = [
+            (int(i), int(j))
+            for i, j in zip(row_ind, col_ind)
+            if (i < M and j >= M) or (i >= M and j < M)
+        ]
+
+        left_bounds = _get_boundary_cluster_bounds(roots_left, M, self.GBZ_check_tol)
+        right_bounds = _get_boundary_cluster_bounds(roots_right, M, self.GBZ_check_tol)
+        block_start = min(left_bounds[0], right_bounds[0])
+        block_end = max(left_bounds[1], right_bounds[1])
+
+        local_cost = cost[block_start:block_end, block_start:block_end]
+        local_row, local_col = linear_sum_assignment(local_cost)
+        local_match = {
+            block_start + int(i): block_start + int(j)
+            for i, j in zip(local_row, local_col)
+        }
+        matched_costs = local_cost[local_row, local_col]
+        cost_scale = max(1e-12, float(np.mean(matched_costs)))
+
+        exchange_margins = []
+        left_rows = range(block_start, min(M, block_end))
+        right_rows = range(max(M, block_start), block_end)
+        for i in left_rows:
+            if i not in local_match:
+                continue
+            j = local_match[i]
+            for k in right_rows:
+                if k not in local_match:
+                    continue
+                l = local_match[k]
+
+                curr_cross = int(j >= M) + int(l < M)
+                swap_cross = int(l >= M) + int(j < M)
+                if curr_cross == swap_cross:
+                    continue
+
+                curr_cost = local_cost[i - block_start, j - block_start] + local_cost[k - block_start, l - block_start]
+                swap_cost = local_cost[i - block_start, l - block_start] + local_cost[k - block_start, j - block_start]
+                exchange_margins.append(float(swap_cost - curr_cost))
+
+        if exchange_margins:
+            confidence = min(exchange_margins) / cost_scale
+            is_confident = confidence > self.match_confidence_tol
+        else:
+            is_confident = True
+
+        def detect_boundary_double_root(roots_point, r3_point, bounds):
+            start, end = bounds
+            if end - start < 2:
+                return None
+
+            pair_cost = cost_from_sphere_r3(r3_point[start:end], r3_point[start:end])
+            np.fill_diagonal(pair_cost, np.inf)
+            min_ind = int(np.argmin(pair_cost))
+            min_dist = float(pair_cost.flat[min_ind])
+            if (not np.isfinite(min_dist)) or (min_dist > self.double_root_tol):
+                return None
+
+            i_local, j_local = np.unravel_index(min_ind, pair_cost.shape)
+            if i_local > j_local:
+                i_local, j_local = j_local, i_local
+            beta_a = roots_point[start + i_local]
+            beta_b = roots_point[start + j_local]
+            if np.isfinite(beta_a.real) and np.isfinite(beta_a.imag) and np.isfinite(beta_b.real) and np.isfinite(beta_b.imag):
+                beta_zero = 0.5 * (beta_a + beta_b)
+            elif np.isfinite(beta_a.real) and np.isfinite(beta_a.imag):
+                beta_zero = beta_a
+            else:
+                beta_zero = beta_b
+
+            return {
+                "inds": (start + int(i_local), start + int(j_local)),
+                "distance": min_dist,
+                "beta2_zero": beta_zero,
+            }
+
+        return {
+            "left_double_root": detect_boundary_double_root(roots_left, r3_left, left_bounds),
+            "right_double_root": detect_boundary_double_root(roots_right, r3_right, right_bounds),
+            "cross_matches": cross_matches,
+            "is_confident": is_confident,
+        }
+
+    # ---- bisection refinement ----
 
     def refine_continuum_boundary(
+        self,
         theta_nondeg: float,
         theta_deg: float,
         deg_on_right: bool,
-        max_iter: int = 60
+        max_iter: int = 60,
     ) -> float:
         left = float(theta_nondeg)
         right = float(theta_deg)
@@ -372,7 +427,7 @@ def get_roots_and_PMGBZ(
 
         for _ in range(max_iter):
             mid = 0.5 * (left + right)
-            mid_is_deg = is_degenerate(mid)
+            mid_is_deg = self.is_degenerate(mid)
             if deg_on_right:
                 if mid_is_deg:
                     right = mid
@@ -383,13 +438,14 @@ def get_roots_and_PMGBZ(
                     left = mid
                 else:
                     right = mid
-        return normalize_theta(0.5 * (left + right))
+        return _normalize_theta(0.5 * (left + right))
 
     def refine_accidental_point(
+        self,
         theta_left: float,
         roots_left: np.ndarray,
         theta_right: float,
-        max_iter: int = 60
+        max_iter: int = 60,
     ) -> tuple[float, np.ndarray]:
         left = float(theta_left)
         right = float(theta_right)
@@ -400,71 +456,74 @@ def get_roots_and_PMGBZ(
 
         for _ in range(max_iter):
             mid = 0.5 * (left + right)
-            mid_roots = solve_sorted_roots(mid)
+            mid_roots = self.solve(mid)
 
-            if _is_pmgbz_degenerate(mid_roots, M, zero_tol):
-                return normalize_theta(mid), mid_roots
+            if _is_pmgbz_degenerate(mid_roots, self.M, self.zero_tol):
+                return _normalize_theta(mid), mid_roots
 
-            cross_left_mid = _cross_boundary_matches(left_roots, mid_roots, M)
-            if cross_left_mid:
+            if _cross_boundary_matches(left_roots, mid_roots, self.M):
                 right = mid
             else:
                 left = mid
                 left_roots = mid_roots
 
-        theta_refined = normalize_theta(0.5 * (left + right))
-        return theta_refined, solve_sorted_roots(theta_refined)
+        theta_refined = _normalize_theta(0.5 * (left + right))
+        return theta_refined, self.solve(theta_refined)
 
-    # 1) Solve on a uniform theta1 mesh (fills cache) and sort by |beta2|.
-    _, sols_mesh = solve_roots_on_mesh(
-        poly_diff, E_ref, mu1, N_points, cache=cache,
-    )
-    roots_base = sols_mesh[:-1]
+    # ---- accidental-point recursion ----
 
-    # 2) Detect continuum-degenerate intervals from |beta_M| == |beta_{M+1}|.
-    degenerate_mask = np.array(
-        [_is_pmgbz_degenerate(roots_base[i], M, zero_tol) for i in range(theta_base.size)],
-        dtype=bool
-    )
-    continuum_intervals = find_cyclic_true_intervals(degenerate_mask)
-
-    PMGBZ_points = []
-    special_thetas = []
-    continuum_flag = False
-    theta_step = 2 * pi / theta_base.size
-    point_like_theta_tol = max(1e-8, 0.25 * theta_step)
-    recursive_theta_tol = max(1e-12, 1e-4 * theta_step)
-    match_confidence_tol = 1e-3
-    double_root_tol = GBZ_check_tol
+    def validate_point(
+        self,
+        roots_point: np.ndarray,
+        theta_point: float,
+        theta_left: float,
+        theta_right: float,
+    ) -> dict:
+        beta1_point = exp(self.mu1 + 1j * _normalize_theta(theta_point))
+        return _validate_pmgbz_point(
+            roots_point,
+            self.M,
+            self.poly,
+            self.E_ref,
+            beta1_point,
+            theta_point,
+            theta_left,
+            theta_right,
+            self.solve,
+            self.GBZ_check_tol,
+        )
 
     def should_recurse_interval(
+        self,
         theta_a: float,
         theta_b: float,
         parent_width: float,
     ) -> bool:
         child_width = _interval_width(theta_a, theta_b)
-        progress_tol = max(recursive_theta_tol, 1e-8 * parent_width)
+        progress_tol = max(self.recursive_theta_tol, 1e-8 * parent_width)
         return (child_width > progress_tol) and (child_width < parent_width - progress_tol)
 
     def process_interval(
+        self,
         theta_left: float,
         roots_left: np.ndarray,
         theta_right: float,
         roots_right: np.ndarray,
         depth: int = 0,
     ) -> list[dict]:
+        """Unified interval recursion (see log-old.md):
+
+        - matching not confident → emit boundary double roots if present,
+          otherwise subdivide;
+        - confident, no cross-boundary match → interval done;
+        - confident with crossings → one PMGBZ search, then recurse on both
+          sides using the limit-ordered roots at the crossing.
+        """
         if depth > 600:
             raise RecursionError(
                 f"Exceeded PMGBZ recursion depth on interval ({theta_left}, {theta_right})."
             )
-        analysis = _analyze_boundary_matching(
-            roots_left,
-            roots_right,
-            M,
-            GBZ_check_tol,
-            match_confidence_tol,
-            double_root_tol,
-        )
+        analysis = self.analyze_boundary_matching(roots_left, roots_right)
 
         double_root_points = []
         if not analysis["is_confident"]:
@@ -474,11 +533,8 @@ def get_roots_and_PMGBZ(
             ):
                 if root_info is None:
                     continue
-                theta_norm = normalize_theta(theta_point)
-                if any(
-                    abs(((p["theta1"] - theta_norm + pi) % (2 * pi)) - pi) < 1e-8
-                    for p in double_root_points
-                ):
+                theta_norm = _normalize_theta(theta_point)
+                if any(_theta_close(p["theta1"], theta_norm) for p in double_root_points):
                     continue
                 double_root_points.append(
                     {
@@ -490,7 +546,7 @@ def get_roots_and_PMGBZ(
         if double_root_points:
             return double_root_points
 
-        if _interval_width(theta_left, theta_right) <= recursive_theta_tol:
+        if _interval_width(theta_left, theta_right) <= self.recursive_theta_tol:
             if analysis["is_confident"] and analysis["cross_matches"]:
                 raise ValueError(
                     f"Unresolved PMGBZ crossings remain in a tiny interval: "
@@ -500,46 +556,23 @@ def get_roots_and_PMGBZ(
 
         if not analysis["is_confident"]:
             theta_mid = 0.5 * (theta_left + theta_right)
-            roots_mid = solve_sorted_roots(theta_mid)
-            left_points = process_interval(
-                theta_left,
-                roots_left,
-                theta_mid,
-                roots_mid,
-                depth + 1,
+            roots_mid = self.solve(theta_mid)
+            return (
+                self.process_interval(theta_left, roots_left, theta_mid, roots_mid, depth + 1)
+                + self.process_interval(theta_mid, roots_mid, theta_right, roots_right, depth + 1)
             )
-            right_points = process_interval(
-                theta_mid,
-                roots_mid,
-                theta_right,
-                roots_right,
-                depth + 1,
-            )
-            return left_points + right_points
 
         if not analysis["cross_matches"]:
             return []
 
         parent_width = _interval_width(theta_left, theta_right)
-        theta_cross, roots_cross = refine_accidental_point(theta_left, roots_left, theta_right)
+        theta_cross, roots_cross = self.refine_accidental_point(theta_left, roots_left, theta_right)
         theta_cross = _unwrap_theta(theta_cross, theta_left)
-        beta1_cross = exp(mu1 + 1j * normalize_theta(theta_cross))
-        validation = _validate_pmgbz_point(
-            roots_cross,
-            M,
-            poly_diff,
-            E_ref,
-            beta1_cross,
-            theta_cross,
-            theta_left,
-            theta_right,
-            solve_sorted_roots,
-            GBZ_check_tol,
-        )
+        validation = self.validate_point(roots_cross, theta_cross, theta_left, theta_right)
 
         left_points = []
-        if should_recurse_interval(theta_left, theta_cross, parent_width):
-            left_points = process_interval(
+        if self.should_recurse_interval(theta_left, theta_cross, parent_width):
+            left_points = self.process_interval(
                 theta_left,
                 roots_left,
                 theta_cross,
@@ -548,8 +581,8 @@ def get_roots_and_PMGBZ(
             )
 
         right_points = []
-        if should_recurse_interval(theta_cross, theta_right, parent_width):
-            right_points = process_interval(
+        if self.should_recurse_interval(theta_cross, theta_right, parent_width):
+            right_points = self.process_interval(
                 theta_cross,
                 validation["right_limit_roots"],
                 theta_right,
@@ -561,7 +594,7 @@ def get_roots_and_PMGBZ(
         if not validation["is_fake"]:
             curr_points.append(
                 {
-                    "theta1": normalize_theta(theta_cross),
+                    "theta1": _normalize_theta(theta_cross),
                     "beta2_sols": validation["beta2_sols"],
                     "is_continuum": False,
                 }
@@ -569,210 +602,204 @@ def get_roots_and_PMGBZ(
 
         return left_points + curr_points + right_points
 
-    # --- sweep-mode pre-pass: skip refinement for runs of >=2 degenerate mesh points ---
-    run_lengths = [
-        (end_idx - start_idx) % theta_base.size + 1
-        for start_idx, end_idx in continuum_intervals
-    ]
-    if not refine_continuum and any(L >= 2 for L in run_lengths):
-        continuum_flag = True
-        for start_idx, end_idx in continuum_intervals:
-            L = (end_idx - start_idx) % theta_base.size + 1
-            if L >= 2:
-                start_theta = normalize_theta(theta_base[start_idx])
-                end_theta = normalize_theta(theta_base[end_idx])
-                PMGBZ_points.append({
-                    "theta1_start": start_theta,
-                    "theta1_end": end_theta,
-                    "is_continuum": True,
-                })
-        # Assemble provisional gbz (non-empty, replaced later by precise solve).
-        subsets_early = []
-        for p in PMGBZ_points:
-            if p.get("is_continuum", False):
-                subsets_early.append(LineSubset(
-                    E=E_ref, mu1=mu1,
-                    theta1_start=p["theta1_start"],
-                    theta1_end=p["theta1_end"],
-                    _M=M, _N=N, _poly_diff=poly_diff,
-                ))
-            else:
-                beta1_pt = exp(mu1 + 1j * p["theta1"])
-                for beta2_val in chain(*p["beta2_sols"]):
-                    subsets_early.append(PointSubset(E=E_ref, beta1=beta1_pt, beta2=beta2_val))
-        n_0d_early = sum(1 for s in subsets_early if isinstance(s, PointSubset))
-        n_1d_early = sum(1 for s in subsets_early if isinstance(s, LineSubset))
-        gbz_result = GBZResult(
-            E_ref=E_ref, subsets=subsets_early, index=(n_0d_early, n_1d_early),
-        )
-        theta1_arr = np.hstack((theta_base, [theta_base[0] + 2 * pi]))
-        sols_arr = np.vstack((roots_base, roots_base[0]))
-        return gbz_result, theta1_arr, sols_arr, {
-            "M": M, "N": N, "continuum_flag": True,
-            "_pmgbz_raw": PMGBZ_points,
-        }
+    # ---- per-stage drivers ----
 
-    for start_idx, end_idx in continuum_intervals:
-        if np.all(degenerate_mask):
+    def handle_degenerate_interval(
+        self,
+        start_idx: int,
+        end_idx: int,
+        PMGBZ_points: list,
+        special_thetas: list,
+    ) -> None:
+        """Refine one degenerate mesh run into a continuum interval or, when
+        its refined width vanishes, a single accidental point."""
+        theta_base = self.theta_base
+        if np.all(self.degenerate_mask):
+            # Whole loop degenerate.  (Only reachable with
+            # refine_continuum=True: a full-circle run has length >= 2 and
+            # triggers the sweep-mode early return.)
             start_theta = 0.0
             end_theta = 2 * pi
+            interval_width = 2 * pi
         else:
             prev_idx = (start_idx - 1) % theta_base.size
             next_idx = (end_idx + 1) % theta_base.size
-            start_theta = refine_continuum_boundary(
+            start_theta = self.refine_continuum_boundary(
                 theta_base[prev_idx],
                 theta_base[start_idx],
-                deg_on_right=True
+                deg_on_right=True,
             )
-            end_theta = refine_continuum_boundary(
+            end_theta = self.refine_continuum_boundary(
                 theta_base[end_idx],
                 theta_base[next_idx],
-                deg_on_right=False
+                deg_on_right=False,
             )
-
-        if np.all(degenerate_mask):
-            interval_width = 2 * pi
-        else:
             interval_width = (end_theta - start_theta) % (2 * pi)
 
         # A "continuum interval" with vanishing width is just one accidental point
         # (including the periodic case start~2pi and end~0 for the same theta).
-        if interval_width <= point_like_theta_tol:
-            theta_point = normalize_theta(start_theta)
-            roots_point = solve_sorted_roots(theta_point)
-            beta1_point = exp(mu1 + 1j * theta_point)
-            validation = _validate_pmgbz_point(
+        if interval_width <= self.point_like_theta_tol:
+            theta_point = _normalize_theta(start_theta)
+            roots_point = self.solve(theta_point)
+            validation = self.validate_point(
                 roots_point,
-                M,
-                poly_diff,
-                E_ref,
-                beta1_point,
                 theta_point,
-                theta_point - theta_step,
-                theta_point + theta_step,
-                solve_sorted_roots,
-                GBZ_check_tol,
+                theta_point - self.theta_step,
+                theta_point + self.theta_step,
             )
             if not validation["is_fake"]:
                 PMGBZ_points.append(
                     {
                         "theta1": theta_point,
                         "beta2_sols": validation["beta2_sols"],
-                        "is_continuum": False
+                        "is_continuum": False,
                     }
                 )
                 special_thetas.append(theta_point)
-            continue
+            return
 
-        continuum_flag = True
         PMGBZ_points.append(
             {
                 "theta1_start": start_theta,
                 "theta1_end": end_theta,
-                "is_continuum": True
+                "is_continuum": True,
             }
         )
         special_thetas.extend([start_theta, end_theta])
 
-    # --- sweep-mode second early return: all run==1 intervals processed, some turned out continuum ---
-    if not refine_continuum and continuum_flag:
-        subsets_early2 = []
+    def accidental_scan(
+        self,
+        PMGBZ_points: list,
+        special_thetas: list,
+    ) -> None:
+        """Stage 3: accidental PMGBZ points between non-degenerate mesh pairs.
+
+        Wide-gap pre-filter: a pair is skipped when the boundary gap exceeds
+        gap_skip_tol at the pair AND at both outer neighbours (4 consecutive
+        mesh points) — a crossing needs |beta_M| == |beta_{M-1}| somewhere
+        inside, which cannot happen without the gap collapsing at a nearby
+        sample.  All other pairs go through the full interval recursion.
+        """
+        theta_base = self.theta_base
+        n = theta_base.size
+        wide = self.wide_gap_mask
+        for i in range(n):
+            j = (i + 1) % n
+            if self.degenerate_mask[i] or self.degenerate_mask[j]:
+                continue
+            if wide[(i - 1) % n] and wide[i] and wide[j] and wide[(j + 1) % n]:
+                continue
+
+            roots_i = self.roots_base[i]
+            roots_j = self.roots_base[j]
+
+            theta_left = float(theta_base[i])
+            theta_right = float(theta_base[j])
+            if theta_right <= theta_left:
+                theta_right += 2 * pi
+
+            interval_points = self.process_interval(theta_left, roots_i, theta_right, roots_j)
+            for point in interval_points:
+                theta_curr = point["theta1"]
+                already_added = any(
+                    (not p.get("is_continuum", False)) and _theta_close(p["theta1"], theta_curr)
+                    for p in PMGBZ_points
+                )
+                if already_added:
+                    continue
+                PMGBZ_points.append(point)
+                special_thetas.append(theta_curr)
+
+    def assemble(
+        self,
+        PMGBZ_points: list,
+        special_thetas: list,
+    ) -> tuple[GBZResult, np.ndarray, np.ndarray, dict]:
+        """Stage 4: output arrays with added special points and periodic
+        closure, plus the GBZResult of ConnectedSubsets."""
+        if special_thetas:
+            theta_core = np.unique(np.hstack((self.theta_base, np.array(special_thetas))))
+        else:
+            theta_core = self.theta_base
+        theta_core.sort()
+
+        sols_core = np.vstack([self.solve(theta) for theta in theta_core])
+        theta1_arr = np.hstack((theta_core, [theta_core[0] + 2 * pi]))
+        sols_arr = np.vstack((sols_core, sols_core[0]))
+
+        subsets = []
         for p in PMGBZ_points:
             if p.get("is_continuum", False):
-                subsets_early2.append(LineSubset(
-                    E=E_ref, mu1=mu1,
+                subsets.append(LineSubset(
+                    E=self.E_ref, mu1=self.mu1,
                     theta1_start=p["theta1_start"],
                     theta1_end=p["theta1_end"],
-                    _M=M, _N=N, _poly_diff=poly_diff,
                 ))
             else:
-                beta1_pt = exp(mu1 + 1j * p["theta1"])
-                for beta2_val in chain(*p["beta2_sols"]):
-                    subsets_early2.append(PointSubset(E=E_ref, beta1=beta1_pt, beta2=beta2_val))
-        n_0d_e2 = sum(1 for s in subsets_early2 if isinstance(s, PointSubset))
-        n_1d_e2 = sum(1 for s in subsets_early2 if isinstance(s, LineSubset))
-        gbz_result = GBZResult(
-            E_ref=E_ref, subsets=subsets_early2, index=(n_0d_e2, n_1d_e2),
-        )
-        theta1_arr = np.hstack((theta_base, [theta_base[0] + 2 * pi]))
-        sols_arr = np.vstack((roots_base, roots_base[0]))
+                beta1_pt = exp(self.mu1 + 1j * p["theta1"])
+                pos_sols, neg_sols, zero_sols = p["beta2_sols"]
+                for beta2_val in chain(pos_sols, neg_sols, zero_sols):
+                    subsets.append(PointSubset(E=self.E_ref, beta1=beta1_pt, beta2=beta2_val))
+
+        n_0d = sum(1 for s in subsets if isinstance(s, PointSubset))
+        n_1d = sum(1 for s in subsets if isinstance(s, LineSubset))
+        gbz_result = GBZResult(E_ref=self.E_ref, subsets=subsets, index=(n_0d, n_1d))
+
         return gbz_result, theta1_arr, sols_arr, {
-            "M": M, "N": N, "continuum_flag": True,
-            "_pmgbz_raw": PMGBZ_points,
+            "continuum_flag": any(p.get("is_continuum", False) for p in PMGBZ_points),
+            "_pmgbz_raw": PMGBZ_points,  # kept for internal winding formula
         }
 
-    # 3) In non-continuum segments, use Hungarian matching to find accidental PMGBZ points.
-    for i in range(theta_base.size):
-        j = (i + 1) % theta_base.size
-        if degenerate_mask[i] or degenerate_mask[j]:
-            continue
 
-        roots_i = roots_base[i]
-        roots_j = roots_base[j]
+def get_roots_and_PMGBZ(
+    poly: CharPoly,  # f(E, beta1, beta2)
+    E_ref: complex,  # reference energy
+    mu1: float,  # mu1 = log(|beta1|)
+    N_points: int = 301,  # number of points around the loop |beta1| = exp(mu1)
+    zero_tol: float = 1e-10,  # tolerance for the zero of the characteristic polynomial
+    GBZ_check_tol: float = 1e-6,
+    refine_continuum: bool = True,
+) -> tuple[GBZResult, np.ndarray, np.ndarray, dict]:
+    """Find all PMGBZ points (LineSubset + PointSubset) at (E_ref, mu1).
 
-        theta_left = float(theta_base[i])
-        theta_right = float(theta_base[j])
-        if theta_right <= theta_left:
-            theta_right += 2 * pi
-        analysis = _analyze_boundary_matching(
-            roots_i,
-            roots_j,
-            M,
-            GBZ_check_tol,
-            match_confidence_tol,
-            double_root_tol,
-        )
-        if analysis["is_confident"] and not analysis["cross_matches"]:
-            continue
+    Pipeline: mesh root-solve → continuum-degenerate runs (boundaries
+    refined by bisection; vanishing-width runs degrade to accidental
+    points) → Stage 3 accidental-point recursion on non-degenerate mesh
+    pairs, gated by the wide-gap pre-filter (see accidental_scan).
 
-        interval_points = process_interval(
-            theta_left, roots_i, theta_right, roots_j
-        )
-        for point in interval_points:
-            theta_curr = point["theta1"]
-            already_added = any(
-                (not p.get("is_continuum", False))
-                and abs(((p["theta1"] - theta_curr + pi) % (2 * pi)) - pi) < 1e-8
-                for p in PMGBZ_points
-            )
-            if already_added:
-                continue
-            PMGBZ_points.append(point)
-            special_thetas.append(theta_curr)
+    refine_continuum=False (sweep mode, used by the mu1 bisection in
+    solve_SGBZ_for_E): as soon as a run of >= 2 consecutive degenerate mesh
+    points proves a continuum exists, return immediately.  The returned
+    GBZResult is then a bare carrier for the continuum_flag=True info dict —
+    handle_continuum computes the precise subsets via refine_continuum=True,
+    so the placeholder is never exposed to users.
 
-    # 4) Build output arrays with added special points and periodic closure.
-    if special_thetas:
-        theta_core = np.unique(np.hstack((theta_base, np.array(special_thetas))))
-    else:
-        theta_core = theta_base
-    theta_core.sort()
+    Parameters / returns: see module docstring.
+    """
+    scan = _PmgbzScan(poly, E_ref, mu1, N_points, zero_tol, GBZ_check_tol)
+    scan.solve_mesh()
 
-    sols_core = np.vstack([solve_sorted_roots(theta) for theta in theta_core])
-    theta1_arr = np.hstack((theta_core, [theta_core[0] + 2 * pi]))
-    sols_arr = np.vstack((sols_core, sols_core[0]))
+    if not refine_continuum:
+        for start_idx, end_idx in scan.continuum_intervals:
+            run_length = (end_idx - start_idx) % scan.theta_base.size + 1
+            if run_length >= 2:
+                theta1_arr = np.hstack((scan.theta_base, [scan.theta_base[0] + 2 * pi]))
+                sols_arr = np.vstack((scan.roots_base, scan.roots_base[0]))
+                return GBZResult(E_ref=E_ref), theta1_arr, sols_arr, {
+                    "continuum_flag": True,
+                    "_pmgbz_raw": [{
+                        "theta1_start": _normalize_theta(scan.theta_base[start_idx]),
+                        "theta1_end": _normalize_theta(scan.theta_base[end_idx]),
+                        "is_continuum": True,
+                    }],
+                }
 
-    # Build GBZResult with ConnectedSubsets
-    subsets = []
-    for p in PMGBZ_points:
-        if p.get("is_continuum", False):
-            subsets.append(LineSubset(
-                E=E_ref, mu1=mu1,
-                theta1_start=p["theta1_start"],
-                theta1_end=p["theta1_end"],
-                _M=M, _N=N, _poly_diff=poly_diff,
-            ))
-        else:
-            beta1_pt = exp(mu1 + 1j * p["theta1"])
-            pos_sols, neg_sols, zero_sols = p["beta2_sols"]
-            for beta2_val in chain(pos_sols, neg_sols, zero_sols):
-                subsets.append(PointSubset(E=E_ref, beta1=beta1_pt, beta2=beta2_val))
+    PMGBZ_points: list[dict] = []
+    special_thetas: list[float] = []
 
-    n_0d = sum(1 for s in subsets if isinstance(s, PointSubset))
-    n_1d = sum(1 for s in subsets if isinstance(s, LineSubset))
-    gbz_result = GBZResult(E_ref=E_ref, subsets=subsets, index=(n_0d, n_1d))
+    for start_idx, end_idx in scan.continuum_intervals:
+        scan.handle_degenerate_interval(start_idx, end_idx, PMGBZ_points, special_thetas)
 
-    return gbz_result, theta1_arr, sols_arr, {
-        "M": M, "N": N, "continuum_flag": continuum_flag,
-        "_pmgbz_raw": PMGBZ_points,  # kept for internal winding formula
-    }
+    scan.accidental_scan(PMGBZ_points, special_thetas)
 
+    return scan.assemble(PMGBZ_points, special_thetas)

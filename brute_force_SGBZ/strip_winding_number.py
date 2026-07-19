@@ -27,9 +27,9 @@ from cmath import exp
 from typing import Optional
 from scipy import interpolate
 
-from .winding import WindingFun, PolyDiffContext, get_winding_number
+from .winding import WindingFun, get_winding_number
 from .pmgbz_detector import get_roots_and_PMGBZ
-from gbz_types import GBZResult
+from gbz_types import GBZResult, CharPoly
 
 # Winding value: float at normal points, None at continuum points.
 StripWinding = Optional[float]
@@ -37,7 +37,7 @@ StripWindingResult = tuple[StripWinding, GBZResult]
 
 
 def get_loop_winding(
-    poly_diff: PolyDiffContext,
+    poly: CharPoly,
     E_ref: complex,
     mu1: float,
     mu2_fun: callable,
@@ -50,7 +50,7 @@ def get_loop_winding(
     beta1 = exp(mu1 + i*theta1), beta2 = exp(mu2(theta1) + i*theta2).
 
     Parameters:
-        poly_diff: polynomial evaluation context.
+        poly: polynomial evaluation context.
         E_ref: reference energy.
         mu1: log|beta1| of the strip.
         mu2_fun: periodic spline theta1 -> mu2 (mid-gap log-radius of beta2).
@@ -76,12 +76,12 @@ def get_loop_winding(
         ])
         return param, dparam
 
-    winding_fun = WindingFun(poly_diff.char_poly, param_fun, (0, 2 * pi))
+    winding_fun = WindingFun(poly, param_fun, (0, 2 * pi))
     return get_winding_number(winding_fun, N_seg=N_seg)
 
 
 def _strip_winding_from_result(
-    poly_diff: PolyDiffContext,
+    poly: CharPoly,
     E_ref: complex,
     mu1: float,
     gbz_result: GBZResult,
@@ -99,7 +99,7 @@ def _strip_winding_from_result(
     for row_ind in range(sols_arr.shape[0]):
         sols_arr[row_ind, :] = sols_arr[row_ind, np.argsort(np.abs(sols_arr[row_ind, :]))]
 
-    M = info["M"]
+    M = poly.M
     PMGBZ_raw = info.get("_pmgbz_raw", [])
 
     if info["continuum_flag"]:
@@ -134,7 +134,7 @@ def _strip_winding_from_result(
         theta2_samples = (np.linspace(0, 2 * pi, N_samples, endpoint=False) + offset) % (2 * pi)
         mu2_diff_samples = [calc_loop_root_distance(theta2) for theta2 in theta2_samples]
         theta2_median = theta2_samples[np.argmax(mu2_diff_samples)]
-        W_strip = np.round(get_loop_winding(poly_diff, E_ref, mu1, mu2_fun, theta2_median))
+        W_strip = np.round(get_loop_winding(poly, E_ref, mu1, mu2_fun, theta2_median))
     else:
         # Collect beta2 values from raw PMGBZ classification (pos / neg / zero)
         PMGBZ_beta2_pos = []
@@ -164,7 +164,7 @@ def _strip_winding_from_result(
         mu2_diff_samples = [calc_loop_root_distance(theta2) for theta2 in theta2_samples]
         theta2_median = theta2_samples[np.argmax(mu2_diff_samples)]
 
-        w0 = np.round(get_loop_winding(poly_diff, E_ref, mu1, mu2_fun, theta2_median))
+        w0 = np.round(get_loop_winding(poly, E_ref, mu1, mu2_fun, theta2_median))
         theta2_pos = np.angle(PMGBZ_beta2_pos / exp(1j * theta2_median)) % (2 * pi)
         theta2_neg = np.angle(PMGBZ_beta2_neg / exp(1j * theta2_median)) % (2 * pi)
         W_strip = w0 + (np.sum(theta2_neg) - np.sum(theta2_pos)) / (2 * pi)
@@ -173,7 +173,7 @@ def _strip_winding_from_result(
 
 
 def get_strip_winding(
-    poly_diff: PolyDiffContext,
+    poly: CharPoly,
     E_ref: complex,
     mu1: float,
     N_points: int = 301,
@@ -184,30 +184,29 @@ def get_strip_winding(
 ) -> StripWindingResult:
     """Compute the strip winding number and GBZ points at (E_ref, mu1).
 
-    Convenience wrapper: runs get_roots_and_PMGBZ to solve the beta2 roots
-    and detect PMGBZ points, then delegates to _strip_winding_from_result.
+    Convenience wrapper: get_roots_and_PMGBZ + _strip_winding_from_result.
 
     Parameters:
-        poly_diff: polynomial evaluation context.
+        poly: polynomial evaluation context.
         E_ref: reference energy.
         mu1: log|beta1| of the strip.
         N_points: number of theta1 mesh points on [0, 2*pi).
         continuum_perturb: mu1 offset for continuum left/right limits.
         zero_tol: PMGBZ gap zero-threshold.
         GBZ_check_tol: equal-modulus cluster detection tolerance.
-        refine_continuum: forwarded to get_roots_and_PMGBZ.  When False,
-            continuum detection skips boundary refinement and stage-3
-            accidental-point detection.
+        refine_continuum: forwarded to get_roots_and_PMGBZ.  When False
+            (sweep mode), continuum detection returns immediately without
+            boundary refinement or stage-3 accidental-point detection.
 
     Returns:
         (winding, GBZResult) — winding is float for normal points or
         None for continuum points.
     """
     gbz_result, theta1_arr, sols_arr, info = get_roots_and_PMGBZ(
-        poly_diff, E_ref, mu1, N_points, zero_tol, GBZ_check_tol,
+        poly, E_ref, mu1, N_points, zero_tol, GBZ_check_tol,
         refine_continuum=refine_continuum,
     )
     return _strip_winding_from_result(
-        poly_diff, E_ref, mu1,
+        poly, E_ref, mu1,
         gbz_result, theta1_arr, sols_arr, info,
     )

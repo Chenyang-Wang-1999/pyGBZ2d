@@ -6,7 +6,6 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 
 ''' Functions for winding number calculations '''
 
-import poly_tools as pt
 import numpy as np
 
 from scipy import integrate
@@ -14,28 +13,7 @@ from math import pi
 from scipy import sparse
 from scipy.sparse import linalg as spla
 
-
-class PolyDiffContext:
-    """Bundle polynomial value/derivative evaluation for reuse."""
-    char_poly: pt.CLaurent
-    dchar_poly: list[pt.CLaurent]
-
-    def __init__(self, char_poly: pt.CLaurent):
-        self.char_poly = char_poly
-        self.dchar_poly = [char_poly.derivative(var_ind) for var_ind in range(char_poly.dim)]
-
-    def eval_val(self, var: tuple[complex]) -> complex:
-        return self.char_poly.eval(pt.CScalarVec(var))
-
-    def eval_partials(self, var: tuple[complex]) -> list[complex]:
-        var_ctype = pt.CScalarVec(var)
-        return [dchar.eval(var_ctype) for dchar in self.dchar_poly]
-    
-    def eval_dmu2(self, var: tuple[complex]):
-        '''Reture (dmu2/dmu1, dmu2/dtheta1)'''
-        partials = self.eval_partials(var)
-        complex_diff = var[1] * partials[1] / (var[2] * partials[2])
-        return (-complex_diff.real, complex_diff.imag)
+from gbz_types import CharPoly
 
 
 class WindingFun:
@@ -45,31 +23,26 @@ class WindingFun:
     d/dt Im log f(param(t)); its integral over loop_range divided by 2*pi
     is the winding number of f around zero (see get_winding_number).
     """
-    poly_diff: PolyDiffContext
-    char_poly: pt.CLaurent
+    char_poly: CharPoly
     loop_fun: callable  # Input: t. Output: param, dparam/dt
-    dchar_poly: list[pt.CLaurent]
     loop_range: tuple[float, float]
 
-    def __init__(self, char_poly: pt.CLaurent, loop_fun: callable, loop_range: tuple[float, float]):
+    def __init__(self, char_poly: CharPoly, loop_fun: callable, loop_range: tuple[float, float]):
         """
         Parameters:
-            char_poly: characteristic Laurent polynomial f(vars).
+            char_poly: characteristic Laurent polynomial (CharPoly instance).
             loop_fun: loop in variable space, t -> (param, dparam/dt) where
                 param collects the polynomial variables at t.
             loop_range: (t_start, t_end) parameter range of the closed loop.
         """
-        self.poly_diff = PolyDiffContext(char_poly)
-        # Keep compatibility with existing code that accesses these attributes.
-        self.char_poly = self.poly_diff.char_poly
-        self.dchar_poly = self.poly_diff.dchar_poly
+        self.char_poly = char_poly
         self.loop_fun = loop_fun
         self.loop_range = loop_range
 
     def __call__(self, t: float) -> complex:
         param, dparam_dt = self.loop_fun(t)
-        val = self.poly_diff.eval_val(param)
-        partials = self.poly_diff.eval_partials(param)
+        val = self.char_poly.eval_val(param)
+        partials = self.char_poly.eval_partials(param)
         dval_dt = sum(partials[param_ind] * dparam_dt[param_ind] for param_ind in range(len(partials)))
         return (dval_dt / val).imag
 

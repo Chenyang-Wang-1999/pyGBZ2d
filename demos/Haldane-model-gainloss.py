@@ -10,7 +10,6 @@ from cmath import exp, log
 import numpy as np
 from BerryPy import TightBinding as tb
 import matplotlib.pyplot as plt
-import poly_tools as pt
 import pickle
 from scipy import linalg as la
 from typing import Literal
@@ -108,7 +107,7 @@ def sweep_amoeba():
     model = Haldane_non_Hermitian_phase(*ALL_PARAMS)
     coeffs, degs = model.get_characteristic_polynomial_data()
 
-    N_points = 101
+    N_points = 51
     E_real = np.linspace(-3.1, 4.6, N_points)
     E_imag = np.linspace(-0.51, 0.51, N_points)
     E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
@@ -145,7 +144,7 @@ def sweep_amoeba_multiband():
  
     coeffs, degs = model.get_characteristic_polynomial_data()
 
-    N_points = 101
+    N_points = 51
     E_real = np.linspace(-3.1, 4.6, N_points)
     E_imag = np.linspace(-0.51, 0.51, N_points)
     E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
@@ -175,7 +174,7 @@ def sweep_SGBZ_a1():
     model = Haldane_non_Hermitian_phase(*ALL_PARAMS)
     coeffs, degs = model.get_characteristic_polynomial_data()
 
-    N_points = 101
+    N_points = 51
     E_real = np.linspace(-3.1, 4.6, N_points)
     E_imag = np.linspace(-0.51, 0.51, N_points)
     E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
@@ -211,7 +210,7 @@ def sweep_SGBZ_a2():
     )
     coeffs, degs = model.get_characteristic_polynomial_data()
 
-    N_points = 101
+    N_points = 51
     E_real = np.linspace(-3.1, 4.6, N_points)
     E_imag = np.linspace(-0.51, 0.51, N_points)
     E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
@@ -247,7 +246,7 @@ def sweep_SGBZ_x():
     )
     coeffs, degs = model.get_characteristic_polynomial_data()
 
-    N_points = 101
+    N_points = 51
     E_real = np.linspace(-3.1, 4.6, N_points)
     E_imag = np.linspace(-0.51, 0.51, N_points)
     E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
@@ -283,7 +282,7 @@ def sweep_SGBZ_y():
     )
     coeffs, degs = model.get_characteristic_polynomial_data()
 
-    N_points = 101
+    N_points = 51
     E_real = np.linspace(-3.1, 4.6, N_points)
     E_imag = np.linspace(-0.51, 0.51, N_points)
     # E_imag = np.array([0])
@@ -393,15 +392,15 @@ def plot_SGBZ_mu(which="a1"):
 if __name__ == "__main__":
     # sweep_amoeba()
     # sweep_amoeba_multiband()
-    # sweep_SGBZ_a1()
-    # sweep_SGBZ_a2()
-    # sweep_SGBZ_x()
-    # sweep_SGBZ_y()
+    sweep_SGBZ_a1()
+    sweep_SGBZ_a2()
+    sweep_SGBZ_x()
+    sweep_SGBZ_y()
     # plot_amoebic_spectrum()
-    plot_amoeba_mu()
+    # plot_amoeba_mu()
     # plot_amoebic_spectrum("-xy")
     # plot_SGBZ("a1")
     # plot_SGBZ("a2")
     # plot_SGBZ("x")
     # plot_SGBZ("y")
-    plt.show()
+    # plt.show()

@@ -12,21 +12,18 @@ root-track-based winding computation.
 from typing import Optional
 import warnings
 import numpy as np
-import poly_tools as pt
 from math import pi
 from cmath import exp
 from scipy.optimize import fsolve
 
-from brute_force_SGBZ.root_solver import calculate_point_roots
-from brute_force_SGBZ.winding import PolyDiffContext
 from gbz_types import (
-    get_minor_degrees, find_cyclic_true_intervals,
+    CharPoly, get_minor_degrees, find_cyclic_true_intervals,
 )
 
 from .tracks import _compute_root_tracks
 
 def _find_exact_crossing(
-    poly_diff: PolyDiffContext,
+    poly: CharPoly,
     E_ref: complex,
     mu1: float,
     mu2: float,
@@ -44,14 +41,14 @@ def _find_exact_crossing(
         t1, t2 = theta
         beta1 = exp(mu1 + 1j * t1)
         beta2 = exp(mu2 + 1j * t2)
-        val = poly_diff.eval_val((E_ref, beta1, beta2))
+        val = poly.eval_val((E_ref, beta1, beta2))
         return [val.real, val.imag]
 
     def jac(theta):
         t1, t2 = theta
         beta1 = exp(mu1 + 1j * t1)
         beta2 = exp(mu2 + 1j * t2)
-        partials = poly_diff.eval_partials((E_ref, beta1, beta2))
+        partials = poly.eval_partials((E_ref, beta1, beta2))
         df_dt1 = 1j * beta1 * partials[1]
         df_dt2 = 1j * beta2 * partials[2]
         return [[df_dt1.real, df_dt2.real],
@@ -70,14 +67,14 @@ def _find_exact_crossing(
     t1, t2 = sol
     beta1 = exp(mu1 + 1j * t1)
     beta2 = exp(mu2 + 1j * t2)
-    residual = abs(poly_diff.eval_val((E_ref, beta1, beta2)))
+    residual = abs(poly.eval_val((E_ref, beta1, beta2)))
     if residual < 1e-10:
         return (float(t1 % (2 * pi)), float(t2 % (2 * pi)))
     return None
 
 
 def _get_average_winding_from_zeros(
-    char_poly: pt.CLaurent,
+    char_poly: CharPoly,
     E_ref: complex,
     mu1: float,
     mu2: float,
@@ -102,20 +99,18 @@ def _get_average_winding_from_zeros(
     (most of the circle has u = 0).  Callers can skip expensive plateau
     probing when either area exceeds a safe threshold (e.g. 1e-2).
     """
-    M, N = get_minor_degrees(PolyDiffContext(char_poly), direction)
+    M, N = char_poly.get_minor_degrees(direction)
 
     if direction == 2:
         partition_thetas = np.unique([z[0] for z in zeros])
         mu_solve = mu1
         mu_count = mu2
-        param_ind = pt.CIndexVec((0, 1))
-        var_ind = pt.CIndexVec([2])
+        param_inds, var_inds = (0, 1), (2,)
     else:
         partition_thetas = np.unique([z[1] for z in zeros])
         mu_solve = mu2
         mu_count = mu1
-        param_ind = pt.CIndexVec((0, 2))
-        var_ind = pt.CIndexVec([1])
+        param_inds, var_inds = (0, 2), (1,)
 
     partition_thetas.sort()
     n_seg = len(partition_thetas)
@@ -125,8 +120,8 @@ def _get_average_winding_from_zeros(
             beta_param = exp(mu1 + 1j * 0.0)
         else:
             beta_param = exp(mu2 + 1j * 0.0)
-        roots = calculate_point_roots(
-            char_poly, param_ind, (E_ref, beta_param), var_ind, M, N,
+        roots = char_poly.solve_roots_1d(
+            param_inds, (E_ref, beta_param), var_inds, M, N,
         )
         count_below = np.sum(np.log(np.abs(np.asarray(roots, dtype=complex))) < mu_count)
         u_const = count_below - M
@@ -144,8 +139,8 @@ def _get_average_winding_from_zeros(
         mid = (0.5 * (left + right)) % (2 * pi)
 
         beta_param = exp(mu_solve + 1j * mid)
-        roots = calculate_point_roots(
-            char_poly, param_ind, (E_ref, beta_param), var_ind, M, N,
+        roots = char_poly.solve_roots_1d(
+            param_inds, (E_ref, beta_param), var_inds, M, N,
         )
         count_below = np.sum(np.log(np.abs(np.asarray(roots, dtype=complex))) < mu_count)
         u = count_below - M
@@ -156,7 +151,7 @@ def _get_average_winding_from_zeros(
 
 
 def _compute_zero_dtheta1_dmu2(
-    poly_diff: PolyDiffContext,
+    poly: CharPoly,
     E_ref: complex,
     mu1: float,
     mu2: float,
@@ -177,7 +172,7 @@ def _compute_zero_dtheta1_dmu2(
     """
     beta1 = exp(mu1 + 1j * theta1)
     beta2 = exp(mu2 + 1j * theta2)
-    partials = poly_diff.eval_partials((E_ref, beta1, beta2))
+    partials = poly.eval_partials((E_ref, beta1, beta2))
     a = partials[1] * beta1  # df/dbeta1 * beta1
     b = partials[2] * beta2  # df/dbeta2 * beta2
 
@@ -190,7 +185,7 @@ def _compute_zero_dtheta1_dmu2(
 
 
 def _compute_winding_from_tracks(
-    char_poly: pt.CLaurent,
+    char_poly: CharPoly,
     E_ref: complex,
     mu1: float,
     mu2: float,
@@ -218,13 +213,11 @@ def _compute_winding_from_tracks(
     """
     theta1_arr = tracks["theta1_arr"]
     tracked = tracks["tracked"]
-    M = tracks["M"]
-    N = tracks["N"]
     theta1_ext = tracks["theta1_ext"]
     tracked_ext = tracks["tracked_ext"]
-    poly_diff = tracks["poly_diff"]
+    poly = tracks["char_poly"]
 
-    n_roots = M + N
+    n_roots = poly.M + poly.N
     n_pts = len(theta1_arr)
 
     # Use pre-computed ln|beta2| when available (saved by _compute_root_tracks),
@@ -288,7 +281,7 @@ def _compute_winding_from_tracks(
         for theta1_approx, beta2_approx, jump in crossing_approx:
             theta2_guess = float(np.angle(beta2_approx))
             result = _find_exact_crossing(
-                poly_diff, E_ref, mu1, mu2,
+                poly, E_ref, mu1, mu2,
                 theta1_approx % (2 * pi), theta2_guess,
             )
             if result is not None:
@@ -306,7 +299,7 @@ def _compute_winding_from_tracks(
     if refine_crossings:
         for t1, t2, jump in sorted(refined_full, key=lambda x: x[0]):
             theta1_dot = _compute_zero_dtheta1_dmu2(
-                poly_diff, E_ref, mu1, mu2, t1, t2,
+                poly, E_ref, mu1, mu2, t1, t2,
             )
             dW_dmu2 += jump * theta1_dot
 
@@ -321,7 +314,7 @@ def _compute_winding_from_tracks(
 
 
 def _compute_crossings_and_winding(
-    char_poly: pt.CLaurent,
+    char_poly: CharPoly,
     E_ref: complex,
     mu1: float,
     mu2: float,
@@ -342,7 +335,7 @@ def _compute_crossings_and_winding(
 
 
 def get_a2_average_winding(
-    char_poly: pt.CLaurent,
+    char_poly: CharPoly,
     E_ref: complex,
     mu1: float,
     mu2: float,
@@ -371,7 +364,7 @@ def get_a2_average_winding(
 
 
 def get_a1_average_winding(
-    char_poly: pt.CLaurent,
+    char_poly: CharPoly,
     E_ref: complex,
     mu1: float,
     mu2: float,

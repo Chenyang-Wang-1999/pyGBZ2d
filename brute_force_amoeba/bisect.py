@@ -10,9 +10,7 @@ bisection for the Ronkin minimum.
 """
 
 from typing import Optional
-import numpy as np
-import poly_tools as pt
-
+from gbz_types import CharPoly
 
 from .ronkin_winding import (
     _compute_winding_from_tracks, _get_average_winding_from_zeros,
@@ -95,7 +93,7 @@ def _refine_and_correct(
 
 
 def _find_mu2_for_w2_zero(
-    char_poly: pt.CLaurent,
+    char_poly: CharPoly,
     E_ref: complex,
     mu1: float,
     mu2_low: float,
@@ -213,7 +211,7 @@ def _find_mu2_for_w2_zero(
 
 
 def _resolve_continuum(
-    char_poly: pt.CLaurent,
+    char_poly: CharPoly,
     E_ref: complex,
     mu1: float,
     mu2: float,
@@ -337,7 +335,7 @@ def _resolve_continuum(
 
 
 def bisect_amoeba_ronkin_min(
-    char_poly: pt.CLaurent,
+    char_poly: CharPoly,
     E_ref: complex,
     mu1_low: float = -1,
     mu1_high: float = 1,

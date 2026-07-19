@@ -6,14 +6,11 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 
 from typing import Optional
 import numpy as np
-import poly_tools as pt
 from math import pi, sqrt
 from cmath import exp
 
-from brute_force_SGBZ.winding import PolyDiffContext
-
 from gbz_types import (
-    PointSubset, LineSubset, GBZResult, ConnectedSubset,
+    PointSubset, LineSubset, GBZResult, CharPoly,
     generate_probe_steps, find_cyclic_true_intervals,
 )
 
@@ -87,7 +84,7 @@ def _is_zero_plateau_probe(point: dict, winding_tol: float) -> bool:
 
 
 def _probe_zero_plateau_near_mu1(
-    char_poly: pt.CLaurent,
+    char_poly: CharPoly,
     E_ref: complex,
     mu1: float,
     mu1_bracket: Optional[tuple[float, float]],
@@ -225,7 +222,7 @@ def _extract_continuum_intervals(
 
 def _detect_crossings_outside_continuum(
     tracks: dict,
-    char_poly: pt.CLaurent,
+    char_poly: CharPoly,
     E: complex,
     mu1: float,
     mu2: float,
@@ -248,7 +245,7 @@ def _detect_crossings_outside_continuum(
     tracked = tracks["tracked"]
     theta1_ext = tracks["theta1_ext"]
     tracked_ext = tracks["tracked_ext"]
-    poly_diff = tracks["poly_diff"]
+    poly = tracks["char_poly"]
 
     n_roots = tracked.shape[1]
     n_pts = len(theta1_arr)
@@ -319,7 +316,7 @@ def _detect_crossings_outside_continuum(
 
             # Refine
             result = _find_exact_crossing(
-                poly_diff, E, mu1, mu2,
+                poly, E, mu1, mu2,
                 theta1_approx % (2 * pi), theta2_guess,
             )
             if result is not None:
@@ -349,10 +346,7 @@ def collect_GBZ_subsets(
         outside the amoeba GBZ spectrum.
     """
     print("%.2f" % (perc * 100) + r"%")
-    char_poly = pt.CLaurent(3)
-    coeffs_ct = pt.CScalarVec(coeffs)
-    degs_ct = pt.CLaurentIndexVec(degs.flatten())
-    char_poly.set_Laurent_by_terms(coeffs_ct, degs_ct)
+    char_poly = CharPoly(coeffs, degs)
 
     solver_options = dict(options)
     plateau_check = solver_options.pop("plateau_check", True)
@@ -375,15 +369,13 @@ def collect_GBZ_subsets(
             if tracks is None:
                 tracks = _compute_root_tracks(char_poly, E_ref, amoeba_res["mu1"])
             intervals = _extract_continuum_intervals(tracks, amoeba_res["mu2"])
-            poly_diff = tracks.get("poly_diff", PolyDiffContext(char_poly))
+            poly = tracks.get("char_poly", char_poly)
 
             # 1. Collect continuum intervals → LineSubset
             for t_start, t_end in intervals:
                 subsets.append(LineSubset(
                     E=E_ref, mu1=amoeba_res["mu1"],
                     theta1_start=t_start, theta1_end=t_end,
-                    _M=tracks["M"], _N=tracks["N"],
-                    _poly_diff=poly_diff,
                 ))
 
             # 2. Collect discrete crossings in non-continuum gaps → PointSubset

@@ -19,11 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 from cmath import exp
-import poly_tools as pt
 
 import brute_force_SGBZ as bfs
 import brute_force_amoeba as bfa
-from gbz_types import PointSubset, LineSubset, GBZResult
+from gbz_types import PointSubset, LineSubset, GBZResult, CharPoly
 
 
 def build_HN2D_polynomial(J1, J2, gamma_1, gamma_2, delta_1, delta_2):
@@ -64,6 +63,7 @@ def main():
 
     # ---- SGBZ ----
     print("\n--- collect_GBZ_subsets ([10]-SGBZ) ---")
+    poly = CharPoly(coeffs, degs)
     gbz_sgbz = bfs.collect_GBZ_subsets(coeffs, degs, E_test, 0.0, N_points=201)
     print(f"  is_gbz: {gbz_sgbz.is_gbz}")
     print(f"  index: {gbz_sgbz.index} (n_0D={gbz_sgbz.index[0]}, n_1D={gbz_sgbz.index[1]})")
@@ -83,7 +83,7 @@ def main():
             print(f"      width = {subset.theta1_width:.4f} rad")
             if not subset.is_loaded():
                 print("      beta2_arr: not loaded (lazy)")
-                subset.fill_beta2()
+                subset.fill_beta2(poly)
                 print(f"      beta2_arr loaded: shape = {subset.beta2_arr.shape}")
 
     # ---- Amoeba ----

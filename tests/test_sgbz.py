@@ -3,10 +3,9 @@
 import numpy as np
 import pytest
 from cmath import exp, log
-import poly_tools as pt
 
 import brute_force_SGBZ as bfs
-from gbz_types import PointSubset, LineSubset, GBZResult
+from gbz_types import PointSubset, LineSubset, GBZResult, CharPoly
 
 
 # ---- shared helpers ----
@@ -239,7 +238,7 @@ def test_all_exports():
         "calculate_point_roots",
         "get_minor_degrees", "get_roots_and_PMGBZ", "get_loop_winding",
         "get_strip_winding",
-        "PolyDiffContext", "WindingFun", "MatWindingFun", "get_winding_number",
+        "CharPoly", "WindingFun", "MatWindingFun", "get_winding_number",
         "solve_SGBZ_for_E", "collect_GBZ_subsets",
         "PointSubset", "LineSubset", "GBZResult", "ConnectedSubset",
     ]
@@ -340,19 +339,14 @@ class TestLoopWindingTheta2:
         return results
 
     def _build_poly_and_mu2(self, mu1):
-        """Build char_poly + poly_diff + mu2_fun at given mu1."""
+        """Build CharPoly + mu2_fun at given mu1."""
         from scipy import interpolate
-        char_poly = pt.CLaurent(3)
-        char_poly.set_Laurent_by_terms(
-            pt.CScalarVec(self._coeffs),
-            pt.CLaurentIndexVec(self._degs.flatten()),
-        )
-        poly_diff = bfs.PolyDiffContext(char_poly)
+        poly = CharPoly(self._coeffs, self._degs)
 
         gbz, theta1_arr, sols_arr, info = bfs.get_roots_and_PMGBZ(
-            poly_diff, self._E_ref, mu1, N_points=301,
+            poly, self._E_ref, mu1, N_points=301,
         )
-        M = info["M"]
+        M = poly.M
         # Sort by norm
         for row_ind in range(sols_arr.shape[0]):
             sols_arr[row_ind, :] = sols_arr[row_ind,
@@ -365,7 +359,7 @@ class TestLoopWindingTheta2:
         mu2_arr = (mu2_max + mu2_min) / 2
         mu2_fun = interpolate.CubicSpline(theta1_arr, mu2_arr, bc_type="periodic")
 
-        return poly_diff, mu2_fun, info
+        return poly, mu2_fun, info
 
     def test_w0_consistent_mu1_0270(self):
         """At mu1=0.270 (no PMGBZ), w0 should be +1 at all theta2 ≠ π."""
