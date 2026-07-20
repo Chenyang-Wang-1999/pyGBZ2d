@@ -43,24 +43,42 @@ class TestPointSubset:
 
 class TestLineSubset:
     def test_creation(self):
-        ls = LineSubset(E=1.0 + 0j, mu1=0.2, theta1_start=0.0, theta1_end=math.pi)
+        beta1 = np.array([exp(0.2 + 1j * 0.0), exp(0.2 + 1j * math.pi)])
+        beta2_mat = np.array([[1.0 + 0j, 2.0 + 0j],
+                              [3.0 + 0j, 4.0 + 0j]])
+        ls = LineSubset(E=1.0 + 0j, mu1=0.2, theta1_start=0.0,
+                        theta1_end=math.pi, beta1=beta1, beta2_mat=beta2_mat)
         assert ls.E == 1.0 + 0j
         assert ls.mu1 == 0.2
-        assert ls.beta2_arr is None
-        assert not ls.is_loaded()
+        assert ls.theta1_start == 0.0
+        assert ls.theta1_end == math.pi
+        assert np.allclose(ls.beta1, beta1)
+        assert np.allclose(ls.beta2_mat, beta2_mat)
 
     def test_theta1_width_normal(self):
-        ls = LineSubset(E=0j, mu1=0.0, theta1_start=0.5, theta1_end=2.0)
+        beta1 = np.array([exp(0.0 + 1j * 0.5), exp(0.0 + 1j * 2.0)])
+        beta2_mat = np.array([[1j, 2j], [3j, 4j]])
+        ls = LineSubset(E=0j, mu1=0.0, theta1_start=0.5, theta1_end=2.0,
+                        beta1=beta1, beta2_mat=beta2_mat)
         assert ls.theta1_width == pytest.approx(1.5)
 
     def test_theta1_width_wraparound(self):
-        ls = LineSubset(E=0j, mu1=0.0, theta1_start=6.0, theta1_end=0.5)
+        beta1 = np.array([exp(0.0 + 1j * 6.0), exp(0.0 + 1j * 0.5)])
+        beta2_mat = np.array([[1j, 2j], [3j, 4j]])
+        ls = LineSubset(E=0j, mu1=0.0, theta1_start=6.0, theta1_end=0.5,
+                        beta1=beta1, beta2_mat=beta2_mat)
         assert ls.theta1_width == pytest.approx(2 * math.pi - 5.5)
 
-    def test_endpoints_require_fill(self):
-        ls = LineSubset(E=0j, mu1=0.0, theta1_start=0.0, theta1_end=1.0)
-        with pytest.raises(RuntimeError, match="fill_beta2"):
-            _ = ls.left_endpoint
+    def test_endpoints(self):
+        beta1 = np.array([exp(0.2 + 1j * 0.0), exp(0.2 + 1j * 0.5),
+                          exp(0.2 + 1j * 1.0)])
+        beta2_mat = np.array([[1.0 + 0j, 2.0 + 0j],
+                              [3.0 + 0j, 4.0 + 0j],
+                              [5.0 + 0j, 6.0 + 0j]])
+        ls = LineSubset(E=0j, mu1=0.2, theta1_start=0.0,
+                        theta1_end=1.0, beta1=beta1, beta2_mat=beta2_mat)
+        assert ls.left_endpoint == (beta1[0], beta2_mat[0, 0])
+        assert ls.right_endpoint == (beta1[-1], beta2_mat[-1, 1])
 
 
 class TestGBZResult:
@@ -78,7 +96,8 @@ class TestGBZResult:
         assert gbz.index == (1, 0)
 
     def test_nonempty_line(self):
-        ls = LineSubset(E=1.0 + 0j, mu1=0.2, theta1_start=0.0, theta1_end=1.0)
+        ls = LineSubset(E=1.0 + 0j, mu1=0.2, theta1_start=0.0, theta1_end=1.0,
+                        beta1=np.array([1j]), beta2_mat=np.array([[1j, 1j]]))
         gbz = GBZResult(E_ref=1.0 + 0j, subsets=[ls], index=(0, 1))
         assert not gbz.is_empty
         assert gbz.is_gbz
@@ -86,7 +105,8 @@ class TestGBZResult:
 
     def test_mixed(self):
         ps = PointSubset(E=0j, beta1=1j, beta2=1j)
-        ls = LineSubset(E=0j, mu1=0.0, theta1_start=0.0, theta1_end=1.0)
+        ls = LineSubset(E=0j, mu1=0.0, theta1_start=0.0, theta1_end=1.0,
+                        beta1=np.array([1j]), beta2_mat=np.array([[1j, 1j]]))
         gbz = GBZResult(E_ref=0j, subsets=[ps, ls], index=(1, 1))
         assert gbz.index == (1, 1)
         assert len(gbz.subsets) == 2
