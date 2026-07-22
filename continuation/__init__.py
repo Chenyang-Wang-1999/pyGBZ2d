@@ -11,47 +11,61 @@ Low-level step:
     compute_tangent, predict_roots, estimate_error, arclength_step, StepResult
 
 Multiple-root detection & refinement:
-    detect_cluster, refine_multiple_root_theta, MultipleRootInfo
+    multiple_root_point_trigger, MultipleRootIntervalTrigger,
+    detect_cluster, solve_multiple_roots_in_interval,
+    solve_multiple_roots_iterative, MultipleRootInfo
 
 Segment integration (stops at end or MR):
-    integrate_segment, SegmentResult
+    integrate_segment, SegmentResult, StopReason
 
 ZeroManager (top-level orchestrator):
     ZeroManager, SegmentData
 """
 
-from continuation.arclength import (
+from .arclength import (
     compute_tangent,
     predict_roots,
     estimate_error,
     arclength_step,
-    detect_possible_multiple_root,
-    detect_cluster,
-    refine_multiple_root_theta,
-    integrate_segment,
     StepResult,
-    MultipleRootInfo,
-    SegmentResult,
     SAFETY,
     MIN_FACTOR,
     MAX_FACTOR,
     ERROR_EXPONENT,
 )
 
-from continuation.zero_manager import ZeroManager, SegmentData
+from .zero_manager import (
+    ZeroManager,
+    SegmentData,
+    StopReason,
+    integrate_segment,
+    SegmentResult,
+)
+
+from .multiple_roots import (
+    MultipleRootInfo,
+    multiple_root_point_trigger,
+    MultipleRootIntervalTrigger,
+    detect_cluster,
+    solve_multiple_roots_in_interval,
+    solve_multiple_roots_iterative,
+)
 
 __all__ = [
     "compute_tangent",
     "predict_roots",
     "estimate_error",
     "arclength_step",
-    "detect_possible_multiple_root",
+    "multiple_root_point_trigger",
+    "MultipleRootIntervalTrigger",
     "detect_cluster",
-    "refine_multiple_root_theta",
+    "solve_multiple_roots_in_interval",
+    "solve_multiple_roots_iterative",
     "integrate_segment",
     "StepResult",
     "MultipleRootInfo",
     "SegmentResult",
+    "StopReason",
     "ZeroManager",
     "SegmentData",
     "SAFETY",

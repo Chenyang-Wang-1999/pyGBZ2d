@@ -1,6 +1,6 @@
 # CLAUDE.md — brute-force-non-hermitian
 
-Non-Hermitian skin effect computation for 2D tight-binding models. Two complementary modules implementing brute-force polynomial root-solving approaches. Both entry points (`collect_GBZ_subsets`, `collect_GBZ_subsets`) natively return the unified `GBZResult` type defined in `gbz_types.py`.
+Non-Hermitian skin effect computation for 2D tight-binding models. Two complementary GBZ modules (SGBZ and amoeba) implementing brute-force polynomial root-solving approaches, plus a pseudo-arclength continuation module for adaptive root tracking along θ₁. All GBZ entry points (`collect_GBZ_subsets`) natively return the unified `GBZResult` type defined in `gbz_types.py`.
 
 ## Project Structure
 
@@ -26,7 +26,14 @@ brute-force-non-hermitian/
 │   ├── ronkin_winding.py       # Ronkin winding (get_a1/a2_average_winding, crossing detection)
 │   ├── bisect.py               # Bisection + Newton refinement (bisect_amoeba_ronkin_min)
 │   └── amoeba.py               # collect_GBZ_subsets (returns GBZResult), plateau check, orchestration
-├── tests/                      # pytest: test_gbz_types.py, test_sgbz.py, test_amoeba.py
+├── continuation/               # Pseudo-arclength continuation for β₂-root tracking along θ₁
+│   ├── __init__.py             # Public API re-exports
+│   ├── arclength.py            # compute_tangent, predict_roots, estimate_error, arclength_step
+│   ├── multiple_roots.py       # MR detection: point/interval triggers, detect_cluster,
+│   │                           #   solve_multiple_roots_in_interval, MultipleRootInfo
+│   └── zero_manager.py         # ZeroManager orchestrator, integrate_segment, SegmentData
+├── tests/                      # pytest: test_gbz_types.py, test_sgbz.py, test_amoeba.py,
+│                               #   test_continuation.py, test_zero_manager.py
 ├── conftest.py
 ├── demos/                      # Runnable demo scripts (demo_unified.py shows the GBZResult API)
 ├── diagnostics/                # Debug scripts and analysis reports

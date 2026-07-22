@@ -10,7 +10,7 @@ Shows:
   - Running collect_GBZ_subsets (returns GBZResult directly)
   - Running collect_GBZ_subsets (returns GBZResult directly)
   - Iterating over subsets with match/case
-  - Lazy beta2_arr fill for LineSubset
+  - Pre-computed beta1 and beta2_mat for LineSubset
 '''
 
 import sys
@@ -81,10 +81,8 @@ def main():
             print(f"\n  [{i}] LineSubset:")
             print(f"      mu1 = {subset.mu1:.6f}, theta1 ∈ [{subset.theta1_start:.4f}, {subset.theta1_end:.4f}]")
             print(f"      width = {subset.theta1_width:.4f} rad")
-            if not subset.is_loaded():
-                print("      beta2_arr: not loaded (lazy)")
-                subset.fill_beta2(poly)
-                print(f"      beta2_arr loaded: shape = {subset.beta2_arr.shape}")
+            print(f"      beta1: shape = {subset.beta1.shape}")
+            print(f"      beta2_mat: shape = {subset.beta2_mat.shape}")
 
     # ---- Amoeba ----
     print("\n--- collect_GBZ_subsets ---")

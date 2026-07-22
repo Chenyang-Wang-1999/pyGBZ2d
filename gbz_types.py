@@ -50,6 +50,10 @@ class CharPoly:
         self._dclaurent = [
             self._claurent.derivative(i) for i in range(self._claurent.dim)
         ]
+        self._d2claurent = [
+            [self._dclaurent[i].derivative(j) for j in range(self._claurent.dim)] 
+            for i in range(self._claurent.dim)
+        ]
         # Pre-compute minor degrees for both directions.
         coeffs_ct = pt.CScalarVec([])
         degs_ct = pt.CIndexVec([])
@@ -90,6 +94,11 @@ class CharPoly:
         """Evaluate all first partial derivatives at the given variable tuple."""
         var_ctype = pt.CScalarVec(var)
         return [dcl.eval(var_ctype) for dcl in self._dclaurent]
+    
+    def eval_partials_2(self, var: tuple, var_id1: int, var_id2: int):
+        '''Evaluate second order partials'''
+        var_ctype = pt.CScalarVec(var)
+        return self._d2claurent[var_id1][var_id2].eval(var_ctype)
 
     def eval_dmu2(self, var: tuple) -> tuple:
         """Return (dmu2/dmu1, dmu2/dtheta1) from partial derivative ratios."""
@@ -151,14 +160,14 @@ class CharPoly:
         np_coeffs = np.zeros(max_deg + 1, dtype=complex)
         for c, d in zip(coeffs_list, degs_list):
             np_coeffs[max_deg - d] = c
-        curr_roots = list(np.roots(np_coeffs))
+        curr_roots = np.roots(np_coeffs)
 
         # Pad with 0 / inf for deficient root count.
         if len(curr_roots) < M + N:
             if deg_M < M:
-                curr_roots.append(0)
+                curr_roots = np.append(curr_roots, 0)
             if len(curr_roots) - deg_M < N:
-                curr_roots.append(np.inf)
+                curr_roots = np.append(curr_roots, np.inf)
         return curr_roots
 
 
@@ -323,7 +332,7 @@ ConnectedSubset = Union[PointSubset, LineSubset]
 
 def sort_by_root_abs(roots: np.ndarray) -> np.ndarray:
     """Sort complex roots by absolute value (modulus), ascending."""
-    return np.array(sorted(roots, key=lambda x: abs(x)), dtype=complex)
+    return roots[np.argsort(np.abs(roots))]
 
 
 def to_sphere_r3(roots: np.ndarray) -> np.ndarray:
@@ -389,6 +398,7 @@ def hungarian_match_indices(
     either array contains NaN entries.
 
     Returns:
+        Array perm, where perm[from_idx] = to_idx.
         List of ``(from_idx, to_idx)`` pairs.
     """
     if np.any(np.isnan(roots_from.real)) or np.any(np.isnan(roots_from.imag)):
@@ -398,7 +408,7 @@ def hungarian_match_indices(
 
     cost = chordal_cost_matrix(roots_from, roots_to)
     row_ind, col_ind = linear_sum_assignment(cost)
-    return [(int(i), int(j)) for i, j in zip(row_ind, col_ind)]
+    return col_ind[np.argsort(row_ind)]
 
 
 def find_cyclic_true_intervals(mask: np.ndarray) -> list[tuple[int, int]]:

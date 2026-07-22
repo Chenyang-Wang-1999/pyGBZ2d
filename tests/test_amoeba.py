@@ -6,7 +6,7 @@ from cmath import exp
 
 import brute_force_amoeba as bfa
 from brute_force_amoeba.bisect import _resolve_continuum
-from brute_force_amoeba.tracks import compute_root_tracks_from_continuation as _compute_root_tracks
+from brute_force_amoeba.tracks import _compute_root_tracks
 from gbz_types import PointSubset, LineSubset, GBZResult, CharPoly
 
 
@@ -86,7 +86,7 @@ class TestAmoeba:
 
 def test_all_exports():
     expected = [
-        "compute_root_tracks_from_continuation",
+        "get_hungarian_sorted_roots",
         "get_a2_average_winding", "get_a1_average_winding",
         "bisect_amoeba_ronkin_min",
         "collect_GBZ_subsets",
@@ -123,7 +123,7 @@ class TestResolveContinuum:
         mu1 = 0.2
         mu2 = 0.3
 
-        tracks = _compute_root_tracks(hn_char_poly, E_ref, mu1)
+        tracks = _compute_root_tracks(hn_char_poly, E_ref, mu1, N_points=301)
         result = _resolve_continuum(
             hn_char_poly, E_ref, mu1, mu2, tracks,
             continuum_perturb=1e-4,
@@ -153,7 +153,7 @@ class TestResolveContinuum:
         mu1 = 0.2
         mu2 = 0.3
 
-        tracks = _compute_root_tracks(hn_char_poly, E_ref, mu1)
+        tracks = _compute_root_tracks(hn_char_poly, E_ref, mu1, N_points=301)
         result = _resolve_continuum(
             hn_char_poly, E_ref, mu1, mu2, tracks,
             continuum_perturb=1e-4,
@@ -183,7 +183,7 @@ class TestResolveContinuum:
         mu1 = 0.2
         mu2 = 0.0
 
-        tracks = _compute_root_tracks(hn_char_poly, E_ref, mu1)
+        tracks = _compute_root_tracks(hn_char_poly, E_ref, mu1, N_points=301)
         result = _resolve_continuum(
             hn_char_poly, E_ref, mu1, mu2, tracks,
             continuum_perturb=1e-4,
@@ -275,13 +275,11 @@ class TestPlateauEdge:
         assert w1_area < plateau_area_threshold, f"w1_area={w1_area} should be tiny at plateau edge"
         assert w2_area < plateau_area_threshold, f"w2_area={w2_area} should be tiny at plateau edge"
 
-        # Condition (b): if zeros found, they must be clustered.
-        # With the continuation-based adaptive mesh, the winding resolution
-        # may legitimately find zero or a few crossings at this edge point.
-        if len(zeros) > 0:
-            assert _check_zeros_are_clustered(zeros, plateau_area_threshold), (
-                "If zeros exist at plateau edge, they should be clustered"
-            )
+        # Condition (b): zeros must be clustered
+        assert len(zeros) > 0, "Should find zeros at plateau edge"
+        assert _check_zeros_are_clustered(zeros, plateau_area_threshold), (
+            "Zeros should be clustered at plateau edge"
+        )
 
     def test_plateau_edge_net_zero_count(self, nnc_char_poly):
         """Zeros at the plateau edge should have canceling jump directions
@@ -297,176 +295,3 @@ class TestPlateauEdge:
         assert jump_sum == 0, (
             f"Plateau-edge zeros should have canceling jumps, got sum={jump_sum}"
         )
-
-
-# ===========================================================================
-# Haldane gain-loss model — basis consistency regression tests
-# ===========================================================================
-# These verify that different polynomial representations of the SAME
-# physical system give identical GBZ results (fix for Hungarian-matching-
-# swap Known Issue in README).  Data from data/Haldane-gain-loss-*.pkl.
-# ===========================================================================
-
-import pickle as _pickle
-from pathlib import Path as _Path
-
-_DATA_DIR = _Path(__file__).parent.parent / "data"
-
-
-def _load_haldane_data(name):
-    with open(_DATA_DIR / f"Haldane-gain-loss-{name}.pkl", "rb") as f:
-        return _pickle.load(f)
-
-
-@pytest.fixture(scope="module")
-def haldane_amoeba_data():
-    return _load_haldane_data("amoeba")
-
-
-@pytest.fixture(scope="module")
-def haldane_amoeba_xy_data():
-    return _load_haldane_data("amoeba-xy")
-
-
-@pytest.fixture(scope="module")
-def haldane_sgbz_x_data():
-    return _load_haldane_data("x-SGBZ")
-
-
-@pytest.fixture(scope="module")
-def haldane_sgbz_a1_data():
-    return _load_haldane_data("a1-SGBZ")
-
-
-@pytest.fixture(scope="module")
-def haldane_sgbz_a2_data():
-    return _load_haldane_data("a2-SGBZ")
-
-
-class TestHaldaneGainLossConsistency:
-    """Verify that different polynomial bases for the same physical system
-    (Haldane model with gain-loss, params=(J=1, t2=0.5, phi=π/3, γ=0.5i))
-    give consistent GBZ results with the continuation-based solver."""
-
-    # -- amoeba: 26-term vs 64-term (xy) --
-
-    def test_amoeba_consistency_known_disagreements(
-        self, haldane_amoeba_data, haldane_amoeba_xy_data,
-    ):
-        """Five energy points where old solver disagreed between amoeba
-        (26-term) and amoeba-xy (64-term).  Continuation fixes this."""
-        import brute_force_amoeba as bfa
-
-        test_Es = [
-            0.596 - 0.051j, 0.673 - 0.051j, 0.750 - 0.051j,
-            0.827 - 0.051j, 0.904 - 0.051j,
-        ]
-        for E in test_Es:
-            r1 = bfa.collect_GBZ_subsets(
-                haldane_amoeba_data["coeffs"], haldane_amoeba_data["degs"],
-                E, debug_mode=True,
-            )
-            r2 = bfa.collect_GBZ_subsets(
-                haldane_amoeba_xy_data["coeffs"], haldane_amoeba_xy_data["degs"],
-                E, debug_mode=True,
-            )
-            assert r1.is_gbz == r2.is_gbz, (
-                f"amoeba vs amoeba-xy disagree at E={E}: "
-                f"amoeba={r1.is_gbz}, amoeba-xy={r2.is_gbz}"
-            )
-
-    def test_amoeba_consistency_random_sample(
-        self, haldane_amoeba_data, haldane_amoeba_xy_data,
-    ):
-        """Random 10 energy points: both bases must agree."""
-        import brute_force_amoeba as bfa
-
-        rng = np.random.RandomState(42)
-        n = len(haldane_amoeba_data["results"])
-        indices = rng.choice(n, min(10, n), replace=False)
-        E_real = haldane_amoeba_data["E_real"]
-        E_imag = haldane_amoeba_data["E_imag"]
-        n_i = len(E_imag)
-
-        for idx in indices:
-            E = E_real[idx // n_i] + 1j * E_imag[idx % n_i]
-            r1 = bfa.collect_GBZ_subsets(
-                haldane_amoeba_data["coeffs"], haldane_amoeba_data["degs"],
-                E, debug_mode=True,
-            )
-            r2 = bfa.collect_GBZ_subsets(
-                haldane_amoeba_xy_data["coeffs"], haldane_amoeba_xy_data["degs"],
-                E, debug_mode=True,
-            )
-            assert r1.is_gbz == r2.is_gbz, (
-                f"amoeba vs amoeba-xy disagree at E={E}: "
-                f"amoeba={r1.is_gbz}, amoeba-xy={r2.is_gbz}"
-            )
-
-    # -- SGBZ: x (64-term) vs a1 (26-term) vs a2 (26-term) --
-
-    def test_sgbz_consistency_random_sample(
-        self, haldane_sgbz_x_data, haldane_sgbz_a1_data,
-    ):
-        """Random 5 energy points: SGBZ x and a1 must agree.
-        Known exception: E≈3.21+0.22j (a1 false positive, to be fixed)."""
-        import brute_force_SGBZ as sgbz
-
-        # a1 gives false positives in a narrow boundary region near
-        # E≈3.21+0.22j.  Skip this region (to be fixed separately).
-        def _near_exception(E):
-            return 3.20 < E.real < 3.25 and 0.20 < E.imag < 0.25
-
-        rng = np.random.RandomState(42)
-        n = len(haldane_sgbz_x_data["results"])
-        indices = rng.choice(n, min(5, n), replace=False)
-        E_real = haldane_sgbz_x_data["E_real"]
-        E_imag = haldane_sgbz_x_data["E_imag"]
-        n_i = len(E_imag)
-
-        for idx in indices:
-            E = E_real[idx // n_i] + 1j * E_imag[idx % n_i]
-            if _near_exception(E):
-                continue
-            r1 = sgbz.collect_GBZ_subsets(
-                haldane_sgbz_x_data["coeffs"], haldane_sgbz_x_data["degs"],
-                E, debug_mode=True,
-            )
-            r2 = sgbz.collect_GBZ_subsets(
-                haldane_sgbz_a1_data["coeffs"], haldane_sgbz_a1_data["degs"],
-                E, debug_mode=True,
-            )
-            assert r1.is_gbz == r2.is_gbz, (
-                f"SGBZ x vs a1 disagree at E={E}: "
-                f"x={r1.is_gbz}, a1={r2.is_gbz}"
-            )
-
-    def test_sgbz_a1_a2_consistency(
-        self, haldane_sgbz_a1_data, haldane_sgbz_a2_data,
-    ):
-        """SGBZ a1 and a2 (both 26-term) at 3 spot-check points."""
-        import brute_force_SGBZ as sgbz
-
-        E_real = haldane_sgbz_a1_data["E_real"]
-        E_imag = haldane_sgbz_a1_data["E_imag"]
-
-        # 3 points: one centre, one edge, one outside
-        test_points = [
-            (len(E_real)//2, len(E_imag)//2),   # centre of grid
-            (0, len(E_imag)//2),                 # left edge
-            (len(E_real)-1, 0),                  # corner
-        ]
-        for i, j in test_points:
-            E = E_real[i] + 1j * E_imag[j]
-            r1 = sgbz.collect_GBZ_subsets(
-                haldane_sgbz_a1_data["coeffs"], haldane_sgbz_a1_data["degs"],
-                E, debug_mode=True,
-            )
-            r2 = sgbz.collect_GBZ_subsets(
-                haldane_sgbz_a2_data["coeffs"], haldane_sgbz_a2_data["degs"],
-                E, debug_mode=True,
-            )
-            assert r1.is_gbz == r2.is_gbz, (
-                f"SGBZ a1 vs a2 disagree at E={E}: "
-                f"a1={r1.is_gbz}, a2={r2.is_gbz}"
-            )

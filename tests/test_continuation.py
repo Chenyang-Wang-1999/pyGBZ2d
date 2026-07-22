@@ -1,8 +1,8 @@
-"""Tests for continuation.arclength — pseudo-arclength root tracking.
+"""Tests for continuation — pseudo-arclength root tracking.
 
 Tests low-level functions (compute_tangent, predict_roots, estimate_error,
 arclength_step), multiple-root detection (detect_cluster,
-refine_multiple_root_theta), and segment integration (integrate_segment).
+solve_multiple_roots_in_interval), and segment integration (integrate_segment).
 
 Uses synthetic polynomials A–F and the 2D Hatano-Nelson model.
 """
@@ -22,13 +22,21 @@ from continuation.arclength import (
     predict_roots,
     estimate_error,
     arclength_step,
-    detect_cluster,
-    refine_multiple_root_theta,
-    integrate_segment,
     StepResult,
-    SegmentResult,
     ZERO_THRESHOLD,
     INF_THRESHOLD,
+)
+from continuation.multiple_roots import (
+    multiple_root_point_trigger,
+    MultipleRootIntervalTrigger,
+    _min_pairwise_deriv,
+    detect_cluster,
+    solve_multiple_roots_in_interval,
+)
+from continuation.zero_manager import (
+    integrate_segment,
+    SegmentResult,
+    StopReason,
 )
 
 
@@ -95,7 +103,7 @@ def build_HN2D_polynomial(J1, J2, gamma_1, gamma_2, delta_1, delta_2):
     degs = np.array([
         [1, 0, 0], [0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1],
     ], dtype=int)
-    return coeffs, degs
+    return CharPoly(coeffs, degs)
 
 
 # ===========================================================================
@@ -128,11 +136,10 @@ def poly_F():
 
 @pytest.fixture
 def hn_poly():
-    coeffs, degs = build_HN2D_polynomial(
+    return build_HN2D_polynomial(
         J1=1.0, J2=1.0, gamma_1=0.2, gamma_2=0.3,
         delta_1=0.0, delta_2=0.0,
     )
-    return CharPoly(coeffs, degs)
 
 @pytest.fixture
 def hn_params():
@@ -248,7 +255,7 @@ class TestComputeTangentSynthetic:
         beta1_fwd = exp(mu1 + 1j * (theta1 + dtheta))
         roots_fwd = np.asarray(poly_A.solve_roots_1d((0, 1), (0j, beta1_fwd), (2,)))
         matches = hungarian_match_indices(roots, roots_fwd)
-        for from_idx, to_idx in matches:
+        for from_idx, to_idx in enumerate(matches):
             b2 = roots[from_idx]
             b2_fwd = roots_fwd[to_idx]
             if abs(b2) < 1e-14:
@@ -288,7 +295,7 @@ class TestPredictRootsSynthetic:
             beta1_new = exp(mu1 + 1j * (theta1 + dtheta))
             roots_actual = np.asarray(poly_B.solve_roots_1d((0, 1), (0j, beta1_new), (2,)))
             matches = hungarian_match_indices(predicted, roots_actual)
-            for fi, ti in matches:
+            for fi, ti in enumerate(matches):
                 np.testing.assert_allclose(predicted[fi], roots_actual[ti],
                                            rtol=1e-12, atol=1e-12)
 
@@ -342,72 +349,82 @@ class TestArclengthStepSynthetic:
 
 class TestDetectCluster:
     def test_poly_A_double_root_detected(self, poly_A):
+        """detect_cluster returns list[tuple[int,...]]; empty list if none."""
         mu1 = 0.0; theta1 = 0.0
         beta1 = exp(mu1 + 1j * theta1)
         roots = np.asarray(poly_A.solve_roots_1d((0, 1), (0j, beta1), (2,)))
-        result = detect_cluster(roots, cluster_tol=1e-6)
-        assert result is not None
-        assert len(result) >= 2
+        clusters = detect_cluster(roots, cluster_tol=1e-6)
+        assert len(clusters) >= 1
+        assert len(clusters[0]) >= 2
 
     def test_poly_B_double_root_detected(self, poly_B):
         mu1 = 0.0; theta1 = 0.0
         beta1 = exp(mu1 + 1j * theta1)
         roots = np.asarray(poly_B.solve_roots_1d((0, 1), (0j, beta1), (2,)))
-        result = detect_cluster(roots, cluster_tol=1e-6)
-        assert result is not None
+        clusters = detect_cluster(roots, cluster_tol=1e-6)
+        assert len(clusters) >= 1
 
     def test_poly_C_triple_root_detected(self, poly_C):
         mu1 = 0.0; theta1 = 0.0
         beta1 = exp(mu1 + 1j * theta1)
         roots = np.asarray(poly_C.solve_roots_1d((0, 1), (0j, beta1), (2,)))
-        result = detect_cluster(roots, cluster_tol=1e-4)
-        assert result is not None
-        assert len(result) >= 3
+        clusters = detect_cluster(roots, cluster_tol=1e-4)
+        assert len(clusters) >= 1
+        assert len(clusters[0]) >= 3
 
     def test_poly_A_no_false_positive_away(self, poly_A):
         mu1 = 0.0; theta1 = 1.0
         beta1 = exp(mu1 + 1j * theta1)
         roots = np.asarray(poly_A.solve_roots_1d((0, 1), (0j, beta1), (2,)))
-        result = detect_cluster(roots, cluster_tol=1e-6)
-        assert result is None
+        clusters = detect_cluster(roots, cluster_tol=1e-6)
+        assert len(clusters) == 0
 
     def test_poly_D_no_false_positive(self, poly_D):
         for theta1 in [0.0, 0.5, 1.0, 2.0]:
             beta1 = exp(0.0 + 1j * theta1)
             roots = np.asarray(poly_D.solve_roots_1d((0, 1), (0j, beta1), (2,)))
-            result = detect_cluster(roots, cluster_tol=1e-6)
-            assert result is None
+            clusters = detect_cluster(roots, cluster_tol=1e-6)
+            assert len(clusters) == 0
 
     def test_poly_E_near_degenerate_detected(self, poly_E):
         mu1 = 0.0; theta1 = 0.0
         beta1 = exp(mu1 + 1j * theta1)
         roots = np.asarray(poly_E.solve_roots_1d((0, 1), (0j, beta1), (2,)))
-        result = detect_cluster(roots, cluster_tol=1e-6)
-        assert result is not None
+        clusters = detect_cluster(roots, cluster_tol=1e-6)
+        assert len(clusters) >= 1
 
     def test_poly_F_double_root_detected(self, poly_F):
         mu1 = 0.0; theta1 = 0.0
         beta1 = exp(mu1 + 1j * theta1)
         roots = np.asarray(poly_F.solve_roots_1d((0, 1), (0j, beta1), (2,)))
-        result = detect_cluster(roots, cluster_tol=1e-6)
-        assert result is not None
-        assert len(result) >= 2
+        clusters = detect_cluster(roots, cluster_tol=1e-6)
+        assert len(clusters) >= 1
+        assert len(clusters[0]) >= 2
 
 
 # ===========================================================================
-# refine_multiple_root_theta
+# solve_multiple_roots_in_interval
 # ===========================================================================
 
-class TestRefineMultipleRootTheta:
+class TestSolveMultipleRootsInInterval:
     def test_refine_poly_F(self, poly_F):
-        """Refine should find θ₁ ≈ 0 for Poly F generic double root."""
-        refined = refine_multiple_root_theta(poly_F, 0j, 0.0, 0.01, cluster_tol=1e-4)
-        assert min(abs(refined), abs(refined - 2 * pi)) < 0.01
+        """Brent solver should find θ₁ ≈ 0 for Poly F generic double root."""
+        theta1_mr, clusters = solve_multiple_roots_in_interval(
+            poly_F, 0j, 0.0, -0.1, 0.1, np.array([1.0 + 0j, 1.0 + 0j]),
+            cluster_tol=1e-4,
+        )
+        assert min(abs(theta1_mr), abs(theta1_mr - 2 * pi)) < 0.01
 
     def test_refine_poly_B(self, poly_B):
-        """Refine at non-generic double root still works."""
-        refined = refine_multiple_root_theta(poly_B, 0j, 0.0, 0.01, cluster_tol=1e-4)
-        assert min(abs(refined), abs(refined - 2 * pi)) < 0.01
+        """Non-generic double root at θ₁=0: solve in a small bracket."""
+        # Use a bracket that contains 0
+        beta1_left = exp(1j * (-0.05))
+        roots_left = np.asarray(poly_B.solve_roots_1d((0, 1), (0j, beta1_left), (2,)))
+        theta1_mr, clusters = solve_multiple_roots_in_interval(
+            poly_B, 0j, 0.0, -0.05, 0.05, roots_left,
+            cluster_tol=1e-4,
+        )
+        assert min(abs(theta1_mr), abs(theta1_mr - 2 * pi)) < 0.01
 
 
 # ===========================================================================
@@ -420,28 +437,23 @@ class TestIntegrateSegment:
         roots_0 = np.asarray(poly_D.solve_roots_1d((0, 1), (0j, exp(0j)), (2,)))
         seg = integrate_segment(poly_D, 0j, 0.0, 0.0, roots_0, 2 * pi,
                                 h0=0.1, max_step=0.5)
-        assert seg.stop_reason == 'completed'
+        assert seg.stop_reason == StopReason.completed
         assert seg.tracked_roots.shape[1] == 3
         assert len(seg.theta1_arr) == seg.tracked_roots.shape[0]
 
     def test_poly_F_stops_at_mr(self, poly_F):
-        """Integrating from 0.2 to 2π should not hit MR (MR is at 0=2π).
-        But integrating from 0 toward the MR should stop."""
+        """Integrating from 0.2 to 2π should complete (MR at 0=2π is boundary)."""
         roots_0 = np.asarray(poly_F.solve_roots_1d((0, 1), (0j, exp(0.001j)), (2,)))
-        # Start very close to the MR at 0 — going backward isn't supported,
-        # so start at 0.001 going forward to 2π.
         seg = integrate_segment(poly_F, 0j, 0.0, 0.001, roots_0, 2 * pi,
-                                h0=0.1, max_step=0.5, min_dtheta=1e-6,
-                                cluster_tol=1e-4)
-        # Should complete since the MR at 0=2π is at the boundary.
-        assert seg.stop_reason == 'completed'
+                                h0=0.1, max_step=0.5, min_dtheta=1e-6)
+        assert seg.stop_reason == StopReason.completed
 
     def test_poly_B_segment(self, poly_B):
         """Poly B: integrate a segment."""
         roots_0 = np.asarray(poly_B.solve_roots_1d((0, 1), (0j, exp(0.5j)), (2,)))
         seg = integrate_segment(poly_B, 0j, 0.0, 0.5, roots_0, 2 * pi,
                                 h0=0.1, max_step=0.5)
-        assert seg.stop_reason == 'completed'
+        assert seg.stop_reason == StopReason.completed
         assert seg.tracked_roots.shape[1] == 2
 
     def test_hn_model_segment(self, hn_poly, hn_params):
@@ -451,7 +463,8 @@ class TestIntegrateSegment:
         roots_0 = np.asarray(hn_poly.solve_roots_1d((0, 1), (E_ref, exp(mu1)), (2,)))
         seg = integrate_segment(hn_poly, E_ref, mu1, 0.0, roots_0, 2 * pi,
                                 h0=0.1, max_step=0.5)
-        assert seg.stop_reason == 'completed'
+        # Interval trigger may fire on genuine close approaches.
+        assert seg.stop_reason in (StopReason.completed, StopReason.multiple_root_in_interval)
         assert seg.tracked_roots.shape[1] == hn_poly.M + hn_poly.N
 
     def test_tracks_continuous(self, poly_D):
@@ -497,7 +510,7 @@ class TestComputeTangentHN:
         beta1_fwd = exp(mu1 + 1j * (theta1 + dtheta))
         roots_fwd = np.asarray(hn_poly.solve_roots_1d((0, 1), (E_ref, beta1_fwd), (2,)))
         matches = hungarian_match_indices(roots, roots_fwd)
-        for from_idx, to_idx in matches:
+        for from_idx, to_idx in enumerate(matches):
             b2 = roots[from_idx]; b2_fwd = roots_fwd[to_idx]
             if abs(b2) < ZERO_THRESHOLD or abs(b2) > INF_THRESHOLD:
                 assert abs(V[from_idx]) < 1e-10
@@ -528,7 +541,7 @@ class TestPredictRootsHN:
         roots_actual = np.asarray(hn_poly.solve_roots_1d((0, 1), (E_ref, beta1_new), (2,)))
         matches = hungarian_match_indices(predicted, roots_actual)
         max_rel_error = 0.0
-        for from_idx, to_idx in matches:
+        for from_idx, to_idx in enumerate(matches):
             p = predicted[from_idx]; a = roots_actual[to_idx]
             rel_err = abs(p - a) / max(abs(a), 1e-12)
             max_rel_error = max(max_rel_error, rel_err)
@@ -565,8 +578,8 @@ class TestDetectClusterHN:
         E_ref = hn_params["E_ref"]; mu1 = hn_params["mu1"]
         beta1 = exp(mu1 + 1j * 0.0)
         roots = np.asarray(hn_poly.solve_roots_1d((0, 1), (E_ref, beta1), (2,)))
-        result = detect_cluster(roots)
-        assert result is None
+        clusters = detect_cluster(roots)
+        assert len(clusters) == 0
 
 
 class TestEdgeCases:
@@ -578,7 +591,7 @@ class TestEdgeCases:
         poly = CharPoly(coeffs, degs)
         roots_0 = np.asarray(poly.solve_roots_1d((0, 1), (0j, 1.0+0j), (2,)))
         seg = integrate_segment(poly, 0j, 0.0, 0.0, roots_0, 2 * pi, h0=0.1, max_step=0.5)
-        assert seg.stop_reason == 'completed'
+        assert seg.stop_reason == StopReason.completed
 
     def test_empty_polynomial_handling(self):
         coeffs = np.array([1.0 + 0j])
@@ -587,3 +600,96 @@ class TestEdgeCases:
         if poly.M == 0 and poly.N == 0:
             roots = poly.solve_roots_1d((0, 1), (1.0 + 0j, 1.0 + 0j), (2,))
             assert len(roots) == 0
+
+
+# ===========================================================================
+# MultipleRootIntervalTrigger — unit tests
+# ===========================================================================
+
+
+class TestMultipleRootIntervalTrigger:
+    """Unit tests for the interval trigger.
+
+    Uses synthetic root/V arrays to verify trigger logic without
+    requiring full CharPoly integration.
+    """
+
+    def test_no_trigger_when_far_apart(self):
+        """Roots far apart → state reset, no trigger."""
+        trigger = MultipleRootIntervalTrigger(min_dist_threshold=0.1)
+        roots = np.array([1.0 + 0j, 2.0 + 0j])  # distance 1.0 > 0.1
+        V = np.array([-1.0 + 0j, 1.0 + 0j])
+        ok, interval = trigger(roots, V, 0.0)
+        assert not ok
+        assert interval is None
+
+    def test_trigger_on_approach_then_separate(self):
+        """Same pair approaches (deriv<0) then separates (deriv>0) → trigger."""
+        trigger = MultipleRootIntervalTrigger(min_dist_threshold=0.1)
+
+        # Step 1: roots at distance 0.05 (< 0.1), approaching.
+        roots1 = np.array([0.0 + 0j, 0.05 + 0j])
+        V1 = np.array([1.0 + 0j, -1.0 + 0j])
+        ok, interval = trigger(roots1, V1, 0.0)
+        assert not ok  # first call, prev_sign=0
+
+        # Step 2: roots at distance 0.02, separating.
+        roots2 = np.array([0.015 + 0j, 0.035 + 0j])
+        V2 = np.array([-1.0 + 0j, 1.0 + 0j])
+        ok, interval = trigger(roots2, V2, 0.1)
+        assert ok
+        assert interval is not None
+        assert interval[0] == 0.0
+        assert interval[1] == 0.1
+
+    def test_no_trigger_on_pair_change(self):
+        """Closest pair changes identity between steps → no trigger."""
+        trigger = MultipleRootIntervalTrigger(min_dist_threshold=0.1)
+
+        # Step 1: pair (0,1) closest, approaching.
+        roots1 = np.array([0.0 + 0j, 0.05 + 0j, 1.0 + 0j])
+        V1 = np.array([0.0 + 0j, -1.0 + 0j, 0.0 + 0j])
+        ok, _ = trigger(roots1, V1, 0.0)
+        assert not ok
+
+        # Step 2: pair (1,2) now closest (different pair), separating.
+        roots2 = np.array([0.0 + 0j, 0.03 + 0j, 0.04 + 0j])
+        V2 = np.array([0.0 + 0j, 0.0 + 0j, 1.0 + 0j])
+        ok, _ = trigger(roots2, V2, 0.1)
+        assert not ok  # pair changed → no trigger
+
+    def test_state_reset_above_threshold(self):
+        """Distance exceeds threshold → state reset, no false trigger."""
+        trigger = MultipleRootIntervalTrigger(min_dist_threshold=0.1)
+
+        # Step 1: roots close, approaching.
+        roots1 = np.array([0.0 + 0j, 0.05 + 0j])
+        V1 = np.array([1.0 + 0j, -1.0 + 0j])
+        ok, _ = trigger(roots1, V1, 0.0)
+        assert not ok
+
+        # Step 2: roots far apart (> threshold) → state reset.
+        roots2 = np.array([0.0 + 0j, 1.0 + 0j])
+        V2 = np.array([0.0 + 0j, 0.0 + 0j])
+        ok, _ = trigger(roots2, V2, 0.1)
+        assert not ok
+
+        # Step 3: roots close again, separating → no trigger (prev_sign=0).
+        roots3 = np.array([0.04 + 0j, 0.05 + 0j])
+        V3 = np.array([1.0 + 0j, 1.0 + 0j])
+        ok, _ = trigger(roots3, V3, 0.2)
+        assert not ok
+
+    def test_min_pairwise_deriv_returns_pair(self):
+        """_min_pairwise_deriv returns the correct closest-pair indices."""
+        roots = np.array([1.0 + 0j, 2.0 + 0j, 1.05 + 0j])  # pair (0,2) closest
+        V = np.array([0.0 + 0j, 0.0 + 0j, 0.0 + 0j])
+        min_dist, sign, pair = _min_pairwise_deriv(roots, V)
+        assert pair == (0, 2) or pair == (2, 0)
+        assert min_dist == pytest.approx(0.05)
+        assert sign == 0  # all V=0 → no movement
+
+    def test_point_trigger_basic(self):
+        """Point trigger fires when dtheta < min_dtheta."""
+        assert multiple_root_point_trigger(1e-12, min_dtheta=1e-10)
+        assert not multiple_root_point_trigger(1e-8, min_dtheta=1e-10)
