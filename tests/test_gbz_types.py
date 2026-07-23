@@ -163,12 +163,13 @@ class TestHungarianMatchIndices:
     def test_simple_match(self):
         a = np.array([1 + 0j, 2 + 0j])
         b = np.array([2 + 0j, 1 + 0j])
-        matches = hungarian_match_indices(a, b)
-        assert len(matches) == 2
-        # a[0]=1 should match b[1]=1, a[1]=2 should match b[0]=2
-        match_dict = dict(matches)
-        assert match_dict[0] == 1
-        assert match_dict[1] == 0
+        # perm[from_idx] = to_idx: a[0]=1 matches b[1]=1, a[1]=2 matches b[0]=2.
+        perm = hungarian_match_indices(a, b)
+        assert len(perm) == 2
+        assert perm[0] == 1
+        assert perm[1] == 0
+        # Indexing the destination by perm realigns it onto the source order.
+        assert list(b[perm]) == [1 + 0j, 2 + 0j]
 
     def test_nan_raises(self):
         a = np.array([np.nan, 1 + 0j])

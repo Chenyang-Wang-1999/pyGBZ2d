@@ -50,11 +50,10 @@ def get_hungarian_sorted_roots(
 
     for i in range(N_points - 1):
         roots_next = all_roots[i + 1]
-        matches = hungarian_match_indices(tracked[i], roots_next)
-        reordered = np.zeros(n_roots, dtype=complex)
-        for from_idx, to_idx in matches:
-            reordered[from_idx] = roots_next[to_idx]
-        tracked[i + 1] = reordered
+        # hungarian_match_indices returns perm with perm[from_idx] = to_idx,
+        # so roots_next[perm] reorders roots_next onto the tracked columns.
+        perm = hungarian_match_indices(tracked[i], roots_next)
+        tracked[i + 1] = roots_next[perm]
 
     return theta1_arr, tracked, M, N
 
@@ -87,10 +86,8 @@ def _compute_root_tracks(
     # wrap-around boundary, producing spurious ln|beta2| crossings and
     # corrupting both the coarse crossing detection and the fsolve
     # refinement step.
-    matches_wrap = hungarian_match_indices(tracked[-1], tracked[0])
-    first_periodic = np.zeros(tracked.shape[1], dtype=complex)
-    for from_idx, to_idx in matches_wrap:
-        first_periodic[from_idx] = tracked[0, to_idx]
+    perm_wrap = hungarian_match_indices(tracked[-1], tracked[0])
+    first_periodic = tracked[0, perm_wrap]
     tracked_ext = np.vstack([tracked, first_periodic[np.newaxis, :]])
 
     # Pre-compute ln|beta2| on the extended theta1 grid.

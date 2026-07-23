@@ -11,10 +11,7 @@ from typing import Optional, NamedTuple
 from cmath import exp, pi
 from gbz_types import (
     CharPoly,
-    hungarian_match_indices
-)
-from gbz_types import (
-    CharPoly,
+    hungarian_match_indices,
     to_sphere_r3,
     cost_from_sphere_r3,
 )
@@ -22,6 +19,7 @@ from .arclength import (
     compute_tangent
 )
 from scipy import optimize
+from scipy.sparse.csgraph import connected_components
 
 class MultipleRootInfo(NamedTuple):
     """Information about a detected multiple root."""
@@ -70,7 +68,7 @@ class MultipleRootIntervalTrigger:
     """Detect multiple roots by tracking the closest-pair distance derivative.
 
     Called after each accepted integration step.  Internally computes the
-    θ₁-derivative sign of min |β_i − β_j|² via :func:`_min_pairwise_deriv`
+    θ₁-derivative sign of min |β_i − β_j|² via :func:`_closest_pair_deriv`
     and tracks it across steps.  Triggers when the sign flips from negative
     (approaching) to positive (separating), indicating a local minimum —
     a multiple root — in the interval between the previous and current θ₁.
@@ -97,7 +95,7 @@ class MultipleRootIntervalTrigger:
 
     def __call__(
         self, roots: np.ndarray, V: np.ndarray, theta1: float,
-    ) -> tuple[bool, tuple[float, float]]:
+    ) -> tuple[bool, Optional[tuple[float, float]]]:
         """Check for sign flip.
 
         Returns
@@ -109,7 +107,7 @@ class MultipleRootIntervalTrigger:
             threshold.  *interval* is ``(start, end)`` — the θ₁ range
             containing the local minimum — or None if not triggered.
         """
-        min_dist, deriv, pair = _min_pairwise_deriv(roots, V)
+        min_dist, deriv, pair = _closest_pair_deriv(roots, V)
 
         # Only track when roots are close enough for a meaningful signal.
         if min_dist >= self._min_dist_threshold:
@@ -158,8 +156,6 @@ def detect_cluster(
         Each tuple holds the sorted indices of one cluster.  Empty list
         when all roots are well-separated.
     """
-    from scipy.sparse.csgraph import connected_components
-
     r3 = to_sphere_r3(roots)
     pw = cost_from_sphere_r3(r3, r3)
 
@@ -177,7 +173,7 @@ def detect_cluster(
     return clusters
 
 
-def _pairwise_deriv(
+def _pair_distance_deriv(
     roots: np.ndarray,
     V: np.ndarray,
     pair: tuple[int, int],
@@ -199,7 +195,7 @@ def _pairwise_deriv(
     )
 
 
-def _min_pairwise_deriv(
+def _closest_pair_deriv(
     roots: np.ndarray,
     V: np.ndarray,
 ) -> tuple[float, float, tuple[int, int]]:
@@ -226,7 +222,7 @@ def _min_pairwise_deriv(
                 min_dist = d
                 min_i, min_j = i, j
 
-    deriv = _pairwise_deriv(roots, V, (min_i, min_j))
+    deriv = _pair_distance_deriv(roots, V, (min_i, min_j))
 
     return float(min_dist), deriv, (min_i, min_j)
 
@@ -239,14 +235,14 @@ def solve_multiple_roots_in_interval(
     theta1_right: float,
     roots_ref: np.ndarray,
     min_pair: tuple[int, int] = None,
-    cluster_tol: float = 1e-6,
 ):
     """Locate a multiple root inside a θ₁ interval via Brent's method.
 
     The θ₁-derivative of the minimum pairwise distance among β₂ roots
     crosses zero at a multiple root (roots stop approaching and start
-    separating).  This function brackets that zero-crossing with Brent's
-    method and verifies the result with :func:`detect_cluster`.
+    separating).  This function locates that zero-crossing with Brent's
+    method.  Cluster verification at the located θ₁ is left to the
+    caller (see :func:`detect_cluster`).
 
     ** Note ** we assume that the multiple roots are well-separated in theta1 axis.
     If any exceptions are raised in this function, it probably means that several multiple roots are close to each other in theta1 axis.
@@ -270,19 +266,12 @@ def solve_multiple_roots_in_interval(
         identity inside the interval.  When None (default), any pair
         is accepted — useful when the identity of the merging pair is
         unknown ahead of time.
-    cluster_tol : float
-        Chordal-distance threshold passed to :func:`detect_cluster`.
 
     Returns
     -------
     theta1_mr : float
         The θ₁ value where the derivative crosses zero, i.e. the
         multiple-root location (not wrapped to [0, 2π)).
-    clusters : list[tuple[int, ...]]
-        Clusters detected at *theta1_mr*, as returned by
-        :func:`detect_cluster`.  Empty if the bracket contained a
-        derivative zero-crossing without roots actually touching
-        (e.g. a near-miss).
     """
     def _compute_deriv(theta1: float):
         beta1 = exp(mu1 + 1j * theta1)
@@ -290,7 +279,7 @@ def solve_multiple_roots_in_interval(
         inds = hungarian_match_indices(roots_ref, roots)
         roots = roots[inds]
         V_list, _ = compute_tangent(poly, E_ref, beta1, roots)
-        _, deriv, new_pair = _min_pairwise_deriv(roots, V_list)
+        _, deriv, new_pair = _closest_pair_deriv(roots, V_list)
         if min_pair is not None:
             if new_pair != min_pair:
                 raise ValueError(f"Pair {new_pair} is not the minimum pair {min_pair}")
@@ -310,29 +299,44 @@ def solve_multiple_roots_iterative(
     beta1_approx: complex,
     beta2_approx: complex,
 ):
-    ''' solve multiple roots by iterative solver '''
+    """Refine a multiple root by solving f = 0 and ∂f/∂β₂ = 0 simultaneously.
+
+    A multiple root in β₂ is a point where f(E, β₁, β₂) = 0 *and* the
+    β₂-derivative vanishes (∂f/∂β₂ = 0) — i.e. f has a repeated β₂-root.
+    With E fixed, (β₁, β₂) are the 2 complex unknowns (4 real), matched by
+    the 4 real equations Re/Im of {f, ∂f/∂β₂}.  Solved as a real nonlinear
+    system via :func:`scipy.optimize.root` with an analytic Jacobian.
+    """
     def _mr_fun(x: np.ndarray):
         beta1 = complex(x[0], x[1])
         beta2 = complex(x[2], x[3])
         curr_pt = (E_ref, beta1, beta2)
         f_val = poly.eval_val(curr_pt)
-        df = poly.eval_partials(curr_pt)
-        df_12 = poly.eval_partials_2(curr_pt, 1, 2)
-        df_22 = poly.eval_partials_2(curr_pt, 2, 2)
+        df = poly.eval_partials(curr_pt)            # [∂f/∂E, ∂f/∂β₁, ∂f/∂β₂]
+        df_12 = poly.eval_partials_2(curr_pt, 1, 2)  # ∂²f/∂β₁∂β₂
+        df_22 = poly.eval_partials_2(curr_pt, 2, 2)  # ∂²f/∂β₂²
 
+        # Residuals: [Re f, Im f, Re ∂f/∂β₂, Im ∂f/∂β₂].
         eq_val = np.array(
             [f_val.real, f_val.imag, df[2].real, df[2].imag]
         )
 
+        # Complex Jacobian of (f, ∂f/∂β₂) w.r.t. (β₁, β₂):
+        #   row 0 = [∂f/∂β₁,    ∂f/∂β₂]
+        #   row 1 = [∂²f/∂β₁∂β₂, ∂²f/∂β₂²]
         eq_jac_cc = np.array([
             [df[1], df[2]],
             [df_12, df_22]
         ])
 
+        # Convert to derivatives w.r.t. the real coordinates
+        # (Re β₁, Im β₁, Re β₂, Im β₂): dβ = dReβ + i·dImβ, so the map
+        # (Re β₁, Im β₁, Re β₂, Im β₂) → (β₁, β₂) is the matrix below.
         eq_jac_cr = eq_jac_cc @ np.array([
             [1, 1j, 0, 0],
             [0, 0, 1, 1j]
         ])
+        # Split each complex row into [Re; Im] → 4×4 real Jacobian.
         eq_jac = np.vstack([
             eq_jac_cr[0, :].real,
             eq_jac_cr[0, :].imag,

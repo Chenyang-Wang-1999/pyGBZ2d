@@ -391,15 +391,16 @@ def chordal_cost_matrix(arr1: np.ndarray, arr2: np.ndarray) -> np.ndarray:
 def hungarian_match_indices(
     roots_from: np.ndarray,
     roots_to: np.ndarray,
-) -> list[tuple[int, int]]:
+) -> np.ndarray:
     """Hungarian (linear-sum-assignment) matching between two root sets.
 
     Uses chordal distance as the cost metric.  Raises ``ValueError`` if
     either array contains NaN entries.
 
     Returns:
-        Array perm, where perm[from_idx] = to_idx.
-        List of ``(from_idx, to_idx)`` pairs.
+        1-D int array ``perm`` such that ``perm[from_idx] = to_idx``, i.e.
+        ``roots_from[i]`` is matched to ``roots_to[perm[i]]``.  Reorder the
+        destination onto the source ordering with ``roots_to[perm]``.
     """
     if np.any(np.isnan(roots_from.real)) or np.any(np.isnan(roots_from.imag)):
         raise ValueError(f"NaN root encountered in roots_from: {roots_from}")

@@ -49,10 +49,11 @@ def _is_pmgbz_degenerate(sorted_roots: np.ndarray, M: int, zero_tol: float) -> b
     return gap <= zero_tol * scale
 
 def _cross_boundary_matches(roots_left: np.ndarray, roots_right: np.ndarray, M: int) -> list[tuple[int, int]]:
-    matches = hungarian_match_indices(roots_left, roots_right)
+    # perm[i] = j means roots_left[i] matches roots_right[j].
+    perm = hungarian_match_indices(roots_left, roots_right)
     return [
-        (i, j)
-        for i, j in matches
+        (i, int(j))
+        for i, j in enumerate(perm)
         if (i < M and j >= M) or (i >= M and j < M)
     ]
 
@@ -173,17 +174,19 @@ def _validate_pmgbz_point(
 
         roots_minus = solve_sorted_roots(theta_point - delta)
         roots_plus = solve_sorted_roots(theta_point + delta)
-        point_to_minus = dict(hungarian_match_indices(roots_point, roots_minus))
-        point_to_plus = dict(hungarian_match_indices(roots_point, roots_plus))
+        # perm_*[ind] = index of the root in roots_minus/roots_plus matched
+        # to roots_point[ind]; index the perm array directly (no dict needed).
+        perm_minus = hungarian_match_indices(roots_point, roots_minus)
+        perm_plus = hungarian_match_indices(roots_point, roots_plus)
         left_cluster_inds = [
             ind for ind, _ in sorted(
-                ((ind, point_to_minus[ind]) for ind in cluster_inds),
+                ((ind, perm_minus[ind]) for ind in cluster_inds),
                 key=lambda item: item[1]
             )
         ]
         right_cluster_inds = [
             ind for ind, _ in sorted(
-                ((ind, point_to_plus[ind]) for ind in cluster_inds),
+                ((ind, perm_plus[ind]) for ind in cluster_inds),
                 key=lambda item: item[1]
             )
         ]

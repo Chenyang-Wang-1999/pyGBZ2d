@@ -26,11 +26,8 @@ from gbz_types import (
     sort_by_root_abs,
 )
 from .arclength import (
-    SAFETY,
-    MIN_FACTOR,
-    MAX_FACTOR,
-    ERROR_EXPONENT,
-    arclength_step
+    arclength_step,
+    StepControl,
 )
 
 from .multiple_roots import (
@@ -84,6 +81,11 @@ class SegmentResult(NamedTuple):
 
 
 
+def _abs_argsort(roots_2d: np.ndarray) -> np.ndarray:
+    """Per-row argsort by |β₂| (column j → |β₂ⱼ| ascending)."""
+    return np.argsort(np.abs(roots_2d), axis=1)
+
+
 def integrate_segment(
     poly: CharPoly,
     E_ref: complex,
@@ -93,17 +95,9 @@ def integrate_segment(
     theta_end: float,
     *,
     h0: float = 0.1,
-    max_step: float = 0.5,
-    min_step: float = 1e-12,
+    ctrl: StepControl = StepControl(),
     min_dtheta: float = 1e-10,
     min_dist_threshold: float = 0.1,
-    atol: float = 1e-12,
-    rtol: float = 1e-3,
-    safety: float = SAFETY,
-    min_factor: float = MIN_FACTOR,
-    max_factor: float = MAX_FACTOR,
-    error_exponent: float = ERROR_EXPONENT,
-    max_step_iter: int = 20,
 ) -> SegmentResult:
     """Integrate β₂ roots from *theta_start* toward *theta_end*.
 
@@ -115,10 +109,10 @@ def integrate_segment(
     * ``'multiple_root_in_interval'`` — closest-pair distance derivative
       sign flip (interval trigger).
 
-    *roots_start* must be track-ordered (column j = physical root j).
-    The returned ``tracked_roots`` does **not** include the start point —
-    the caller already has it.  Each subsequent row is Hungarian-matched
-    to maintain track continuity within the segment.
+    *roots_start* must be track-ordered (column j = physical root j) and
+    is included as row 0 of the returned ``tracked_roots``.  Each
+    subsequent row is Hungarian-matched to the previous one to maintain
+    track continuity within the segment.
     """
     h = h0
     theta1 = theta_start
@@ -136,19 +130,30 @@ def integrate_segment(
     # across steps.  Encapsulates all internal state and computation.
     interval_trigger = MultipleRootIntervalTrigger(min_dist_threshold)
 
+    def _finish(stop_reason: StopReason, mr_approx_theta: float,
+                interval: tuple[float, float] = (float('nan'), float('nan')),
+                ) -> SegmentResult:
+        # Assemble the SegmentResult from the accumulated lists.  Shared by
+        # every exit path so the (theta1_arr, tracked_roots, abs_argsort)
+        # assembly lives in one place instead of being copied four times.
+        tracked_arr = np.array(tracked_list)
+        return SegmentResult(
+            theta1_arr=np.array(theta1_list),
+            tracked_roots=tracked_arr,
+            abs_argsort=(_abs_argsort(tracked_arr) if len(tracked_list)
+                         else np.empty((0, n_roots), dtype=int)),
+            stop_reason=stop_reason,
+            mr_approx_theta=mr_approx_theta,
+            n_steps=n_accepted,
+            n_rejected=n_rejected,
+            mr_interval_start=interval[0],
+            mr_interval_end=interval[1],
+        )
+
     while theta1 < theta_end:
         result = arclength_step(
             poly, E_ref, mu1, theta1, roots, h,
-            direction=1.0,
-            max_step=max_step,
-            min_step=min_step,
-            atol=atol,
-            rtol=rtol,
-            safety=safety,
-            min_factor=min_factor,
-            max_factor=max_factor,
-            error_exponent=error_exponent,
-            max_iter=max_step_iter,
+            ctrl=ctrl,
         )
 
         if result.accepted:
@@ -157,18 +162,7 @@ def integrate_segment(
             # ---- Point trigger: step-size collapse ----
             # We are AT a multiple root (tangent diverged → step collapsed).
             if multiple_root_point_trigger(dtheta, min_dtheta=min_dtheta):
-                theta1_arr = np.array(theta1_list)
-                tracked_roots_arr = np.array(tracked_list)
-                abs_argsort = np.argsort(np.abs(tracked_roots_arr), axis=1) if len(tracked_list) > 0 else np.empty((0, n_roots), dtype=int)
-                return SegmentResult(
-                    theta1_arr=theta1_arr,
-                    tracked_roots=tracked_roots_arr,
-                    abs_argsort=abs_argsort,
-                    stop_reason=StopReason.multiple_root_encountered,
-                    mr_approx_theta=theta1,
-                    n_steps=n_accepted,
-                    n_rejected=n_rejected,
-                )
+                return _finish(StopReason.multiple_root_encountered, theta1)
 
             # ---- Interval trigger: derivative sign flip ----
             # Closest-pair distance went from shrinking to growing — a
@@ -177,20 +171,7 @@ def integrate_segment(
             # well-conditioned and step size never collapses.
             ok, interval = interval_trigger(roots, result.V, theta1)
             if ok:
-                theta1_arr = np.array(theta1_list)
-                tracked_roots_arr = np.array(tracked_list)
-                abs_argsort = np.argsort(np.abs(tracked_roots_arr), axis=1) if len(tracked_list) > 0 else np.empty((0, n_roots), dtype=int)
-                return SegmentResult(
-                    theta1_arr=theta1_arr,
-                    tracked_roots=tracked_roots_arr,
-                    abs_argsort=abs_argsort,
-                    stop_reason=StopReason.multiple_root_in_interval,
-                    mr_approx_theta=theta1,
-                    mr_interval_start=interval[0],
-                    mr_interval_end=interval[1],
-                    n_steps=n_accepted,
-                    n_rejected=n_rejected,
-                )
+                return _finish(StopReason.multiple_root_in_interval, theta1, interval)
 
             theta1_new = result.theta1_new
             h = result.h_new
@@ -210,39 +191,17 @@ def integrate_segment(
         else:
             # max_iter exhausted without acceptable step → near singularity.
             n_rejected += 1
-            theta1_arr = np.array(theta1_list)
-            tracked_roots_arr = np.array(tracked_list)
-            abs_argsort = np.argsort(np.abs(tracked_roots_arr), axis=1) if len(tracked_list) > 0 else np.empty((0, n_roots), dtype=int)
-            return SegmentResult(
-                theta1_arr=theta1_arr,
-                tracked_roots=tracked_roots_arr,
-                abs_argsort=abs_argsort,
-                stop_reason=StopReason.multiple_root_encountered,
-                mr_approx_theta=theta1,
-                n_steps=n_accepted,
-                n_rejected=n_rejected,
-            )
+            return _finish(StopReason.multiple_root_encountered, theta1)
 
     # Completed without hitting a multiple root.
-    theta1_arr = np.array(theta1_list)
-    tracked_roots_arr = np.array(tracked_list)
-    abs_argsort = np.argsort(np.abs(tracked_roots_arr), axis=1) if len(tracked_list) > 0 else np.empty((0, n_roots), dtype=int)
-    return SegmentResult(
-        theta1_arr=theta1_arr,
-        tracked_roots=tracked_roots_arr,
-        abs_argsort=abs_argsort,
-        stop_reason=StopReason.completed,
-        mr_approx_theta=float('nan'),
-        n_steps=n_accepted,
-        n_rejected=n_rejected,
-    )
+    return _finish(StopReason.completed, float('nan'))
 
 
 
 def _normalize_theta(theta: float) -> float:
-    """Normalize to [0, 2π).  Values within 1e-6 of 2π snap to 0."""
+    """Normalize to [0, 2π).  Values within _BOUNDARY_THETA_TOL of 2π snap to 0."""
     t = float(theta % (2 * pi))
-    if t > 2 * pi - 1e-6:
+    if t > 2 * pi - _BOUNDARY_THETA_TOL:
         t = 0.0
     return t
 
@@ -283,12 +242,29 @@ class SegmentData:
             )
 
 
+@dataclass
+class _PendingSeg:
+    """A segment held back because its right-end MR was a false positive.
+
+    Its data is merged into the next segment instead of being appended with
+    a sentinel ``right_mr``.  Carries ``left_mr`` so the merge preserves it.
+    Replaces the old ``SegmentData(right_mr=-2)`` + post-loop patch.
+    """
+    theta1_arr: np.ndarray
+    tracked_roots: np.ndarray
+    left_mr: int
+
+
 # ---------------------------------------------------------------------------
 # ZeroManager
 # ---------------------------------------------------------------------------
 
 # Small θ₁ step used to jump past a multiple root after refinement.
 _MR_JUMP = 1e-6
+# θ₁ within this of 2π (≡ 0) is treated as the θ₁ = 0 boundary.
+_BOUNDARY_THETA_TOL = 1e-6
+# Warn if the iterative MR solver's θ₁ drifts more than this from the trigger.
+_MR_GAUGE_TOL = 0.1
 
 
 class ZeroManager:
@@ -336,12 +312,9 @@ class ZeroManager:
         self,
         *,
         h0: float = 0.1,
-        max_step: float = 0.5,
-        min_step: float = 1e-12,
+        ctrl: StepControl = StepControl(),
         min_dtheta: float = 1e-10,
         cluster_tol: float = 1e-4,
-        atol: float = 1e-12,
-        rtol: float = 1e-3,
         mr_jump: float = _MR_JUMP,
         verbose: bool = False,
     ) -> None:
@@ -349,12 +322,15 @@ class ZeroManager:
 
         Parameters
         ----------
-        h0, max_step, min_step, min_dtheta :
-            Passed to ``integrate_segment``.
+        h0 :
+            Initial arclength step passed to ``integrate_segment``.
+        ctrl :
+            Step-size controller (tolerances and RK45 factors) passed to
+            ``integrate_segment``.
+        min_dtheta :
+            Point-trigger threshold for multiple-root detection.
         cluster_tol :
             Chordal-distance threshold for multiple-root detection.
-        atol, rtol :
-            Tolerances for error estimation.
         mr_jump :
             θ₁ step used to jump past a refined multiple root.
         """
@@ -372,9 +348,18 @@ class ZeroManager:
         cluster = detect_cluster(roots, cluster_tol=cluster_tol)
         self.has_boundary_mr = len(cluster) > 0
 
+        # Segment-joining state across iterations:
+        #   left_mr  — index of the MR on the current segment's LEFT boundary
+        #              (-1 = none).  Stable across a false-positive MR.
+        #   pending  — a segment held back because its right-end MR was a false
+        #              positive; merged into the next segment instead of being
+        #              appended with a sentinel.  None when nothing is pending.
+        #              (Replaces the old right_mr == -2 + post-loop patch.)
+        pending: _PendingSeg | None = None
+
         if self.has_boundary_mr:
-            prev_mr = 0
-            # Add an multiple root at theta1 = 0
+            left_mr = 0
+            # Add a multiple root at theta1 = 0.
             self.multiple_roots.append(
                 MultipleRootInfo(
                     theta1=0.0,
@@ -386,19 +371,19 @@ class ZeroManager:
             # Reinitialize the solver to avoid MR
             theta += mr_jump
             roots = self._to_track_order(self._solve(theta), roots)  # modulus-sorted
-
         else:
-            prev_mr = -1
+            left_mr = -1
 
+        # Set True by the 'completed' or boundary-MR branches; the post-loop
+        # fallback runs only when neither was hit.
+        boundary_perm_set = False
 
         # ---- Integrate segments ----
         while theta < 2 * pi:
             seg = integrate_segment(
                 self.poly, self.E_ref, self.mu1,
                 theta, roots, 2 * pi,
-                h0=h0, max_step=max_step,
-                min_step=min_step, min_dtheta=min_dtheta,
-                atol=atol, rtol=rtol,
+                h0=h0, ctrl=ctrl, min_dtheta=min_dtheta,
             )
             if verbose:
                 print("====== Segment solved =======")
@@ -406,30 +391,25 @@ class ZeroManager:
                 print("stop_reason: ", seg.stop_reason.value)
 
             # Common processes: 
-            #  add left boundary points to this segment
-            if prev_mr >= 0:
-                # Has multiple root on its left endpoint
+            # Attach the left boundary: resume a pending (false-positive)
+            # segment, else prepend the left MR, else use seg as-is.
+            if pending is not None:
                 new_seg_theta1 = np.concatenate([
-                    [self.multiple_roots[prev_mr].theta1],
+                    pending.theta1_arr, seg.theta1_arr
+                ])
+                new_seg_tracked_roots = np.vstack([
+                    pending.tracked_roots, seg.tracked_roots
+                ])
+                pending = None
+            elif left_mr >= 0:
+                new_seg_theta1 = np.concatenate([
+                    [self.multiple_roots[left_mr].theta1],
                     seg.theta1_arr
                 ])
                 new_seg_tracked_roots = np.vstack([
-                    self.multiple_roots[prev_mr].roots,
+                    self.multiple_roots[left_mr].roots,
                     seg.tracked_roots
                 ])
-            elif prev_mr == -2:
-                # False positive trigger
-                prev_seg = self.segments.pop(-1)
-
-                new_seg_theta1 = np.concatenate([
-                    prev_seg.theta1_arr,
-                    seg.theta1_arr
-                ])
-                new_seg_tracked_roots = np.vstack([
-                    prev_seg.tracked_roots,
-                    seg.tracked_roots
-                ])
-                prev_mr = prev_seg.left_mr
             else:
                 new_seg_theta1 = seg.theta1_arr
                 new_seg_tracked_roots = seg.tracked_roots
@@ -437,80 +417,38 @@ class ZeroManager:
 
             if seg.stop_reason == StopReason.completed:
                 # The left boundary point should be attached to the right boundary
-
                 boundary_perm_inv = hungarian_match_indices(
                     new_seg_tracked_roots[-2, :],
                     self.left_boundary_roots,
                 )
 
-                # Here, we adopt the convension that left_boundary_roots = right_boundary_roots[boundary_perm]
+                # Convention (see ZeroManager docstring): roots_right[boundary_perm] == roots_left.
                 self.boundary_perm = np.zeros(self.K, dtype=int)
                 self.boundary_perm[boundary_perm_inv] = np.arange(self.K)
+                boundary_perm_set = True
 
                 new_seg_tracked_roots = np.vstack([
                     new_seg_tracked_roots[:-1, :],
                     self.left_boundary_roots[boundary_perm_inv]
                 ])
-                self.segments.append(
-                    SegmentData(
-                        theta1_arr=np.concatenate([
-                            new_seg_theta1[:-1],
-                            [2 * pi]
-                        ]),
-                        tracked_roots=new_seg_tracked_roots,
-                        abs_argsort=np.argsort(np.abs(new_seg_tracked_roots), axis=1),
-                        left_mr=prev_mr,
-                        right_mr=0 if self.has_boundary_mr else -1
-                    )
+                self._append_segment(
+                    np.concatenate([new_seg_theta1[:-1], [2 * pi]]),
+                    new_seg_tracked_roots,
+                    left_mr,
+                    0 if self.has_boundary_mr else -1,
                 )
-
                 break
 
             elif (seg.stop_reason == StopReason.multiple_root_in_interval
                   or seg.stop_reason == StopReason.multiple_root_encountered
             ):
-                roots_ref = new_seg_tracked_roots[-1, :]
-                if verbose:
-                    print("roots_ref = ", roots_ref)
-                if seg.stop_reason == StopReason.multiple_root_in_interval:
-                    # Save right boundary point
-                    theta_temp = new_seg_theta1[-1]
-                    roots_temp = new_seg_tracked_roots[-1, :]
-                    theta1_mr = solve_multiple_roots_in_interval(
-                        self.poly,
-                        self.E_ref,
-                        self.mu1,
-                        seg.mr_interval_start,
-                        seg.mr_interval_end,
-                        roots_ref,
-                        cluster_tol=self._cluster_tol,
-                    )
-                else:
-                    # Solve multiple roots using iterative solver
-                    beta1_approx = exp(self.mu1 + 1j * seg.mr_approx_theta)
-                    df2 = [self.poly.eval_partials((self.E_ref, beta1_approx, beta2))[2] for beta2 in roots_ref]
-                    min_idx = np.argmin(np.abs(df2))
-                    beta1, _ = solve_multiple_roots_iterative(
-                        self.poly,
-                        self.E_ref,
-                        beta1_approx,
-                        roots_ref[min_idx]
-                    )
-
-                    # Fix 2 pi gauge according to seg.mr_approx_theta
-                    theta1_mr = np.angle(beta1 / exp(1j * seg.mr_approx_theta)) + seg.mr_approx_theta
-                    if abs(theta1_mr - seg.mr_approx_theta) > 0.1:
-                        warnings.warn(f"Segment ends at {seg.mr_approx_theta}, but the iteration solver gives {theta1_mr}")
-
-                    theta_temp = min(2 * theta1_mr - new_seg_theta1[-2], theta1_mr + mr_jump)
-                    roots_temp = self._to_track_order(self._solve(theta_temp), roots_ref)
- 
-                roots_mr = self._to_track_order(self._solve(theta1_mr), roots_ref)
-                cluster = detect_cluster(roots_mr, cluster_tol=self._cluster_tol)
-                if len(cluster) > 0:
+                theta1_mr, roots_mr, cluster, theta_temp, roots_temp = self._refine_mr(
+                    seg, new_seg_theta1, new_seg_tracked_roots, mr_jump, verbose
+                )
+                if cluster:
                     if verbose:
                         print("Find multiple roots. Cluster = ", cluster)
-                    # Process segment data
+                    # Trim the segment up to the MR and close it there.
                     seg_used = new_seg_theta1 < theta1_mr
                     new_seg_theta1 = np.concatenate([
                         new_seg_theta1[seg_used],
@@ -521,36 +459,24 @@ class ZeroManager:
                         roots_mr
                     ])
 
-                    if abs(theta1_mr - 2 * pi) < 1e-6:
+                    if abs(theta1_mr - 2 * pi) < _BOUNDARY_THETA_TOL:
                         if verbose:
                             print("Boundary multiple root detected. right_mr = 0")
-                        # Right mr = initial mr
-                        self.segments.append(
-                            SegmentData(
-                                theta1_arr=new_seg_theta1,
-                                tracked_roots=new_seg_tracked_roots,
-                                abs_argsort=np.argsort(np.abs(new_seg_tracked_roots), axis=1),
-                                left_mr=prev_mr,
-                                right_mr=0
-                            )
+                        self._append_segment(
+                            new_seg_theta1, new_seg_tracked_roots, left_mr, 0
                         )
-                        self.boundary_perm = hungarian_match_indices(roots_mr, self.left_boundary_roots)
+                        # Same convention as 'completed': left→right map.
+                        self.boundary_perm = hungarian_match_indices(
+                            self.left_boundary_roots, roots_mr
+                        )
+                        boundary_perm_set = True
                         break
-
                     else:
-                        self.segments.append(
-                            SegmentData(
-                                theta1_arr=new_seg_theta1,
-                                tracked_roots=new_seg_tracked_roots,
-                                abs_argsort=np.argsort(np.abs(new_seg_tracked_roots), axis=1),
-                                left_mr=prev_mr,
-                                right_mr=len(self.multiple_roots)
-                            )
+                        right_mr = len(self.multiple_roots)
+                        self._append_segment(
+                            new_seg_theta1, new_seg_tracked_roots, left_mr, right_mr
                         )
-
-                        # Add multiple root to the segment
-                        prev_mr = len(self.multiple_roots)
-
+                        left_mr = right_mr
                         self.multiple_roots.append(
                             MultipleRootInfo(
                                 theta1=theta1_mr,
@@ -558,21 +484,16 @@ class ZeroManager:
                                 roots=roots_mr
                             )
                         )
-
                 else:
                     if verbose:
                         print(f"No multiple roots found with cluster_tol = {self._cluster_tol: .2e}. \n Roots:", roots_mr)
-                    # restart from the right edge
-                    self.segments.append(
-                        SegmentData(
-                            theta1_arr=new_seg_theta1[:-1],
-                            tracked_roots=new_seg_tracked_roots[:-1, :],
-                            abs_argsort=np.argsort(np.abs(new_seg_tracked_roots[:-1, :]), axis=1),
-                            left_mr=prev_mr,
-                            right_mr=-2
-                        )
+                    # False positive: hold this segment back as pending instead
+                    # of appending it with a sentinel right_mr.
+                    pending = _PendingSeg(
+                        new_seg_theta1[:-1],
+                        new_seg_tracked_roots[:-1, :],
+                        left_mr,
                     )
-                    prev_mr = -2
 
                 theta = theta_temp
                 roots = roots_temp
@@ -582,17 +503,18 @@ class ZeroManager:
                     f"Unknown stop_reason: {seg.stop_reason.value}"
                 )
 
-        # Fall back: if StopReason.completed is not encoutered, match right to left by hand
-        self.boundary_perm = hungarian_match_indices(self.segments[-1].tracked_roots[-1], self.left_boundary_roots)
-        if self.segments[-1].right_mr == -2:
-            # False positive trigger of multiple roots. No need to do anything except for attaching it to the left boundary
-            seg = self.segments[-1]
-            self.segments[-1] = SegmentData(
-                theta1_arr=seg.theta1_arr,
-                tracked_roots=seg.tracked_roots,
-                abs_argsort=seg.abs_argsort,
-                left_mr=seg.left_mr,
-                right_mr=-1,
+        # Flush a pending false-positive segment if the loop ended before it
+        # resolved (e.g. theta overshot 2π right after a false positive).
+        if pending is not None:
+            self._append_segment(
+                pending.theta1_arr, pending.tracked_roots, pending.left_mr, -1
+            )
+
+        # Fall back: if neither 'completed' nor a boundary MR set boundary_perm
+        # (the loop exited via theta >= 2π), match right to left by hand.
+        if not boundary_perm_set:
+            self.boundary_perm = hungarian_match_indices(
+                self.left_boundary_roots, self.segments[-1].tracked_roots[-1]
             )
 
     @property
@@ -625,3 +547,85 @@ class ZeroManager:
             if np.any(perm_left != perm_right):
                 raise ValueError(f"Roots do not match reference boundary. \nLeft: {perm_left}. Right: {perm_right}")
         return roots[perm_left]
+
+    # ------------------------------------------------------------------
+    # run() helpers
+    # ------------------------------------------------------------------
+
+    def _append_segment(
+        self,
+        theta1_arr: np.ndarray,
+        tracked_roots: np.ndarray,
+        left_mr: int,
+        right_mr: int,
+    ) -> None:
+        """Append a SegmentData with abs_argsort computed from tracked_roots."""
+        self.segments.append(
+            SegmentData(
+                theta1_arr=theta1_arr,
+                tracked_roots=tracked_roots,
+                abs_argsort=_abs_argsort(tracked_roots),
+                left_mr=left_mr,
+                right_mr=right_mr,
+            )
+        )
+
+    def _refine_mr(
+        self,
+        seg: SegmentResult,
+        new_seg_theta1: np.ndarray,
+        new_seg_tracked_roots: np.ndarray,
+        mr_jump: float,
+        verbose: bool,
+    ) -> tuple[float, np.ndarray, list, float, np.ndarray]:
+        """Locate the multiple root near *seg*'s stop point and the restart
+        point just past it.
+
+        Returns ``(theta1_mr, roots_mr, cluster, theta_temp, roots_temp)``.
+        *cluster* is empty when the triggered "MR" was a false positive (no
+        roots actually touch at *theta1_mr*); the caller then holds the
+        segment back as pending instead of closing it.
+        """
+        roots_ref = new_seg_tracked_roots[-1, :]
+        if verbose:
+            print("roots_ref = ", roots_ref)
+        if seg.stop_reason == StopReason.multiple_root_in_interval:
+            # Restart from the segment's right edge.
+            theta_temp = new_seg_theta1[-1]
+            roots_temp = new_seg_tracked_roots[-1, :]
+            theta1_mr = solve_multiple_roots_in_interval(
+                self.poly,
+                self.E_ref,
+                self.mu1,
+                seg.mr_interval_start,
+                seg.mr_interval_end,
+                roots_ref,
+            )
+        else:
+            # multiple_root_encountered — refine with the iterative solver.
+            beta1_approx = exp(self.mu1 + 1j * seg.mr_approx_theta)
+            df2 = [self.poly.eval_partials((self.E_ref, beta1_approx, beta2))[2]
+                   for beta2 in roots_ref]
+            min_idx = np.argmin(np.abs(df2))
+            beta1, _ = solve_multiple_roots_iterative(
+                self.poly,
+                self.E_ref,
+                beta1_approx,
+                roots_ref[min_idx],
+            )
+
+            # Fix the 2π gauge to seg.mr_approx_theta.
+            theta1_mr = np.angle(beta1 / exp(1j * seg.mr_approx_theta)) + seg.mr_approx_theta
+            if abs(theta1_mr - seg.mr_approx_theta) > _MR_GAUGE_TOL:
+                warnings.warn(
+                    f"Segment ends at {seg.mr_approx_theta}, "
+                    f"but the iteration solver gives {theta1_mr}"
+                )
+
+            # Mirror the previous sample across the MR to land on the far side.
+            theta_temp = min(2 * theta1_mr - new_seg_theta1[-2], theta1_mr + mr_jump)
+            roots_temp = self._to_track_order(self._solve(theta_temp), roots_ref)
+
+        roots_mr = self._to_track_order(self._solve(theta1_mr), roots_ref)
+        cluster = detect_cluster(roots_mr, cluster_tol=self._cluster_tol)
+        return theta1_mr, roots_mr, cluster, theta_temp, roots_temp

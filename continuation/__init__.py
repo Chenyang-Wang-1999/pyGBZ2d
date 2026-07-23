@@ -8,7 +8,8 @@ modelled after scipy's RK45 integrator.
 Public API
 ----------
 Low-level step:
-    compute_tangent, predict_roots, estimate_error, arclength_step, StepResult
+    compute_tangent, predict_roots, estimate_error, arclength_step,
+    StepResult, StepControl
 
 Multiple-root detection & refinement:
     multiple_root_point_trigger, MultipleRootIntervalTrigger,
@@ -28,10 +29,7 @@ from .arclength import (
     estimate_error,
     arclength_step,
     StepResult,
-    SAFETY,
-    MIN_FACTOR,
-    MAX_FACTOR,
-    ERROR_EXPONENT,
+    StepControl,
 )
 
 from .zero_manager import (
@@ -63,13 +61,10 @@ __all__ = [
     "solve_multiple_roots_iterative",
     "integrate_segment",
     "StepResult",
+    "StepControl",
     "MultipleRootInfo",
     "SegmentResult",
     "StopReason",
     "ZeroManager",
     "SegmentData",
-    "SAFETY",
-    "MIN_FACTOR",
-    "MAX_FACTOR",
-    "ERROR_EXPONENT",
 ]

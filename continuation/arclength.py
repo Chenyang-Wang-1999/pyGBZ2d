@@ -21,6 +21,7 @@ from __future__ import annotations
 import numpy as np
 from math import pi
 from cmath import exp
+from dataclasses import dataclass
 from typing import Optional, NamedTuple
 
 from gbz_types import (
@@ -43,6 +44,27 @@ ZERO_THRESHOLD = 1e-6
 INF_THRESHOLD = 1e6
 
 
+@dataclass(frozen=True)
+class StepControl:
+    """Tolerances and factors for the adaptive pseudo-arclength step controller.
+
+    Bundles the RK45-style PI controller knobs (SAFETY / MIN_FACTOR /
+    MAX_FACTOR / ERROR_EXPONENT) and the arclength step bounds so that
+    ``arclength_step``, ``integrate_segment`` and ``ZeroManager.run`` don't
+    each re-declare nine parameters.  Add a knob here once; all three layers
+    carry the same ``StepControl`` instance.
+    """
+    max_step: float = 0.5
+    min_step: float = 1e-12
+    atol: float = 1e-12
+    rtol: float = 1e-3
+    safety: float = SAFETY
+    min_factor: float = MIN_FACTOR
+    max_factor: float = MAX_FACTOR
+    error_exponent: float = ERROR_EXPONENT
+    max_iter: int = 20
+
+
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
@@ -59,6 +81,16 @@ class StepResult(NamedTuple):
 # ---------------------------------------------------------------------------
 # Core step functions
 # ---------------------------------------------------------------------------
+
+def _is_singular_root(beta2: complex) -> bool:
+    """True for the 0 / ∞ padding roots appended by ``CharPoly.solve_roots_1d``
+    when the 1-D polynomial is degree-deficient.  Their tangent is undefined,
+    so they are held fixed during prediction.
+    """
+    abs_b2 = np.abs(beta2)
+    return (abs_b2 < ZERO_THRESHOLD or abs_b2 > INF_THRESHOLD
+            or not np.isfinite(beta2))
+
 
 def compute_tangent(
     poly: CharPoly,
@@ -77,8 +109,7 @@ def compute_tangent(
 
     for j in range(n_roots):
         beta2 = roots[j]
-        abs_b2 = np.abs(beta2)
-        if abs_b2 < ZERO_THRESHOLD or abs_b2 > INF_THRESHOLD or not np.isfinite(beta2):
+        if _is_singular_root(beta2):
             continue
 
         partials = poly.eval_partials((E_ref, beta1, beta2))
@@ -110,8 +141,7 @@ def predict_roots(
 
     for j in range(len(roots)):
         beta2 = roots[j]
-        abs_b2 = np.abs(beta2)
-        if abs_b2 < ZERO_THRESHOLD or abs_b2 > INF_THRESHOLD or not np.isfinite(beta2):
+        if _is_singular_root(beta2):
             predicted[j] = beta2
             continue
         if V[j] == 0:
@@ -155,34 +185,28 @@ def arclength_step(
     theta1: float,
     roots: np.ndarray,
     h: float,
-    direction: float = 1.0,
-    max_step: float = 0.5,
-    min_step: float = 1e-14,
-    atol: float = 1e-12,
-    rtol: float = 1e-3,
-    safety: float = SAFETY,
-    min_factor: float = MIN_FACTOR,
-    max_factor: float = MAX_FACTOR,
-    error_exponent: float = ERROR_EXPONENT,
-    max_iter: int = 20,
+    ctrl: StepControl = StepControl(),
 ) -> StepResult:
     """Take one adaptive pseudo-arclength step along θ₁.
 
-    1. Compute tangent, propose dθ₁ = direction * h / ‖V‖₂.
+    1. Compute tangent, propose dθ₁ = h / ‖V‖₂.
     2. Predict roots via tangent extrapolation.
     3. Solve actual roots via np.roots.
     4. Accept if error_norm < 1; otherwise reduce h and retry.
+
+    *ctrl* carries the RK45-style tolerances and step bounds; see
+    :class:`StepControl`.
     """
     V, norm_V = compute_tangent(poly, E_ref,
                                  exp(mu1 + 1j * theta1), roots)
 
     step_rejected = False
 
-    for _ in range(max_iter):
-        if h < min_step:
+    for _ in range(ctrl.max_iter):
+        if h < ctrl.min_step:
             return StepResult(theta1, roots, h, False, V, norm_V)
 
-        dtheta1 = direction * h / norm_V
+        dtheta1 = h / norm_V
         theta1_new = theta1 + dtheta1
 
         predicted = predict_roots(roots, V, dtheta1)
@@ -193,21 +217,23 @@ def arclength_step(
         )
         roots_new = np.asarray(roots_new_list, dtype=complex)
 
-        error_norm = estimate_error(predicted, roots_new, atol, rtol)
+        error_norm = estimate_error(predicted, roots_new, ctrl.atol, ctrl.rtol)
 
         if error_norm < 1.0:
             if error_norm == 0.0:
-                factor = max_factor
+                factor = ctrl.max_factor
             else:
-                factor = min(max_factor, safety * error_norm ** error_exponent)
+                factor = min(ctrl.max_factor,
+                             ctrl.safety * error_norm ** ctrl.error_exponent)
             if step_rejected:
                 factor = min(1.0, factor)
             h_new = h * factor
-            if h_new > max_step:
-                h_new = max_step
+            if h_new > ctrl.max_step:
+                h_new = ctrl.max_step
             return StepResult(theta1_new, roots_new, h_new, True, V, norm_V)
         else:
-            h *= max(min_factor, safety * error_norm ** error_exponent)
+            h *= max(ctrl.min_factor,
+                     ctrl.safety * error_norm ** ctrl.error_exponent)
             step_rejected = True
 
     return StepResult(theta1, roots, h, False, V, norm_V)
