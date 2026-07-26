@@ -6,7 +6,7 @@ from cmath import exp
 
 import brute_force_amoeba as bfa
 from brute_force_amoeba.bisect import _resolve_continuum
-from brute_force_amoeba.tracks import _compute_root_tracks
+from brute_force_amoeba.zm_extract import AmoebaZeroManager
 from gbz_types import PointSubset, LineSubset, GBZResult, CharPoly
 
 
@@ -58,10 +58,21 @@ class TestAmoeba:
             assert gbz.index == (0, 0)
 
     def test_beta_magnitudes_analytic(self, poly_A, params_A):
+        """At E=0 the HN amoeba GBZ is a full-circle continuum: cos θ₁ ≥ -1
+        holds for every θ₁, so every track sits at |β₂| = exp(γ₂) over the
+        whole circle.  The result is LineSubsets only (no discrete points)."""
         coeffs, degs = poly_A
         gbz = bfa.collect_GBZ_subsets(coeffs, degs, 0.0 + 0j, 0.0)
-        if not gbz.is_gbz:
-            pytest.skip("Amoeba returned empty for E=0")
+        assert gbz.is_gbz, (
+            f"E=0 full-circle continuum should be GBZ, got index={gbz.index}"
+        )
+        # Full-circle continuum → all subsets are LineSubsets (no PointSubsets).
+        assert gbz.index[0] == 0, (
+            f"E=0 should have no discrete points, got {gbz.index[0]}"
+        )
+        assert gbz.index[1] > 0, (
+            f"E=0 should have continuum LineSubsets, got {gbz.index[1]}"
+        )
         gamma_1, gamma_2 = params_A["gamma_1"], params_A["gamma_2"]
         for s in gbz.subsets:
             if isinstance(s, PointSubset):
@@ -86,9 +97,10 @@ class TestAmoeba:
 
 def test_all_exports():
     expected = [
-        "get_hungarian_sorted_roots",
-        "get_a2_average_winding", "get_a1_average_winding",
         "bisect_amoeba_ronkin_min",
+        "AmoebaZeroManager",
+        "extract_amoeba_subsets",
+        "amoeba_windings",
         "collect_GBZ_subsets",
         "PointSubset", "LineSubset", "GBZResult", "ConnectedSubset",
     ]
@@ -123,9 +135,10 @@ class TestResolveContinuum:
         mu1 = 0.2
         mu2 = 0.3
 
-        tracks = _compute_root_tracks(hn_char_poly, E_ref, mu1, N_points=301)
+        zm = AmoebaZeroManager(hn_char_poly, E_ref, mu1)
+        zm.run()
         result = _resolve_continuum(
-            hn_char_poly, E_ref, mu1, mu2, tracks,
+            hn_char_poly, E_ref, mu1, mu2, zm,
             continuum_perturb=1e-4,
         )
 
@@ -153,9 +166,10 @@ class TestResolveContinuum:
         mu1 = 0.2
         mu2 = 0.3
 
-        tracks = _compute_root_tracks(hn_char_poly, E_ref, mu1, N_points=301)
+        zm = AmoebaZeroManager(hn_char_poly, E_ref, mu1)
+        zm.run()
         result = _resolve_continuum(
-            hn_char_poly, E_ref, mu1, mu2, tracks,
+            hn_char_poly, E_ref, mu1, mu2, zm,
             continuum_perturb=1e-4,
         )
 
@@ -169,7 +183,7 @@ class TestResolveContinuum:
             assert key in result
 
         # w2 limits should be valid (not None) — even without continuum,
-        # _compute_winding_from_tracks returns normal winding values
+        # amoeba_windings returns normal winding values
         assert result["w2_left"] is not None
         assert result["w2_right"] is not None
 
@@ -183,9 +197,10 @@ class TestResolveContinuum:
         mu1 = 0.2
         mu2 = 0.0
 
-        tracks = _compute_root_tracks(hn_char_poly, E_ref, mu1, N_points=301)
+        zm = AmoebaZeroManager(hn_char_poly, E_ref, mu1)
+        zm.run()
         result = _resolve_continuum(
-            hn_char_poly, E_ref, mu1, mu2, tracks,
+            hn_char_poly, E_ref, mu1, mu2, zm,
             continuum_perturb=1e-4,
         )
 
@@ -255,17 +270,24 @@ class TestPlateauEdge:
         assert gbz.index == (0, 0)
 
     def test_plateau_pre_check_triggers_probe(self, nnc_char_poly):
-        """The plateau pre-check should trigger the probe: zeros are clustered
-        with tiny w1_area at the plateau edge."""
+        """At the plateau edge the bisection lands at a genuine zero-w2
+        continuum-touch: two tracks merely touch |β₂|=exp(μ₂) from opposite
+        sides without crossing, so w2≡0 uniformly and there are no discrete
+        crossings.
+
+        With ZeroManager tracking this is visible directly (zeros empty,
+        w1/w2 areas tiny), so the point is classified as a non-GBZ plateau
+        without needing the clustering-based probe.  This replaces the old
+        fixed-grid behaviour, which produced 4 canceling spurious zeros at
+        the edge; the functional outcome (edge → non-GBZ) is unchanged."""
         char_poly, coeffs, degs = nnc_char_poly
         from brute_force_amoeba.bisect import bisect_amoeba_ronkin_min
         from brute_force_amoeba.ronkin_winding import _get_average_winding_from_zeros
-        from brute_force_amoeba.amoeba import _check_zeros_are_clustered
 
         res = bisect_amoeba_ronkin_min(char_poly, self.E_PLATEAU_EDGE, N_points=301)
         zeros = res["zeros"]
 
-        # Condition (a): non-zero winding area must be tiny
+        # Condition (a): non-zero winding area must be tiny — w2 is uniformly 0.
         w1_area = res["_w1_area"]
         _, w2_area = _get_average_winding_from_zeros(
             char_poly, self.E_PLATEAU_EDGE, res["mu1"], res["mu2"],
@@ -275,22 +297,23 @@ class TestPlateauEdge:
         assert w1_area < plateau_area_threshold, f"w1_area={w1_area} should be tiny at plateau edge"
         assert w2_area < plateau_area_threshold, f"w2_area={w2_area} should be tiny at plateau edge"
 
-        # Condition (b): zeros must be clustered
-        assert len(zeros) > 0, "Should find zeros at plateau edge"
-        assert _check_zeros_are_clustered(zeros, plateau_area_threshold), (
-            "Zeros should be clustered at plateau edge"
+        # Condition (b): with ZM tracking the touch is resolved as a uniform
+        # zero-w2 (no crossings), not as canceling clustered zeros.
+        assert len(zeros) == 0, (
+            f"Expected no discrete crossings at plateau edge, got {len(zeros)}"
         )
 
     def test_plateau_edge_net_zero_count(self, nnc_char_poly):
-        """Zeros at the plateau edge should have canceling jump directions
-        (net_zero_count = 0), distinguishing them from genuine GBZ zeros."""
+        """At the plateau edge the zero-w2 touch yields no discrete
+        crossings, so the net jump count is trivially 0 — the point is a
+        uniform zero-w2 plateau, not a genuine GBZ with canceling jumps."""
         char_poly, coeffs, degs = nnc_char_poly
         from brute_force_amoeba.bisect import bisect_amoeba_ronkin_min
 
         res = bisect_amoeba_ronkin_min(char_poly, self.E_PLATEAU_EDGE, N_points=301)
         zeros = res["zeros"]
 
-        # Sum of jump directions should be 0 (zeros cancel in pairs)
+        # No crossings → net jump 0 (uniform zero-w2 plateau).
         jump_sum = sum(z[2] for z in zeros)
         assert jump_sum == 0, (
             f"Plateau-edge zeros should have canceling jumps, got sum={jump_sum}"

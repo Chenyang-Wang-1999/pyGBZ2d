@@ -116,6 +116,16 @@ def compute_tangent(
         df_dbeta1 = partials[1]
         df_dbeta2 = partials[2]
 
+        # At a multiple root ∂f/∂β₂ = 0 and the implicit-function derivative
+        # diverges (β₂ is no longer a smooth function of θ₁).  Leave V_j = 0
+        # so the tangent is reported undefined for this track; the caller's
+        # step-collapse / min_dtheta guards surface the multiple root, and
+        # prediction-based matchers (predict_roots_hermite) hold the track
+        # fixed.  A bare ``df_dbeta1 / df_dbeta2`` would ZeroDivisionError
+        # here instead — the guards never run.
+        if df_dbeta2 == 0:
+            continue
+
         dbeta2_dtheta1 = -1j * beta1 * df_dbeta1 / df_dbeta2
         V_j = dbeta2_dtheta1 / beta2
 
@@ -150,6 +160,72 @@ def predict_roots(
         predicted[j] = beta2 * np.exp(V[j] * dtheta1)
 
     return predicted
+
+
+def predict_roots_hermite(
+    theta_target: float,
+    theta0: float, roots0: np.ndarray, V0: np.ndarray,
+    theta1: Optional[float] = None,
+    roots1: Optional[np.ndarray] = None,
+    V1: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Predict β₂ roots at *theta_target* from one or two reference endpoints.
+
+    This is the matching anchor used outside the arclength integrator (in
+    ``ZeroManager`` and the multiple-root solvers): instead of bare
+    Hungarian matching between two solved root sets — which swaps two
+    near-degenerate tracks at a closest approach — we predict where each
+    track should land and match *predicted → solved*, exactly as
+    :func:`arclength_step` does internally.
+
+    Two-endpoint (cubic Hermite): given the value *and* tangent at both
+    ends of an interval whose endpoints share a track frame, the per-track
+    cubic Hermite polynomial is unique.  Use when *theta_target* lies inside
+    such an interval (e.g. a bracketed multiple root, or θ₁ = 2π between two
+    segment rows).
+
+    One-endpoint (tangent extrapolation): falls back to the same
+    ``β₂·exp(V·Δθ)`` prediction as :func:`predict_roots`, consistent with the
+    arclength integrator.  Use when only one reference point is available
+    (e.g. ``multiple_root_encountered``).
+
+    Per-track fallback (two-endpoint): Hermite → two-point linear
+    interpolation → hold fixed.  Singular roots (the 0/∞ padding roots
+    ``solve_roots_1d`` appends, or a divergent tangent) step down the chain.
+    One-endpoint singular roots are held fixed by :func:`predict_roots`.
+    """
+    if theta1 is not None and roots1 is not None and V1 is not None:
+        # Degenerate interval (coincident θ): no interpolation possible.
+        if abs(theta1 - theta0) < 1e-15:
+            return roots0.copy()
+
+        s = (theta_target - theta0) / (theta1 - theta0)
+        dt = theta1 - theta0
+        h00 = 2 * s ** 3 - 3 * s ** 2 + 1
+        h10 = s ** 3 - 2 * s ** 2 + s
+        h01 = -2 * s ** 3 + 3 * s ** 2
+        h11 = s ** 3 - s ** 2
+
+        predicted = np.empty_like(roots0)
+        for j in range(len(roots0)):
+            p0 = roots0[j]
+            p1 = roots1[j]
+            if _is_singular_root(p0) or _is_singular_root(p1):
+                predicted[j] = p0
+                continue
+            m0 = V0[j] * p0
+            m1 = V1[j] * p1
+            cand = h00 * p0 + h10 * dt * m0 + h01 * p1 + h11 * dt * m1
+            if not np.isfinite(cand) or _is_singular_root(cand):
+                # Hermite diverged → two-point linear interpolation.
+                cand = p0 + s * (p1 - p0)
+                if not np.isfinite(cand) or _is_singular_root(cand):
+                    cand = p0
+            predicted[j] = cand
+        return predicted
+
+    # One-endpoint tangent extrapolation.
+    return predict_roots(roots0, V0, theta_target - theta0)
 
 
 def estimate_error(
@@ -212,10 +288,9 @@ def arclength_step(
         predicted = predict_roots(roots, V, dtheta1)
 
         beta1_new = exp(mu1 + 1j * theta1_new)
-        roots_new_list = poly.solve_roots_1d(
+        roots_new = poly.solve_roots_1d(
             (0, 1), (E_ref, beta1_new), (2,),
         )
-        roots_new = np.asarray(roots_new_list, dtype=complex)
 
         error_norm = estimate_error(predicted, roots_new, ctrl.atol, ctrl.rtol)
 
@@ -230,6 +305,13 @@ def arclength_step(
             h_new = h * factor
             if h_new > ctrl.max_step:
                 h_new = ctrl.max_step
+            # Return roots_new in track order, anchored on the tangent
+            # prediction.  solve_roots_1d returns np.roots order (unstable
+            # across theta1), so raw chordal matching old→new would swap two
+            # near-degenerate tracks at a closest approach.  
+            # So predicted→new is the right anchor for the identity-preserving permutation.
+            matches = hungarian_match_indices(predicted, roots_new)
+            roots_new = roots_new[matches]
             return StepResult(theta1_new, roots_new, h_new, True, V, norm_V)
         else:
             h *= max(ctrl.min_factor,

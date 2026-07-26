@@ -11,7 +11,7 @@ from cmath import exp
 
 from gbz_types import (
     PointSubset, LineSubset, GBZResult, CharPoly,
-    generate_probe_steps, find_cyclic_true_intervals,
+    generate_probe_steps,
 )
 
 from .bisect import (
@@ -19,9 +19,8 @@ from .bisect import (
 )
 from .ronkin_winding import (
     _get_average_winding_from_zeros,
-    _find_exact_crossing,
 )
-from .tracks import _compute_root_tracks
+from .zm_extract import extract_amoeba_subsets
 
 
 # ---- plateau pre-check helpers ----
@@ -91,7 +90,7 @@ def _probe_zero_plateau_near_mu1(
     mu2_low: float = -1,
     mu2_high: float = 1,
     N_points: int = 301,
-    continuum_tol: float = 1e-8,
+    continuum_tol: float = 1e-6,
     min_continuum_pts: int = 3,
     continuum_perturb: float = 1e-4,
     max_iter: int = 60,
@@ -187,148 +186,6 @@ def _probe_zero_plateau_near_mu1(
     }
 
 
-# ---- continuum extraction ----
-
-def _extract_continuum_intervals(
-    tracks: dict,
-    mu2: float,
-    continuum_tol: float = 1e-8,
-    min_continuum_pts: int = 3,
-) -> list[tuple[float, float]]:
-    """Extract continuum intervals where |ln|beta2| - mu2| < continuum_tol.
-
-    Reuses the continuum-detection logic from _compute_winding_from_tracks.
-    """
-    theta1_arr = tracks["theta1_arr"]
-    tracked = tracks["tracked"]
-    n_roots = tracked.shape[1]
-    n_pts = len(theta1_arr)
-
-    near_boundary = np.abs(np.log(np.abs(tracked)) - mu2) < continuum_tol
-
-    intervals = []
-    for j in range(n_roots):
-        for start_idx, end_idx in find_cyclic_true_intervals(near_boundary[:n_pts, j]):
-            width = (end_idx - start_idx) % n_pts + 1
-            if width >= min_continuum_pts:
-                t_start = float(theta1_arr[start_idx])
-                # end_idx is inclusive, convert to exclusive for LineSubset
-                t_end = float(theta1_arr[(end_idx + 1) % n_pts])
-                if t_end <= t_start:
-                    t_end += 2 * pi
-                intervals.append((t_start, t_end % (2 * pi)))
-    return intervals
-
-
-def _detect_crossings_outside_continuum(
-    tracks: dict,
-    char_poly: CharPoly,
-    E: complex,
-    mu1: float,
-    mu2: float,
-    continuum_tol: float = 1e-8,
-    min_continuum_pts: int = 3,
-) -> list[tuple[float, float, int]]:
-    """Detect refined (theta1, theta2, jump) crossings in non-continuum regions.
-
-    When a continuum is present, not all root tracks stay within the
-    continuum band — individual tracks may cross mu2 at isolated theta1
-    points in the gaps between continuum intervals.  This function detects
-    and refines those discrete crossings, using the same vectorised
-    crossover logic as ``_compute_winding_from_tracks`` but skipping
-    crossings that fall inside any continuum interval.
-
-    Returns:
-        List of (theta1, theta2, jump) tuples for discrete crossings.
-    """
-    theta1_arr = tracks["theta1_arr"]
-    tracked = tracks["tracked"]
-    theta1_ext = tracks["theta1_ext"]
-    tracked_ext = tracks["tracked_ext"]
-    poly = tracks["char_poly"]
-
-    n_roots = tracked.shape[1]
-    n_pts = len(theta1_arr)
-
-    # Use pre-computed ln|beta2| when available
-    log_abs_all = tracks.get("log_abs_tracked_ext")
-    if log_abs_all is None:
-        log_abs_all = np.log(np.abs(tracked_ext))
-
-    near_boundary = np.abs(log_abs_all - mu2) < continuum_tol  # (n_pts+1, n_roots)
-
-    refined_crossings = []
-
-    for j in range(n_roots):
-        # ---- find continuum intervals for this track ----
-        continuum_intervals_j = []
-        for start_idx, end_idx in find_cyclic_true_intervals(
-            near_boundary[:n_pts, j]
-        ):
-            width = (end_idx - start_idx) % n_pts + 1
-            if width >= min_continuum_pts:
-                t_start = float(theta1_arr[start_idx])
-                t_end = float(theta1_arr[(end_idx + 1) % n_pts])
-                if t_end <= t_start:
-                    t_end += 2 * pi
-                t_end = t_end % (2 * pi)
-                continuum_intervals_j.append((t_start, t_end))
-
-        # Helper: is a theta1 value inside any continuum interval of this track?
-        def _in_continuum(t1: float) -> bool:
-            for t_s, t_e in continuum_intervals_j:
-                # Normalise t1 to [0, 2π)
-                t1_norm = t1 % (2 * pi)
-                if t_e > t_s:
-                    if t_s <= t1_norm <= t_e:
-                        return True
-                else:
-                    # Wrap-around interval
-                    if t1_norm >= t_s or t1_norm <= t_e:
-                        return True
-            return False
-
-        # ---- detect crossings for this track in non-continuum gaps ----
-        d = log_abs_all[:, j] - mu2  # (n_pts+1,)
-        sign_change = (d[:-1] * d[1:]) < 0
-        nb = near_boundary[:, j]
-        noise = nb[:-1] & nb[1:]  # both ends in continuum band
-        valid = sign_change & ~noise
-
-        for i in np.where(valid)[0]:
-            # Linear interpolation
-            frac = (mu2 - log_abs_all[i, j]) / (
-                log_abs_all[i + 1, j] - log_abs_all[i, j]
-            )
-            theta1_approx = theta1_ext[i] + frac * (
-                theta1_ext[i + 1] - theta1_ext[i]
-            )
-            beta2_approx = tracked_ext[i, j] + frac * (
-                tracked_ext[i + 1, j] - tracked_ext[i, j]
-            )
-
-            # Skip crossings inside continuum intervals
-            if _in_continuum(theta1_approx):
-                continue
-
-            jump = 1 if log_abs_all[i, j] < mu2 else -1
-            theta2_guess = float(np.angle(beta2_approx))
-
-            # Refine
-            result = _find_exact_crossing(
-                poly, E, mu1, mu2,
-                theta1_approx % (2 * pi), theta2_guess,
-            )
-            if result is not None:
-                refined_crossings.append((result[0], result[1], jump))
-            else:
-                refined_crossings.append(
-                    (theta1_approx % (2 * pi), theta2_guess % (2 * pi), jump)
-                )
-
-    return refined_crossings
-
-
 # ---- main entry point ----
 
 def collect_GBZ_subsets(
@@ -340,6 +197,11 @@ def collect_GBZ_subsets(
     **options,
 ) -> GBZResult:
     """Check amoeba condition and return GBZ points for a reference energy.
+
+    The zero-solving layer is ``continuation.ZeroManager`` (wrapped as
+    ``AmoebaZeroManager``).  The μ₁/μ₂ bisection builds one ZM per μ₁ and
+    reuses it across all μ₂ evaluations; the solved ZM is then reused here
+    for subset extraction (no second run).
 
     Returns:
         GBZResult with connected subsets.  ``gbz.is_empty`` means E_ref is
@@ -353,48 +215,24 @@ def collect_GBZ_subsets(
     plateau_winding_tol = solver_options.pop("plateau_winding_tol", None)
     plateau_probe_radius = solver_options.pop("plateau_probe_radius", None)
     plateau_area_threshold = solver_options.pop("plateau_area_threshold", 1e-2)
+    # kwargs forwarded to ZeroManager.run() (h0, ctrl, min_dtheta,
+    # cluster_tol, mr_jump, verbose).  Kept separate from the bisection
+    # options, which ZeroManager.run does not accept.
+    zm_run_kwargs = solver_options.pop("zm_run_kwargs", {})
 
     try:
         amoeba_res = bisect_amoeba_ronkin_min(
-            char_poly, E_ref, **solver_options
+            char_poly, E_ref, zm_run_kwargs=zm_run_kwargs, **solver_options,
         )
 
-        # Build subsets from amoeba result
-        subsets = []
-        if amoeba_res["is_continuum"]:
-            # Extract continuum intervals from root tracks.
-            # Reuse _tracks from the bisection when available (avoids a 3rd
-            # Hungarian matching for the same (E, mu1)), otherwise compute fresh.
-            tracks = amoeba_res.get("_tracks")
-            if tracks is None:
-                tracks = _compute_root_tracks(char_poly, E_ref, amoeba_res["mu1"])
-            intervals = _extract_continuum_intervals(tracks, amoeba_res["mu2"])
-            poly = tracks.get("char_poly", char_poly)
-
-            # 1. Collect continuum intervals → LineSubset
-            for t_start, t_end in intervals:
-                subsets.append(LineSubset(
-                    E=E_ref, mu1=amoeba_res["mu1"],
-                    theta1_start=t_start, theta1_end=t_end,
-                ))
-
-            # 2. Collect discrete crossings in non-continuum gaps → PointSubset
-            crossings = _detect_crossings_outside_continuum(
-                tracks, char_poly, E_ref, amoeba_res["mu1"], amoeba_res["mu2"],
-            )
-            for theta1, theta2, jump_direction in crossings:
-                subsets.append(PointSubset(
-                    E=E_ref,
-                    beta1=exp(amoeba_res["mu1"] + 1j * theta1),
-                    beta2=exp(amoeba_res["mu2"] + 1j * theta2),
-                ))
-        else:
-            for theta1, theta2, jump_direction in (amoeba_res.get("zeros") or []):
-                subsets.append(PointSubset(
-                    E=E_ref,
-                    beta1=exp(amoeba_res["mu1"] + 1j * theta1),
-                    beta2=exp(amoeba_res["mu2"] + 1j * theta2),
-                ))
+        # Reuse the ZeroManager built inside the bisection at the solved
+        # mu1 — subset extraction runs on the same adaptive tracks, no
+        # second ZeroManager run.
+        zm = amoeba_res["_zm"]
+        mu1, mu2 = amoeba_res["mu1"], amoeba_res["mu2"]
+        subsets = extract_amoeba_subsets(
+            zm, char_poly, E_ref, mu1, mu2, mode='solve',
+        )
 
         # Determine if this is actually a zero plateau (no GBZ)
         is_amoeba = True
@@ -416,12 +254,12 @@ def collect_GBZ_subsets(
             w1_area = amoeba_res.get("_w1_area")
             if w1_area is None:
                 _, w1_area = _get_average_winding_from_zeros(
-                    char_poly, E_ref, amoeba_res["mu1"], amoeba_res["mu2"],
+                    char_poly, E_ref, mu1, mu2,
                     amoeba_res["zeros"], direction=1,
                 )
             if w1_area < plateau_area_threshold:
                 _, w2_area = _get_average_winding_from_zeros(
-                    char_poly, E_ref, amoeba_res["mu1"], amoeba_res["mu2"],
+                    char_poly, E_ref, mu1, mu2,
                     amoeba_res["zeros"], direction=2,
                 )
                 if w2_area < plateau_area_threshold:
@@ -431,12 +269,12 @@ def collect_GBZ_subsets(
 
             if _should_probe:
                 plateau_info = _probe_zero_plateau_near_mu1(
-                    char_poly, E_ref, amoeba_res["mu1"],
+                    char_poly, E_ref, mu1,
                     amoeba_res.get("_mu1_bracket"),
                     mu2_low=solver_options.get("mu2_low", -1),
                     mu2_high=solver_options.get("mu2_high", 1),
                     N_points=solver_options.get("N_points", 301),
-                    continuum_tol=solver_options.get("continuum_tol", 1e-8),
+                    continuum_tol=solver_options.get("continuum_tol", 1e-6),
                     min_continuum_pts=solver_options.get("min_continuum_pts", 3),
                     continuum_perturb=solver_options.get("continuum_perturb", 1e-4),
                     max_iter=solver_options.get("max_iter", 60),

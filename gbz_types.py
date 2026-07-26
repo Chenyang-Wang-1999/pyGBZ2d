@@ -123,7 +123,7 @@ class CharPoly:
 
     # -- Root solving --
 
-    def solve_roots_1d(self, param_indices, param_vals, var_indices, M=None, N=None) -> list:
+    def solve_roots_1d(self, param_indices, param_vals, var_indices, M=None, N=None) -> np.ndarray:
         """Partial-evaluate fixing param variables, solve 1D polynomial.
 
         Replaces the ``calculate_point_roots`` / ``partial_eval`` /
@@ -137,7 +137,7 @@ class CharPoly:
                 (direction=2).
 
         Returns:
-            List of complex roots (unsorted).
+            Array of complex roots (unsorted).
         """
         if M is None:
             M = self._M
@@ -208,89 +208,52 @@ class PointSubset:
 
 @dataclass
 class LineSubset:
-    """1D connected subset: a continuous degenerate line segment.
+    """1D connected subset: a continuous GBZ curve segment.
 
-    beta2_arr is lazy-loaded via :meth:`fill_beta2`.  Call it before
-    accessing :attr:`left_endpoint` or :attr:`right_endpoint`.
+    Stores the curve data eagerly (no lazy fill_beta2).  One instance
+    represents a single β₂ curve; n-fold degeneracies produce n LineSubsets.
 
     Attributes:
         E: Reference energy.
         mu1: Fixed |beta1| radius (= ln|beta1|) across the segment.
-        theta1_start: Start phase angle in [0, 2π).
-        theta1_end: End phase angle in [0, 2π).
-        beta2_arr: (N, 2) array of boundary beta2 roots at each theta1
-                   sample point.  ``None`` until :meth:`fill_beta2` is called.
+        theta1_arr: (N,) θ₁ sampling points (monotonic).
+        beta2_arr: (N,) β₂ values along this single curve.
     """
     E: complex
     mu1: float
-    theta1_start: float
-    theta1_end: float
-    beta2_arr: Optional[np.ndarray] = None  # shape (N, 2), lazy
+    theta1_arr: np.ndarray   # (N,)
+    beta2_arr: np.ndarray    # (N,)
+
+    def __post_init__(self):
+        if self.theta1_arr.ndim != 1:
+            raise ValueError("theta1_arr must be 1-D")
+        if self.beta2_arr.ndim != 1:
+            raise ValueError("beta2_arr must be 1-D")
+        if len(self.theta1_arr) != len(self.beta2_arr):
+            raise ValueError("theta1_arr and beta2_arr must have same length")
+
+    @property
+    def theta1_start(self) -> float:
+        return float(self.theta1_arr[0])
+
+    @property
+    def theta1_end(self) -> float:
+        return float(self.theta1_arr[-1])
 
     @property
     def theta1_width(self) -> float:
-        """Angular width of the interval (radians), handling 2π wrap."""
         w = self.theta1_end - self.theta1_start
         return float(w if w > 0 else w + 2 * math.pi)
 
     @property
     def left_endpoint(self) -> tuple[complex, complex]:
-        """(beta1_left, beta2_left).  Requires beta2_arr to be filled."""
-        if self.beta2_arr is None:
-            raise RuntimeError("beta2_arr not filled; call fill_beta2() first")
         b1 = exp(self.mu1 + 1j * self.theta1_start)
-        return (b1, self.beta2_arr[0, 0])
+        return (b1, self.beta2_arr[0])
 
     @property
     def right_endpoint(self) -> tuple[complex, complex]:
-        """(beta1_right, beta2_right).  Requires beta2_arr to be filled."""
-        if self.beta2_arr is None:
-            raise RuntimeError("beta2_arr not filled; call fill_beta2() first")
         b1 = exp(self.mu1 + 1j * self.theta1_end)
-        return (b1, self.beta2_arr[-1, 1])
-
-    def is_loaded(self) -> bool:
-        """True if beta2_arr has been filled."""
-        return self.beta2_arr is not None
-
-    def fill_beta2(self, poly: Any, N_points: int = 301) -> None:
-        """Lazy-load beta2_arr by solving roots on a uniform theta1 mesh.
-
-        Uses a lightweight roots-only solver (no PMGBZ detection) that
-        explicitly includes the interval endpoints, producing a result
-        identical to the old get_roots_and_PMGBZ-based path.
-
-        Uses a lazy import to avoid a module-level circular dependency
-        between gbz_types and brute_force_SGBZ.pmgbz_detector.
-
-        Parameters:
-            poly: CharPoly for root solving and boundary-root selection.
-            N_points: number of uniform theta1 mesh points.
-        """
-        if self.beta2_arr is not None:
-            return
-        # Lazy import — breaks circular dependency at module level.
-        from brute_force_SGBZ.root_solver import solve_roots_on_mesh  # noqa: E402
-
-        theta1_arr, sols_arr = solve_roots_on_mesh(
-            poly, self.E, self.mu1, N_points,
-            extra_thetas=(self.theta1_start, self.theta1_end),
-        )
-
-        # Build a boolean mask for theta1 values inside the interval.
-        t_start = self.theta1_start % (2 * math.pi)
-        t_end = self.theta1_end % (2 * math.pi)
-        if t_end > t_start:
-            mask = (theta1_arr[:-1] >= t_start) & (theta1_arr[:-1] <= t_end)
-        else:
-            mask = (theta1_arr[:-1] >= t_start) | (theta1_arr[:-1] <= t_end)
-
-        # Store the two boundary roots (M-1 and M) for each theta1.
-        M = poly.M
-        self.beta2_arr = np.column_stack([
-            sols_arr[:-1, M - 1][mask],
-            sols_arr[:-1, M][mask],
-        ])
+        return (b1, self.beta2_arr[-1])
 
 
 @dataclass

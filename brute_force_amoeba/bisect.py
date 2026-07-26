@@ -5,31 +5,36 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 
 Bisection algorithms for amoeba Ronkin function critical-point search.
 
-Provides mu2 bisection (w2 winding crossing) and the outer mu1/mu2
-bisection for the Ronkin minimum.
+The winding source is now ``continuation.ZeroManager`` (via
+``AmoebaZeroManager`` + ``zm_extract.amoeba_windings``) rather than the old
+fixed-grid Hungarian tracks.  Each ``(E, μ₁)`` builds one
+``AmoebaZeroManager`` and reuses it across all μ₂ evaluations (~30×).
+
+Provides μ₂ bisection (w2 winding crossing) and the outer μ₁/μ₂ bisection
+for the Ronkin minimum.
 """
 
 from typing import Optional
 from gbz_types import CharPoly
 
-from .ronkin_winding import (
-    _compute_winding_from_tracks, _get_average_winding_from_zeros,
-)
-from .tracks import _compute_root_tracks
+from .ronkin_winding import _get_average_winding_from_zeros
+from .zm_extract import AmoebaZeroManager, amoeba_windings, CONTINUUM_TOL, CONTINUUM_FRAC
+
 
 def _refine_and_correct(
     char_poly, E_ref, mu1, mu2_0,
-    tracks, low, high, low_init, high_init, 
-    continuum_tol, min_continuum_pts, xtol,
+    zm, low, high, low_init, high_init,
+    continuum_tol, min_continuum_pts_unused, xtol,
+    frac,
 ):
     """Refine crossings at mu2_0, then apply Newton correction if needed.
 
     Uses the analytical dW/dmu2 computed from zero derivatives to take one
     Newton step, avoiding re-bisection after refinement.
     """
-    w_ref, zeros_ref, has_cont, dW_dmu2 = _compute_winding_from_tracks(
-        char_poly, E_ref, mu1, mu2_0, tracks,
-        continuum_tol, min_continuum_pts, refine_crossings=True,
+    w_ref, zeros_ref, has_cont, dW_dmu2 = amoeba_windings(
+        zm, char_poly, E_ref, mu1, mu2_0,
+        tol=continuum_tol, frac=frac, refine=True,
     )
 
     # Defensive: refined detection may find continuum that the unrefined
@@ -38,13 +43,13 @@ def _refine_and_correct(
     if has_cont:
         return {
             "mu2": mu2_0, "zeros": [], "is_continuum": True,
-            "winding": 0.0, "_tracks": tracks,
+            "winding": 0.0, "_zm": zm,
         }
 
     if abs(w_ref) < xtol:
         return {
             "mu2": mu2_0, "zeros": zeros_ref, "is_continuum": False,
-            "winding": w_ref, "_tracks": tracks,
+            "winding": w_ref, "_zm": zm,
         }
 
     # Newton correction using analytical derivative
@@ -65,30 +70,30 @@ def _refine_and_correct(
     if abs(mu2_new - mu2_0) < xtol:
         return {
             "mu2": mu2_0, "zeros": zeros_ref, "is_continuum": False,
-            "winding": w_ref, "_tracks": tracks,
+            "winding": w_ref, "_zm": zm,
         }
 
     # Refine at the corrected mu2
-    w_ref2, zeros_ref2, _, _ = _compute_winding_from_tracks(
-        char_poly, E_ref, mu1, mu2_new, tracks,
-        continuum_tol, min_continuum_pts, refine_crossings=True,
+    w_ref2, zeros_ref2, _, _ = amoeba_windings(
+        zm, char_poly, E_ref, mu1, mu2_new,
+        tol=continuum_tol, frac=frac, refine=True,
     )
 
     if abs(w_ref2) < xtol:
         return {
             "mu2": mu2_new, "zeros": zeros_ref2, "is_continuum": False,
-            "winding": w_ref2, "_tracks": tracks,
+            "winding": w_ref2, "_zm": zm,
         }
 
     # Fall back: return the better of the two refined points
     if abs(w_ref2) < abs(w_ref):
         return {
             "mu2": mu2_new, "zeros": zeros_ref2, "is_continuum": False,
-            "winding": w_ref2, "_tracks": tracks,
+            "winding": w_ref2, "_zm": zm,
         }
     return {
         "mu2": mu2_0, "zeros": zeros_ref, "is_continuum": False,
-        "winding": w_ref, "_tracks": tracks,
+        "winding": w_ref, "_zm": zm,
     }
 
 
@@ -99,14 +104,15 @@ def _find_mu2_for_w2_zero(
     mu2_low: float,
     mu2_high: float,
     N_points: int = 301,
-    continuum_tol: float = 1e-8,
+    continuum_tol: float = 1e-6,
     min_continuum_pts: int = 3,
     continuum_perturb: float = 1e-4,
     max_iter: int = 60,
     xtol: float = 1e-10,
     max_range_expansions: int = 10,
     range_expand_factor: float = 2.0,
-    _root_tracks: Optional[dict] = None,
+    _zm: Optional[AmoebaZeroManager] = None,
+    frac: float = CONTINUUM_FRAC,
 ) -> dict:
     """Find mu2 where w2 winding crosses 0, with adaptive range.
 
@@ -117,23 +123,25 @@ def _find_mu2_for_w2_zero(
     at the final mu2 and applies a Newton correction using the analytical
     derivative dW/dmu2.
 
-    _root_tracks: optionally pre-computed root tracks from _compute_root_tracks.
-    When provided, avoids redundant Hungarian matching.
+    _zm: optionally pre-built AmoebaZeroManager at (E, mu1).  When provided,
+    avoids rebuilding root tracks (the ZM is mu2-independent).  When None,
+    a fresh one is built here.
     """
     low, high = float(mu2_low), float(mu2_high)
 
-    # Pre-compute root tracks once (Independent of mu2)
-    if _root_tracks is not None:
-        tracks = _root_tracks
+    # Build ZeroManager once (independent of mu2).  Reused across ~30 mu2
+    # evaluations — the caching role the old `tracks` dict played.
+    if _zm is None:
+        zm = AmoebaZeroManager(char_poly, E_ref, mu1)
+        zm.run()
     else:
-        tracks = _compute_root_tracks(char_poly, E_ref, mu1, N_points)
+        zm = _zm
 
     def _winding_at(mu2_val, refine=False):
         """Evaluate winding at mu2_val.  Strips dW_dmu2 for the bisection loop."""
-        w, z, c, _ = _compute_winding_from_tracks(
-            char_poly, E_ref, mu1, mu2_val, tracks,
-            continuum_tol, min_continuum_pts,
-            refine_crossings=refine,
+        w, z, c, _ = amoeba_windings(
+            zm, char_poly, E_ref, mu1, mu2_val,
+            tol=continuum_tol, frac=frac, refine=refine,
         )
         return w, z, c
 
@@ -180,7 +188,7 @@ def _find_mu2_for_w2_zero(
                 # w1 limits via mu1 perturbation rather than from zeros.
                 return {
                     "mu2": mu2_mid, "zeros": [], "is_continuum": True,
-                    "winding": (w_left, w_right), "_tracks": tracks,
+                    "winding": (w_left, w_right), "_zm": zm,
                 }
             else:
                 if w_low * w_left > 0:
@@ -195,8 +203,8 @@ def _find_mu2_for_w2_zero(
             # --- Post-refinement + Newton correction ---
             return _refine_and_correct(
                 char_poly, E_ref, mu1, mu2_mid,
-                tracks, low, high, low_init, high_init,
-                continuum_tol, min_continuum_pts, xtol,
+                zm, low, high, low_init, high_init,
+                continuum_tol, min_continuum_pts, xtol, frac,
             )
 
         if w_low * w_mid < 0:
@@ -215,22 +223,23 @@ def _resolve_continuum(
     E_ref: complex,
     mu1: float,
     mu2: float,
-    tracks: dict,
+    zm: AmoebaZeroManager,
     mu2_low: float = -1.0,
     mu2_high: float = 1.0,
     continuum_perturb: float = 1e-4,
     N_points: int = 301,
-    continuum_tol: float = 1e-8,
+    continuum_tol: float = 1e-6,
     min_continuum_pts: int = 3,
     max_iter: int = 60,
     xtol: float = 1e-10,
     max_range_expansions: int = 10,
     range_expand_factor: float = 2.0,
+    frac: float = CONTINUUM_FRAC,
 ) -> dict:
     """Resolve a continuum point by computing winding left/right limits.
 
     Step 1 — a2 axis: perturb mu2 ± ε, compute w2 winding at each.
-    If the two values have opposite signs, the mu2 jump crosses 0 → 
+    If the two values have opposite signs, the mu2 jump crosses 0 →
     this mu2 is the w2=0 boundary.
 
     Step 2 — a1 axis (only when Step 1 succeeds): perturb mu1 ± ε,
@@ -259,13 +268,13 @@ def _resolve_continuum(
     for scale in (1.0, 2.0, 4.0, 8.0):
         eps = continuum_perturb * scale
 
-        w_left, _, has_cont_left, _ = _compute_winding_from_tracks(
-            char_poly, E_ref, mu1, mu2 - eps, tracks,
-            continuum_tol, min_continuum_pts, refine_crossings=False,
+        w_left, _, has_cont_left, _ = amoeba_windings(
+            zm, char_poly, E_ref, mu1, mu2 - eps,
+            tol=continuum_tol, frac=frac, refine=False,
         )
-        w_right, _, has_cont_right, _ = _compute_winding_from_tracks(
-            char_poly, E_ref, mu1, mu2 + eps, tracks,
-            continuum_tol, min_continuum_pts, refine_crossings=False,
+        w_right, _, has_cont_right, _ = amoeba_windings(
+            zm, char_poly, E_ref, mu1, mu2 + eps,
+            tol=continuum_tol, frac=frac, refine=False,
         )
 
         if (not has_cont_left) and (not has_cont_right):
@@ -290,18 +299,19 @@ def _resolve_continuum(
             "is_boundary": False, "w1_resolved": False,
         }
 
-    # Re-run inner mu2 bisection at mu1 ± ε.  If the perturbed mu1
-    # also yields continuum (is_continuum=True), the zeros list is
-    # empty — _get_average_winding_from_zeros falls back to single-point
-    # sampling, which is correct: with no zeros the winding is constant
-    # on the full theta2 circle.
+    # Re-run inner mu2 bisection at mu1 ± ε.  Each perturbed mu1 builds
+    # its own ZeroManager.  If the perturbed mu1 also yields continuum
+    # (is_continuum=True), the zeros list is empty —
+    # _get_average_winding_from_zeros falls back to single-point sampling,
+    # which is correct: with no zeros the winding is constant on the full
+    # theta2 circle.
     inner_left = _find_mu2_for_w2_zero(
         char_poly, E_ref, mu1 - continuum_perturb, mu2_low, mu2_high,
         N_points=N_points,
         continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
         continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
         max_range_expansions=max_range_expansions,
-        range_expand_factor=range_expand_factor,
+        range_expand_factor=range_expand_factor, frac=frac,
     )
     inner_right = _find_mu2_for_w2_zero(
         char_poly, E_ref, mu1 + continuum_perturb, mu2_low, mu2_high,
@@ -309,7 +319,7 @@ def _resolve_continuum(
         continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
         continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
         max_range_expansions=max_range_expansions,
-        range_expand_factor=range_expand_factor,
+        range_expand_factor=range_expand_factor, frac=frac,
     )
 
     zeros_left = inner_left.get("zeros") or []
@@ -342,20 +352,23 @@ def bisect_amoeba_ronkin_min(
     mu2_low: float = -1,
     mu2_high: float = 1,
     N_points: int = 301,
-    continuum_tol: float = 1e-8,
+    continuum_tol: float = 1e-6,
     min_continuum_pts: int = 3,
     continuum_perturb: float = 1e-4,
     max_iter: int = 60,
     xtol: float = 1e-10,
     max_range_expansions: int = 10,
     range_expand_factor: float = 2.0,
+    frac: float = CONTINUUM_FRAC,
+    zm_run_kwargs: Optional[dict] = None,
 ) -> dict:
     """
     Find the Ronkin function minimum by bisecting mu1 and mu2.
 
     Outer loop: bisect mu1.
-    Inner loop: for each mu1, find mu2 where a2 average winding = 0,
-    then evaluate w1 average winding at (mu1, mu2).
+    Inner loop: for each mu1, build an AmoebaZeroManager (μ₂-independent,
+    reused across all μ₂ evaluations), then find mu2 where a2 average
+    winding = 0, then evaluate w1 average winding at (mu1, mu2).
 
     The Ronkin minimum satisfies w1 = w2 = 0 simultaneously.
 
@@ -369,8 +382,10 @@ def bisect_amoeba_ronkin_min(
     Returns a dict with keys:
         mu1: critical mu1 value
         mu2: critical mu2 value
-        zeros: list of (theta1, theta2) crossing pairs at the critical point
+        zeros: list of (theta1, theta2, jump) crossing pairs at the critical point
         is_continuum: whether the result is a continuum point
+        _zm: the AmoebaZeroManager built at the solved mu1 (reused by
+             collect_GBZ_subsets for subset extraction, avoiding a 2nd run)
     """
     # Evaluate w1 at the mu1 endpoints, with adaptive range expansion
     low, high = float(mu1_low), float(mu1_high)
@@ -384,7 +399,7 @@ def bisect_amoeba_ronkin_min(
             continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
             continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
             max_range_expansions=max_range_expansions,
-            range_expand_factor=range_expand_factor,
+            range_expand_factor=range_expand_factor, frac=frac,
         )
         inner_high = _find_mu2_for_w2_zero(
             char_poly, E_ref, high, mu2_low, mu2_high,
@@ -392,7 +407,7 @@ def bisect_amoeba_ronkin_min(
             continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
             continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
             max_range_expansions=max_range_expansions,
-            range_expand_factor=range_expand_factor,
+            range_expand_factor=range_expand_factor, frac=frac,
         )
 
         w1_low, _ = _get_average_winding_from_zeros(
@@ -418,13 +433,18 @@ def bisect_amoeba_ronkin_min(
     for _ in range(max_iter):
         mu1_mid = 0.5 * (mu1_low + mu1_high)
 
+        # Build the ZeroManager once for this mu1_mid — reused across all
+        # mu2 evaluations in the inner bisection.
+        zm = AmoebaZeroManager(char_poly, E_ref, mu1_mid)
+        zm.run(**(zm_run_kwargs or {}))
+
         inner_mid = _find_mu2_for_w2_zero(
             char_poly, E_ref, mu1_mid, mu2_low, mu2_high,
             N_points=N_points,
             continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
             continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
             max_range_expansions=max_range_expansions,
-            range_expand_factor=range_expand_factor,
+            range_expand_factor=range_expand_factor, frac=frac, _zm=zm,
         )
 
         mu2_mid = inner_mid["mu2"]
@@ -436,14 +456,14 @@ def bisect_amoeba_ronkin_min(
         w1_area = 0.0  # plateau pre-check area (only meaningful in non-continuum path)
         if inner_mid["is_continuum"]:
             resolved = _resolve_continuum(
-                char_poly, E_ref, mu1_mid, mu2_mid, inner_mid["_tracks"],
+                char_poly, E_ref, mu1_mid, mu2_mid, zm,
                 mu2_low=mu2_low, mu2_high=mu2_high,
                 continuum_perturb=continuum_perturb,
                 N_points=N_points, continuum_tol=continuum_tol,
                 min_continuum_pts=min_continuum_pts,
                 max_iter=max_iter, xtol=xtol,
                 max_range_expansions=max_range_expansions,
-                range_expand_factor=range_expand_factor,
+                range_expand_factor=range_expand_factor, frac=frac,
             )
 
             if resolved["is_boundary"]:
@@ -454,7 +474,7 @@ def bisect_amoeba_ronkin_min(
                     "_mu1_bracket": (mu1_low, mu1_high),
                     "_w1_bracket": (w1_low, w1_high),
                     "_exit_reason": "continuum_boundary",
-                    "_tracks": inner_mid["_tracks"],
+                    "_zm": zm,
                 }
 
             if resolved["w1_resolved"]:
@@ -481,7 +501,7 @@ def bisect_amoeba_ronkin_min(
             zeros_mid = inner_mid["zeros"]
 
             # Compute w1 at (mu1_mid, mu2_mid), reusing zeros from the
-            # inner bisection — no extra Hungarian matching needed.
+            # inner bisection — no extra root tracking needed.
             w1_mid, w1_area = _get_average_winding_from_zeros(
                 char_poly, E_ref, mu1_mid, mu2_mid,
                 zeros_mid, direction=1,
@@ -498,6 +518,7 @@ def bisect_amoeba_ronkin_min(
                 "_w1_bracket": (w1_low, w1_high),
                 "_exit_reason": exit_reason,
                 "_w1_area": w1_area,
+                "_zm": zm,
             }
 
         if w1_low * w1_mid < 0:
@@ -508,14 +529,4 @@ def bisect_amoeba_ronkin_min(
             w1_low = w1_mid
 
     mu1_mid = 0.5 * (mu1_low + mu1_high)
-    inner_mid = _find_mu2_for_w2_zero(
-        char_poly, E_ref, mu1_mid, mu2_low, mu2_high,
-        N_points=N_points,
-        continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
-        continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
-        max_range_expansions=max_range_expansions,
-        range_expand_factor=range_expand_factor,
-    )
     raise ValueError(f"bisect_amoeba_ronkin_min: Bisection failed. E_ref{E_ref}")
-
-

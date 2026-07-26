@@ -142,34 +142,35 @@ def check_roots():
     char_poly = CharPoly(coeffs, degs)
 
     E_ref = -2.4 - 0.1408j
-    root_track = bfa._compute_root_tracks(char_poly, E_ref, 0.0)
-    # print(root_track)
-    theta1_ext = root_track["theta1_ext"]
-    tracked_ext = root_track["tracked_ext"]
+    zm = bfa.AmoebaZeroManager(char_poly, E_ref, 0.0)
+    zm.run()
+    seg = zm.segments[0]
+    theta1_arr = seg.theta1_arr
+    tracked = seg.tracked_roots
     fig = plt.figure()
     ax = fig.add_subplot(projection="3d")
     for j in range(2):
-        ax.plot(theta1_ext, np.angle(tracked_ext[:,j]), np.log(np.abs(tracked_ext[:,j])))
+        ax.plot(theta1_arr, np.angle(tracked[:, j]), np.log(np.abs(tracked[:, j])))
     plt.show()
 
     print(bfa.collect_GBZ_subsets(coeffs, degs, E_ref, 0, True))
 
 
 if __name__ == "__main__":
-    N_grid_x = 31
-    N_grid_y = 31
+    N_grid_x = 5
+    N_grid_y = 5
     E_re = np.linspace(-4, 6, N_grid_x)
     E_im = np.linspace(-0.16, 0.16, N_grid_y)
     # E_im = np.concatenate([
     #     np.linspace(-0.16, -0.08, N_grid_y),
     #     np.linspace(0.08, 0.16, N_grid_y),
     # ])
-    # sweep_general(E_re, E_im, which="amoeba")
+    sweep_general(E_re, E_im, which="amoeba")
     # sweep_general(E_re, E_im, which="x-SGBZ")
     # sweep_general(E_re, E_im, which="y-SGBZ")
-    plot_amoeba()
+    # plot_amoeba()
     # plot_SGBZ("x")
     # plot_SGBZ("y")
-    plt.show()
+    # plt.show()
 
     # check_roots()

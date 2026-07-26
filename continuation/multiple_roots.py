@@ -16,7 +16,8 @@ from gbz_types import (
     cost_from_sphere_r3,
 )
 from .arclength import (
-    compute_tangent
+    compute_tangent,
+    predict_roots_hermite,
 )
 from scipy import optimize
 from scipy.sparse.csgraph import connected_components
@@ -26,6 +27,54 @@ class MultipleRootInfo(NamedTuple):
     theta1: float
     cluster_indices: list[tuple[int, ...]]  # indices into the modulus-sorted root array
     roots: np.ndarray            # modulus-sorted β₂ roots at this θ₁
+    # Per-cluster spread of the *raw* roots before snapping to the mean
+    # (``sqrt(mean(|β − mean|²))``), same order as ``cluster_indices``.
+    # Empty when no cluster was detected.  A small value means the numerical
+    # roots were already nearly coincident; a large one flags a loose cluster.
+    cluster_stds: list[float] = []
+
+
+def snap_clusters_to_mean(
+    roots: np.ndarray,
+    cluster_indices: list[tuple[int, ...]],
+) -> tuple[np.ndarray, list[float]]:
+    """Snap every cluster's roots to their mean and report each cluster's spread.
+
+    A detected multiple root is *exactly* degenerate in theory, but the
+    numerical roots that land in a cluster are only approximately equal
+    (finite solver tolerance, θ₁ bracketing error, etc.).  This enforces
+    exact degeneracy by replacing every root in a cluster with the cluster's
+    complex mean.  The standard deviation of the *original* roots in each
+    cluster — ``sqrt(mean(|β − mean|²))``, a real RMS distance from the
+    mean — is returned so the caller can record how loose the cluster was.
+
+    Roots not in any cluster are left untouched.
+
+    Parameters
+    ----------
+    roots : np.ndarray, shape (n_roots,)
+        β₂ roots in whatever ordering the caller works in (modulus-sorted
+        at the boundary MR, track-ordered at an in-loop MR).
+    cluster_indices : list[tuple[int, ...]]
+        Output of :func:`detect_cluster` — indices into *roots*.
+
+    Returns
+    -------
+    snapped_roots : np.ndarray
+        Copy of *roots* with each cluster's entries replaced by their mean.
+    cluster_stds : list[float]
+        Per-cluster standard deviation, same order as *cluster_indices*.
+        Empty when *cluster_indices* is empty.
+    """
+    snapped = roots.copy()
+    stds: list[float] = []
+    for indices in cluster_indices:
+        idx = np.array(indices, dtype=int)
+        cluster_roots = roots[idx]
+        mean = cluster_roots.mean()
+        stds.append(float(np.std(cluster_roots)))
+        snapped[idx] = mean
+    return snapped, stds
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +140,13 @@ class MultipleRootIntervalTrigger:
         self._min_dist_threshold = min_dist_threshold
         self._prev_deriv: int = 0          # −1=approaching, 0=unset, +1=separating
         self._prev_pair: tuple[int, int] | None = None
+        # State of the *previous* step (the interval's left endpoint when a
+        # trigger fires).  roots/V are kept alongside theta so the caller
+        # can build a two-endpoint Hermite anchor without re-solving or
+        # re-deriving the tangent at the interval start.
         self._prev_theta: float | None = None
+        self._prev_roots: np.ndarray | None = None
+        self._prev_V: np.ndarray | None = None
 
     def __call__(
         self, roots: np.ndarray, V: np.ndarray, theta1: float,
@@ -106,14 +161,16 @@ class MultipleRootIntervalTrigger:
             to positive, AND the current minimum distance is below the
             threshold.  *interval* is ``(start, end)`` — the θ₁ range
             containing the local minimum — or None if not triggered.
+
+            On a trigger, ``self._prev_roots`` / ``self._prev_V`` /
+            ``self._prev_theta`` hold the interval's *left* endpoint state
+            (they are not overwritten before the trigger returns).
         """
         min_dist, deriv, pair = _closest_pair_deriv(roots, V)
 
         # Only track when roots are close enough for a meaningful signal.
         if min_dist >= self._min_dist_threshold:
-            self._prev_deriv = 0
-            self._prev_pair = None
-            self._prev_theta = None
+            self._reset()
             return False, None
 
         # Same-pair guard: avoid spurious sign flips when the closest pair
@@ -122,13 +179,25 @@ class MultipleRootIntervalTrigger:
             self._prev_deriv < 0 and deriv > 0
             and pair == self._prev_pair
         )
-        interval = (self._prev_theta, theta1) if triggered else None
+        if triggered:
+            # Early-return WITHOUT overwriting prev_*: the interval's left
+            # endpoint is the previous step's state, which the caller reads.
+            return True, (self._prev_theta, theta1)
 
         self._prev_deriv = deriv
         self._prev_pair = pair
         self._prev_theta = theta1
+        self._prev_roots = roots
+        self._prev_V = V
 
-        return triggered, interval
+        return False, None
+
+    def _reset(self) -> None:
+        self._prev_deriv = 0
+        self._prev_pair = None
+        self._prev_theta = None
+        self._prev_roots = None
+        self._prev_V = None
 
 
 def detect_cluster(
@@ -276,7 +345,13 @@ def solve_multiple_roots_in_interval(
     def _compute_deriv(theta1: float):
         beta1 = exp(mu1 + 1j * theta1)
         roots = poly.solve_roots_1d((0, 1), (E_ref, beta1), (2,))
-        inds = hungarian_match_indices(roots_ref, roots)
+        # Match predicted → solved, not ref → solved (a bare match that
+        # swaps near-degenerate tracks).  roots_ref sits at theta1_right;
+        # extrapolate its tangent to the trial θ₁.  Δt is small (Brent's
+        # bracket is two consecutive integration steps), so first-order
+        # tangent extrapolation is adequate.
+        predicted = predict_roots_hermite(theta1, theta1_right, roots_ref, V_ref)
+        inds = hungarian_match_indices(predicted, roots)
         roots = roots[inds]
         V_list, _ = compute_tangent(poly, E_ref, beta1, roots)
         _, deriv, new_pair = _closest_pair_deriv(roots, V_list)
@@ -287,6 +362,11 @@ def solve_multiple_roots_in_interval(
 
     if theta1_right < theta1_left:
         theta1_right += 2 * pi
+
+    # Tangent at the reference (right) endpoint — reused across Brent trials.
+    V_ref, _ = compute_tangent(
+        poly, E_ref, exp(mu1 + 1j * theta1_right), roots_ref,
+    )
 
     theta1_mr = optimize.brentq(_compute_deriv, theta1_left, theta1_right)
 

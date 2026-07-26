@@ -20,6 +20,7 @@ from gbz_types import (
 from continuation.arclength import (
     compute_tangent,
     predict_roots,
+    predict_roots_hermite,
     estimate_error,
     arclength_step,
     StepResult,
@@ -312,6 +313,59 @@ class TestPredictRootsSynthetic:
         roots_actual = np.asarray(poly_A.solve_roots_1d((0, 1), (0j, beta1_new), (2,)))
         err = estimate_error(predicted, roots_actual)
         assert err > 1e-12
+
+
+# predict_roots_hermite
+# ===========================================================================
+
+class TestPredictRootsHermiteSynthetic:
+    """Two-endpoint cubic Hermite prediction: exact for cubic-in-θ tracks,
+    with lerp / hold-fixed fallbacks for singular tracks."""
+
+    def test_cubic_track_is_exact(self):
+        """A track β₂(θ) = a + b·θ + c·θ² + d·θ³ is reproduced exactly by a
+        two-endpoint Hermite given (value, derivative) at both ends."""
+
+        def beta(theta):
+            return 1.0 + 0.5 * theta - 0.2 * theta ** 2 + 0.1 * theta ** 3
+
+        def dbeta(theta):
+            return 0.5 - 0.4 * theta + 0.3 * theta ** 2
+
+        # V = dβ/dθ / β = (dβ/dθ) / β
+        theta0, theta1 = 0.0, 1.0
+        theta_target = 0.37
+        roots0 = np.array([beta(theta0)])
+        roots1 = np.array([beta(theta1)])
+        V0 = np.array([dbeta(theta0) / beta(theta0)])
+        V1 = np.array([dbeta(theta1) / beta(theta1)])
+
+        predicted = predict_roots_hermite(
+            theta_target, theta0, roots0, V0, theta1, roots1, V1,
+        )
+        np.testing.assert_allclose(predicted[0], beta(theta_target),
+                                    atol=1e-12)
+
+    def test_singtrack_singular_root_held_fixed(self):
+        """A 0/∞ padding root (|β| < ZERO_THRESHOLD) is held fixed regardless
+        of the supplied tangents — same contract as predict_roots."""
+        eps = 1e-12  # below ZERO_THRESHOLD (1e-6)
+        roots0 = np.array([eps + 0j])
+        roots1 = np.array([2.0 + 0j])
+        V0 = np.array([1.0 + 0j])
+        V1 = np.array([1.0 + 0j])
+        predicted = predict_roots_hermite(0.5, 0.0, roots0, V0, 1.0, roots1, V1)
+        np.testing.assert_allclose(predicted[0], roots0[0], atol=0.0)
+
+    def test_single_endpoint_matches_predict_roots(self):
+        """One-endpoint call is the same tangent extrapolation as predict_roots."""
+        roots = np.array([2.0 + 1j, 0.5 - 0.5j])
+        V = np.array([0.3 + 0.1j, -0.2 + 0.4j])
+        dtheta = 0.27
+        a = predict_roots(roots, V, dtheta)
+        b = predict_roots_hermite(roots[0].real * 0 + dtheta,  # theta_target = dtheta
+                                  0.0, roots, V)
+        np.testing.assert_allclose(a, b, atol=0.0)
 
 
 # ===========================================================================
