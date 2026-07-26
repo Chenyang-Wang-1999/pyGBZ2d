@@ -398,7 +398,7 @@ if __name__ == "__main__":
     # sweep_SGBZ_y()
     plot_amoebic_spectrum()
     # plot_amoeba_mu()
-    # plot_amoebic_spectrum("-xy")
+    plot_amoebic_spectrum("-xy")
     # plot_SGBZ("a1")
     # plot_SGBZ("a2")
     # plot_SGBZ("x")

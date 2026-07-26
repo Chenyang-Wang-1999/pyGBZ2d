@@ -16,7 +16,7 @@ from enum import Enum
 from math import pi
 from cmath import exp
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 import warnings
 
 

@@ -25,7 +25,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from continuation import ZeroManager
-from gbz_types import CharPoly
+from gbz_types import CharPoly, LineSubset
+import brute_force_amoeba as bfa
 
 
 DEFAULT_PARAMS = {
@@ -75,6 +76,21 @@ def solve_zeros():
     plt.show()
 
 
+def solve_amoeba_E():
+    E_ref = 1
+    tx, ty, phix, phiy = DEFAULT_PARAMS["tx"], DEFAULT_PARAMS["ty"], DEFAULT_PARAMS["phix"], DEFAULT_PARAMS["phiy"]
+    model = get_model(**DEFAULT_PARAMS)
+    coeffs, degs = model.get_characteristic_polynomial_data()
+    res = bfa.collect_GBZ_subsets(coeffs, degs, E_ref, 0.0, debug_mode=True)
+    print(res)
+    for subset in res.subsets:
+        if isinstance(subset, LineSubset):
+            theta1 = subset.theta1_arr
+            theta2 = np.angle(subset.beta2_arr)
+            plt.plot(theta1, theta2, '.-')
+            print(tx * np.cos(theta1 + phix) + ty * np.cos(theta2 + phiy))
+    plt.show()
+
 if __name__ == "__main__":
-    # solve_amoeba_E()
-    solve_zeros()
+    # solve_zeros()
+    solve_amoeba_E()

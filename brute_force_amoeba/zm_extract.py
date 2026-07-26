@@ -100,6 +100,203 @@ def _continuum_mask(zm: AmoebaZeroManager, mu2: float, tol: float, frac: float) 
 
 
 # ---------------------------------------------------------------------------
+# MR-boundary joining for continuum LineSubsets
+# ---------------------------------------------------------------------------
+
+class _LinePiece(LineSubset):
+    """A per-segment continuum LineSubset being joined across MR boundaries.
+
+    Carries ``ml``/``mr`` — the leftmost/rightmost original segment indices
+    spanned so far — so merges can be chained and the join at the cyclic seam
+    (segment 0 ↔ last segment) detected.  Behaviourally a ``LineSubset`` once
+    joining is done.
+    """
+
+    def __init__(self, E, mu1, theta1_arr, beta2_arr, ml: int, mr: int):
+        super().__init__(E=E, mu1=mu1,
+                         theta1_arr=theta1_arr, beta2_arr=beta2_arr)
+        self.ml = ml
+        self.mr = mr
+
+
+def _is_cluster_endpoint(
+    zm: AmoebaZeroManager, seg: SegmentData, side: str, root: complex,
+) -> bool:
+    """Whether an endpoint root *value* is part of the boundary MR cluster.
+
+    A segment boundary is an MR, but only the roots listed in
+    ``multiple_roots[mr].cluster_indices`` are genuinely multiple there; every
+    other root is a regular root passing straight through.  ``mr`` is the
+    segment's ``left_mr`` / ``right_mr`` (-1 = no MR, i.e. the circle start/end;
+    the boundary MR at θ₁=0/2π is index 0 when ``has_boundary_mr`` is set).
+
+    Matching is by *value* against ``multiple_roots[mr].roots``: this is
+    frame-independent, so it works whether that row is modulus-sorted (the
+    boundary MR at θ₁=0) or track-ordered (an interior MR), since
+    ``cluster_indices`` is always an index into that same row.
+    """
+    mr = seg.left_mr if side == 'left' else seg.right_mr
+    if mr < 0 or (mr == 0 and not zm.has_boundary_mr):
+        return False
+    cluster: list[tuple[int, ...]] = zm.multiple_roots[mr].cluster_indices
+    if not cluster:
+        return False
+    mr_roots = zm.multiple_roots[mr].roots
+    j_mod = int(np.argmin(np.abs(mr_roots - root)))
+    return any(j_mod in c for c in cluster)
+
+
+def _join_continuum_across_mrs(
+    zm: AmoebaZeroManager,
+    continuum_masks: list[np.ndarray],
+    line_pieces: list[_LinePiece],
+) -> list[_LinePiece]:
+    """Join per-segment continuum LineSubsets that pass through MRs.
+
+    A segment boundary is an MR, but only the roots in its ``cluster_indices``
+    are genuinely multiple; the rest are regular roots that pass straight
+    through.  A continuum track whose endpoint root is NOT in the cluster
+    therefore does not terminate at the MR — it continues into the adjacent
+    segment on the matched track.  This joins those two pieces, and raises if
+    the expected continuation is absent (a topology inconsistency).
+
+    Each original segment's left boundary is matched against the previous
+    segment's right boundary, for every continuum track.  Matching is by root
+    *value* (frame-independent), so it holds whether a boundary row is
+    modulus-sorted (interior MR) or track-ordered (the ``completed`` branch
+    closing row at the θ₁=0/2π seam).  Iterated to a fixpoint so chains and the
+    cyclic seam (segment 0 ↔ last segment) both converge.
+    """
+    n_seg = len(zm.segments)
+    if n_seg <= 1:
+        return line_pieces
+
+    def _mod(k: int) -> int:
+        return k % n_seg
+
+    def find_by_left(seg_s: int, root: complex) -> int | None:
+        # Piece whose leftmost spanned segment is seg_s and whose leftmost
+        # β₂ ≈ root (continuum tracks on one segment are distinct roots).
+        for idx, p in enumerate(line_pieces):
+            if p.ml == seg_s and np.abs(p.beta2_arr[0] - root) < 1e-9:
+                return idx
+        return None
+
+    def find_by_right(seg_s: int, root: complex) -> int | None:
+        for idx, p in enumerate(line_pieces):
+            if p.mr == seg_s and np.abs(p.beta2_arr[-1] - root) < 1e-9:
+                return idx
+        return None
+
+    for _ in range(n_seg):
+        changed = False
+        for s in range(n_seg):
+            seg = zm.segments[s]
+            prev = _mod(s - 1 + n_seg)
+            prev_seg = zm.segments[prev]
+
+            left_mr = seg.left_mr
+            right_mr = prev_seg.right_mr
+            # A shared interior MR boundary has the same index on both sides.
+            # The circle seam (θ₁=0 ≡ 2π) is the only non-MR shared boundary:
+            # it occurs iff segment 0's left_mr and the last segment's
+            # right_mr are both -1 (no boundary MR).
+            is_circle_seam = (left_mr < 0 and right_mr < 0)
+            if not is_circle_seam and left_mr != right_mr:
+                continue  # not a shared boundary
+
+            left_b = seg.tracked_roots[0, :]
+            right_b = prev_seg.tracked_roots[-1, :]
+
+            for j_l in np.where(continuum_masks[s])[0]:
+                root = left_b[j_l]
+                if _is_cluster_endpoint(zm, seg, 'left', root):
+                    continue  # genuine LineSubset terminator at the MR
+                li_idx = find_by_left(s, root)
+                if li_idx is None:
+                    # segment s is not the leftmost of any piece → its left
+                    # boundary is already interior to a merged piece (the
+                    # continuum was joined here in an earlier pass).
+                    continue
+                # Match the continuation root on the previous segment's right
+                # boundary by value (frame-independent).
+                j_prev = int(np.argmin(np.abs(right_b - root)))
+                root_prev = right_b[j_prev]
+                if _is_cluster_endpoint(zm, prev_seg, 'right', root_prev):
+                    # Non-cluster on one side, cluster on the other — the track
+                    # ends here in one segment but not the other: inconsistent.
+                    raise ValueError(
+                        f"Continuum track {j_l} of segment {s} ends at the MR "
+                        f"at θ₁={seg.theta1_arr[0]:.4f} as a non-cluster root, "
+                        f"but the matched root (track {j_prev}) of segment "
+                        f"{prev} is a cluster root there."
+                    )
+                pi_idx = find_by_right(prev, root_prev)
+                if pi_idx is None:
+                    raise ValueError(
+                        f"Continuum track {j_l} of segment {s} continues "
+                        f"through the MR at θ₁={seg.theta1_arr[0]:.4f} as a "
+                        f"non-cluster root, but segment {prev} has no "
+                        f"continuum on the matched track (track {j_prev})."
+                    )
+                if pi_idx == li_idx:
+                    continue  # already joined (e.g. the cyclic seam)
+                _merge_two(line_pieces, pi_idx, li_idx,
+                           cyclic=(s == 0))
+                changed = True
+                break  # line_pieces changed; restart the segment scan
+            if changed:
+                break
+        if not changed:
+            break
+    return line_pieces
+
+
+def _merge_two(
+    line_pieces: list[_LinePiece],
+    prev_idx: int, cur_idx: int,
+    *, cyclic: bool,
+) -> None:
+    """Merge ``line_pieces[prev_idx]`` (right side) with ``[cur_idx]`` (left).
+
+    Non-cyclic (interior MR): ``prev`` (segment s-1) is to the LEFT of ``cur``
+    (segment s) in θ₁, so the array is ``[prev, cur[1:]]`` — θ₁ stays monotonic,
+    the shared MR row (cur's first row) is dropped.
+
+    Cyclic seam (θ₁=0 ≡ 2π): ``prev`` is the LAST segment (right end at 2π),
+    ``cur`` is segment 0 (left end at 0).  The shared point is the seam itself —
+    ``rp[-1]`` (θ=2π) and ``cp[0]`` (θ=0) are the same physical point.  The
+    concatenation must align these: ``[rp, cp[1:]]``, so the seam lands INSIDE
+    the array (where the track is continuous through θ₁=0/2π) and the array's
+    two ends fall on the real terminators (interior cluster MRs).  Reversing
+    this — ``[cp, rp[1:]]`` — would join segment 0's right end (an interior MR)
+    onto the last segment's second point, splicing at the wrong physical point
+    and breaking β₂ continuity.
+    """
+    rp = line_pieces[prev_idx]
+    cp = line_pieces[cur_idx]
+    if cyclic:
+        # prev = last segment (right end at 2π), cur = segment 0 (left end at 0).
+        # Align rp[-1] (θ=2π) with cp[0] (θ=0) — the seam — by putting rp first.
+        th = np.concatenate([rp.theta1_arr, cp.theta1_arr[1:]])
+        b2 = np.concatenate([rp.beta2_arr, cp.beta2_arr[1:]])
+        new_ml, new_mr = cp.ml, rp.mr
+    else:
+        th = np.concatenate([rp.theta1_arr, cp.theta1_arr[1:]])
+        b2 = np.concatenate([rp.beta2_arr, cp.beta2_arr[1:]])
+        new_ml, new_mr = rp.ml, cp.mr
+    merged = _LinePiece(
+        E=cp.E, mu1=cp.mu1, theta1_arr=th, beta2_arr=b2,
+        ml=new_ml, mr=new_mr,
+    )
+    keep = [i for i in range(len(line_pieces)) if i not in (prev_idx, cur_idx)]
+    new_list = [line_pieces[i] for i in keep]
+    new_list.append(merged)
+    line_pieces.clear()
+    line_pieces.extend(new_list)
+
+
+# ---------------------------------------------------------------------------
 # Subset extraction (3 modes)
 # ---------------------------------------------------------------------------
 
@@ -140,7 +337,10 @@ def extract_amoeba_subsets(
         same θ₁ (e.g. a conjugate pair at β₁=1) thus stay distinct.
     """
     continuum_masks = _continuum_mask(zm, mu2, tol, frac)
-    continuum_lines: list[LineSubset] = []
+    # One per-segment-per-continuum-track LineSubset, *before* joining across
+    # MR boundaries.  ``ml``/``mr`` track the outermost segment indices so that
+    # merges can be chained and the join at the cyclic seam detected.
+    line_pieces: list[_LinePiece] = []
     # Crossings recorded as (seg_idx, i, j, kind), NOT PointSubsets, so that
     # boundary duplicates between segments sharing an MR endpoint can be
     # resolved after the loop.  kind: 'zero' (d==0 at sample i) | 'cross'
@@ -152,11 +352,14 @@ def extract_amoeba_subsets(
         tr = seg.tracked_roots
         is_cont = continuum_masks[s]
 
-        # 1. continuum tracks → LineSubsets.
+        # 1. continuum tracks → one LineSubset per segment (joined across MR
+        # boundaries below — a track that passes through an MR as a non-cluster
+        # root does *not* terminate there).
         for j in np.where(is_cont)[0]:
-            continuum_lines.append(LineSubset(
+            line_pieces.append(_LinePiece(
                 E=E, mu1=mu1,
-                theta1_arr=th.copy(), beta2_arr=tr[:, j].copy()))
+                theta1_arr=th.copy(), beta2_arr=tr[:, j].copy(),
+                ml=s, mr=s))
 
         # 2. discrete crossings on non-continuum tracks (index only).
         other = np.where(~is_cont)[0]
@@ -175,15 +378,24 @@ def extract_amoeba_subsets(
             for i, jj in zip(i_idx, j_idx):
                 hits.append((s, int(i), int(other[jj]), 'cross'))
 
+    # ---- join per-segment LineSubsets across MR boundaries ----
+    # A segment ends at an MR only because *some* roots there form a degenerate
+    # cluster (``cluster_indices``); the other roots are regular and pass
+    # straight through.  A continuum track whose endpoint root is NOT in the
+    # cluster therefore does not terminate at the MR — it continues into the
+    # adjacent segment on the matched track.  Join such pieces, and raise if the
+    # expected continuation is absent (a topology inconsistency).
+    line_pieces = _join_continuum_across_mrs(zm, continuum_masks, line_pieces)
+
     # ---- materialize + boundary filtering ----
     cont_endpoints = np.array(
-        [t for L in continuum_lines for t in (L.theta1_start, L.theta1_end)]
-    ) if continuum_lines else None
+        [t for p in line_pieces for t in (p.theta1_start, p.theta1_end)]
+    ) if line_pieces else None
 
     # Inverse of zm.boundary_perm: boundary_perm[inv[k]] == k, so
-    # roots_right[j] corresponds to left-boundary track inv[j].
-    # Used to fold the θ₁=2π end of the last segment onto the θ₁=0 start of
-    # the first segment — they are the same physical circle point.
+    # roots_right[j] corresponds to left-boundary track inv[j].  Used to fold
+    # the θ₁=2π end of the last segment onto the θ₁=0 start of the first
+    # segment — they are the same physical circle point.
     boundary_perm_inv = np.empty(zm.K, dtype=int)
     boundary_perm_inv[zm.boundary_perm] = np.arange(zm.K)
 
@@ -209,7 +421,13 @@ def extract_amoeba_subsets(
 
         points.append((t1, b2))
 
-    subsets: list = list(continuum_lines)
+    # Drop the joining-only ``ml``/``mr`` fields: the public GBZ output is
+    # plain ``LineSubset``s, not ``_LinePiece``s.
+    subsets: list = [
+        LineSubset(E=p.E, mu1=p.mu1,
+                   theta1_arr=p.theta1_arr, beta2_arr=p.beta2_arr)
+        for p in line_pieces
+    ]
     for t1, b2 in points:
         subsets.append(PointSubset(E=E, beta1=exp(mu1 + 1j * t1), beta2=b2))
     return subsets

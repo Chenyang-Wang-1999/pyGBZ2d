@@ -108,6 +108,254 @@ def test_all_exports():
         assert hasattr(bfa, name), f"Missing export: {name}"
 
 
+# ---- continuum-through-MR joining tests ----
+#
+# A segment boundary is a multiple root, but only the roots in its
+# ``cluster_indices`` are genuinely degenerate there — every other track is a
+# regular root passing straight through.  A continuum LineSubset whose
+# endpoint root is NOT in the cluster must not be truncated at the MR; it
+# continues into the adjacent segment on the matched track.  These tests build
+# a synthetic 2-segment ZeroManager topology (no polynomial solving) and verify
+# the joining logic in ``_join_continuum_across_mrs`` directly.
+
+
+def _build_two_segment_zm(mu2, cont_on_seg1=True, cluster_tracks=(0, 1),
+                          boundary_mr=False):
+    """Two segments [0, π] and [π, 2π] sharing an interior MR at θ₁=π.
+
+    Track 2 is a continuum (|β₂| = exp(μ₂)) over both segments; tracks 0/1 form
+    a degenerate cluster at the MR.  ``cont_on_seg1=False`` breaks the
+    continuum on segment 1 (no matching continuation → the join must raise).
+    ``cluster_tracks`` selects which tracks are listed as the MR cluster.
+    ``boundary_mr=True`` also places a boundary MR at θ₁=0/2π (so the seam is a
+    cluster terminator and the only joinable boundary is the interior MR).
+    """
+    from cmath import exp, pi
+    from continuation.zero_manager import SegmentData
+    from continuation.multiple_roots import MultipleRootInfo
+    from types import SimpleNamespace
+
+    K = 3
+    mu1, E = 0.2, 0.5 + 0.1j
+    th0 = np.linspace(0, pi, 11)
+    tr0 = np.zeros((11, K), dtype=complex)
+    for i, t in enumerate(th0):
+        tr0[i, 0] = 0.5 * exp(1j * t)
+        tr0[i, 1] = 0.5 * exp(-1j * t)
+        tr0[i, 2] = exp(mu2 + 1j * t * 2)
+    m = (tr0[-1, 0] + tr0[-1, 1]) / 2
+    tr0[-1, 0] = tr0[-1, 1] = m
+    seg0_left_mr = 0 if boundary_mr else -1
+    seg0 = SegmentData(
+        theta1_arr=th0, tracked_roots=tr0,
+        abs_argsort=np.tile(np.arange(K), (11, 1)),
+        left_mr=seg0_left_mr, right_mr=1 if boundary_mr else 0,
+    )
+
+    th1 = np.linspace(pi, 2 * pi, 11)
+    tr1 = np.zeros((11, K), dtype=complex)
+    mr_roots = np.array(sorted([m, m, tr0[-1, 2]], key=abs))
+    tr1[0] = mr_roots
+    cont_col = int(np.argmin(np.abs(mr_roots - tr0[-1, 2])))
+    others = [c for c in range(K) if c != cont_col]
+    for i in range(1, 11):
+        if cont_on_seg1:
+            tr1[i, cont_col] = exp(mu2 + 1j * th1[i] * 2)
+        else:
+            tr1[i, cont_col] = 0.9 * exp(1j * th1[i])  # off the continuum
+        tr1[i, others[0]] = 0.5 * exp(1j * th1[i])
+        tr1[i, others[1]] = 0.5 * exp(-1j * th1[i])
+    seg1_right_mr = 0 if boundary_mr else -1
+    seg1 = SegmentData(
+        theta1_arr=th1, tracked_roots=tr1,
+        abs_argsort=np.tile(np.arange(K), (11, 1)),
+        left_mr=1 if boundary_mr else 0, right_mr=seg1_right_mr,
+    )
+
+    # Continuum mask: track whose |β₂| stays at exp(μ₂) for the whole segment.
+    masks = []
+    for seg in (seg0, seg1):
+        la = np.log(np.abs(seg.tracked_roots))
+        masks.append(np.mean(np.abs(la - mu2) < 1e-6, axis=0) > 0.9)
+
+    cluster = [tuple(cluster_tracks)] if cluster_tracks else []
+    mr_list = []
+    if boundary_mr:
+        # Boundary MR cluster includes track 2 so the seam is a terminator for
+        # the continuum too — the only joinable boundary is then the interior MR.
+        mr_list.append(MultipleRootInfo(
+            theta1=0.0, cluster_indices=[(0, 1, 2)],
+            roots=mr_roots, cluster_stds=[0.0],
+        ))
+    mr_list.append(MultipleRootInfo(
+        theta1=pi, cluster_indices=cluster,
+        roots=mr_roots, cluster_stds=[0.0],
+    ))
+    zm = SimpleNamespace(
+        segments=[seg0, seg1],
+        multiple_roots=mr_list,
+        has_boundary_mr=boundary_mr,
+        boundary_perm=np.arange(K),
+        K=K,
+    )
+    return zm, masks, mu1, E
+
+
+class TestContinuumThroughMR:
+    def test_continuum_passing_through_mr_joins(self):
+        """A continuum track that passes through the interior MR as a
+        non-cluster root AND through the θ₁=0/2π seam forms a closed loop.
+        Both passthroughs are non-cluster, so neither is a real endpoint;
+        the only real terminator is the interior MR's cluster (tracks 0/1),
+        but the continuum track (track 2) is NOT in it.  The loop is therefore
+        opened at the interior MR θ₁=π: the merged array has both ends at π
+        (same cluster value, since the track is regular-but-degenerate-valued
+        there) and the seam lands inside, where β₂ is continuous through 0/2π.
+
+        (A 2-segment full-circle continuum has no genuine endpoint anywhere, so
+        it is a closed loop; we open it at the interior MR and keep the seam
+        interior rather than fabricating endpoints at θ₁=0/2π.)"""
+        from brute_force_amoeba.zm_extract import (
+            _join_continuum_across_mrs, _LinePiece,
+        )
+        zm, masks, mu1, E = _build_two_segment_zm(mu2=0.3)
+        pieces = []
+        for s, seg in enumerate(zm.segments):
+            for j in np.where(masks[s])[0]:
+                pieces.append(_LinePiece(
+                    E=E, mu1=mu1,
+                    theta1_arr=seg.theta1_arr.copy(),
+                    beta2_arr=seg.tracked_roots[:, j].copy(),
+                    ml=s, mr=s,
+                ))
+        pieces = _join_continuum_across_mrs(zm, masks, pieces)
+
+        assert len(pieces) == 1, f"expected 1 joined LineSubset, got {len(pieces)}"
+        p = pieces[0]
+        # Both ends fall on the interior MR (θ₁=π); the seam is interior.
+        assert p.theta1_arr[0] == pytest.approx(np.pi)
+        assert p.theta1_arr[-1] == pytest.approx(np.pi)
+        # 11 + 11 rows, minus the dropped seam duplicate.
+        assert len(p.theta1_arr) == 21
+        # β₂ continuous across the seam: the step across the θ₁ 2π→0 wrap
+        # must match a typical within-segment step (same track, same sampling),
+        # not jump discontinuously.
+        dtheta = np.diff(p.theta1_arr)
+        wrap = int(np.argmin(dtheta))
+        steps = np.abs(np.diff(p.beta2_arr))
+        seam_step = steps[wrap]
+        # Within-segment steps exclude the wrap; compare to their median.
+        in_seg = np.delete(steps, wrap)
+        assert seam_step < 2 * np.median(in_seg), (
+            f"β₂ step at seam ({seam_step:.2e}) >> within-segment "
+            f"median ({np.median(in_seg):.2e}) → wrong join direction"
+        )
+
+    def test_seam_join_direction(self):
+        """When the interior MR is a cluster terminator for the continuum (so
+        the interior boundary does NOT join) but the θ₁=0/2π seam is a
+        non-cluster passthrough, the seam join alone connects the two segments.
+
+        The shared seam point is segment 0's left end (θ=0) and the last
+        segment's right end (θ=2π).  The join must align THESE — i.e. the
+        merged array is ``[last_seg, segment0[1:]]`` so the seam lands inside
+        the array (where β₂ is continuous through 0/2π) and both array ends
+        fall on the real terminator at θ₁=π.  Concatenating in the other order
+        would splice segment 0's right end (θ=π) onto the last segment's
+        second point — a different physical point — and break β₂ continuity.
+        """
+        from brute_force_amoeba.zm_extract import (
+            _join_continuum_across_mrs, _LinePiece,
+        )
+        # Track 2 in the interior-MR cluster → interior boundary does not join.
+        # No boundary MR → the seam is the only joinable boundary.
+        zm, masks, mu1, E = _build_two_segment_zm(
+            mu2=0.3, cluster_tracks=(0, 1, 2), boundary_mr=False)
+        pieces = []
+        for s, seg in enumerate(zm.segments):
+            for j in np.where(masks[s])[0]:
+                pieces.append(_LinePiece(
+                    E=E, mu1=mu1,
+                    theta1_arr=seg.theta1_arr.copy(),
+                    beta2_arr=seg.tracked_roots[:, j].copy(),
+                    ml=s, mr=s,
+                ))
+        pieces = _join_continuum_across_mrs(zm, masks, pieces)
+
+        assert len(pieces) == 1, f"seam join should yield 1 piece, got {len(pieces)}"
+        p = pieces[0]
+        # Both ends fall on the interior terminator θ₁=π (the real endpoint);
+        # the seam (θ₁=0 ≡ 2π) is interior, where β₂ must be continuous.
+        assert p.theta1_arr[0] == pytest.approx(np.pi)
+        assert p.theta1_arr[-1] == pytest.approx(np.pi)
+        # 11 + 11 rows, minus the dropped seam duplicate.
+        assert len(p.theta1_arr) == 21
+        # β₂ continuous across the seam: the step across the θ₁ 2π→0 wrap
+        # must match a typical within-segment step, not jump discontinuously.
+        steps = np.abs(np.diff(p.beta2_arr))
+        wrap = int(np.argmin(np.diff(p.theta1_arr)))
+        seam_step = steps[wrap]
+        in_seg = np.delete(steps, wrap)
+        assert seam_step < 2 * np.median(in_seg), (
+            f"β₂ step at seam ({seam_step:.2e}) >> within-segment "
+            f"median ({np.median(in_seg):.2e}) → wrong join direction"
+        )
+
+    def test_missing_continuation_raises(self):
+        """If a non-cluster endpoint has no matching continuum in the adjacent
+        segment, the join must raise (topology inconsistency), not silently
+        truncate."""
+        from brute_force_amoeba.zm_extract import (
+            _join_continuum_across_mrs, _LinePiece,
+        )
+        zm, masks, mu1, E = _build_two_segment_zm(
+            mu2=0.3, cont_on_seg1=False)
+        pieces = []
+        for s, seg in enumerate(zm.segments):
+            for j in np.where(masks[s])[0]:
+                pieces.append(_LinePiece(
+                    E=E, mu1=mu1,
+                    theta1_arr=seg.theta1_arr.copy(),
+                    beta2_arr=seg.tracked_roots[:, j].copy(),
+                    ml=s, mr=s,
+                ))
+        with pytest.raises(ValueError):
+            _join_continuum_across_mrs(zm, masks, pieces)
+
+    def test_cluster_terminator_does_not_join(self):
+        """When the continuum track IS part of the MR cluster, it genuinely
+        terminates at the MR and is not joined through it.
+
+        With a boundary MR at θ₁=0/2π the seam is a cluster terminator, so the
+        only joinable boundary is the interior MR at θ₁=π.  Track 2 outside
+        the cluster → joins (1 piece); track 2 inside the cluster → does not
+        (2 pieces)."""
+        from brute_force_amoeba.zm_extract import (
+            _join_continuum_across_mrs, _LinePiece,
+        )
+
+        def run(cluster_tracks):
+            zm, masks, mu1, E = _build_two_segment_zm(
+                mu2=0.3, cluster_tracks=cluster_tracks, boundary_mr=True)
+            pieces = []
+            for s, seg in enumerate(zm.segments):
+                for j in np.where(masks[s])[0]:
+                    pieces.append(_LinePiece(
+                        E=E, mu1=mu1,
+                        theta1_arr=seg.theta1_arr.copy(),
+                        beta2_arr=seg.tracked_roots[:, j].copy(),
+                        ml=s, mr=s,
+                    ))
+            return _join_continuum_across_mrs(zm, masks, pieces)
+
+        # Track 2 NOT in the interior-MR cluster → the continuum passes
+        # through θ₁=π and the two pieces join.
+        assert len(run(cluster_tracks=(0, 1))) == 1
+        # Track 2 IS in the cluster → it terminates at θ₁=π, no join.
+        assert len(run(cluster_tracks=(0, 1, 2))) == 2
+
+
+
 # ---- _resolve_continuum tests ----
 
 
