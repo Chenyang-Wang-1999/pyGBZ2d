@@ -77,7 +77,7 @@ def solve_zeros():
 
 
 def solve_amoeba_E():
-    E_ref = 1
+    E_ref = -1
     tx, ty, phix, phiy = DEFAULT_PARAMS["tx"], DEFAULT_PARAMS["ty"], DEFAULT_PARAMS["phix"], DEFAULT_PARAMS["phiy"]
     model = get_model(**DEFAULT_PARAMS)
     coeffs, degs = model.get_characteristic_polynomial_data()
