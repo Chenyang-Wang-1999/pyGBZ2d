@@ -127,8 +127,11 @@ def _is_cluster_endpoint(
     A segment boundary is an MR, but only the roots listed in
     ``multiple_roots[mr].cluster_indices`` are genuinely multiple there; every
     other root is a regular root passing straight through.  ``mr`` is the
-    segment's ``left_mr`` / ``right_mr`` (-1 = no MR, i.e. the circle start/end;
-    the boundary MR at θ₁=0/2π is index 0 when ``has_boundary_mr`` is set).
+    segment's ``left_mr`` / ``right_mr``; ``mr < 0`` is the only "no MR" case —
+    it marks the θ₁=0/2π circle seam (segment 0's left / last segment's right,
+    set to -1 by ``ZeroManager.run``).  When ``has_boundary_mr`` is *False* there
+    is no boundary MR at θ₁=0, so interior MRs are indexed starting from 0 and
+    MR index 0 is a genuine interior MR, not the seam.
 
     Matching is by *value* against ``multiple_roots[mr].roots``: this is
     frame-independent, so it works whether that row is modulus-sorted (the
@@ -136,7 +139,7 @@ def _is_cluster_endpoint(
     ``cluster_indices`` is always an index into that same row.
     """
     mr = seg.left_mr if side == 'left' else seg.right_mr
-    if mr < 0 or (mr == 0 and not zm.has_boundary_mr):
+    if mr < 0:
         return False
     cluster: list[tuple[int, ...]] = zm.multiple_roots[mr].cluster_indices
     if not cluster:
@@ -458,18 +461,24 @@ def _zero_identity_key(
     is_left = (i == 0)
     is_right = (i == n - 1)
 
-    # Circle boundary θ₁ = 0 (first segment's left end).
-    # seg0.left_mr == -1 (plain start) or == 0 with has_boundary_mr (boundary MR).
-    if is_left and seg.left_mr <= 0 and (seg.left_mr < 0 or zm.has_boundary_mr):
+    # Circle boundary θ₁ = 0 (first segment's left end) ≡ θ₁ = 2π (last
+    # segment's right end).  The seam is "no interior MR here": left_mr < 0
+    # (plain start) OR the boundary MR at θ₁=0 (index 0, has_boundary_mr=True).
+    # When has_boundary_mr is False, MR index 0 is a normal interior MR, NOT the
+    # seam — same conflation as _is_cluster_endpoint; do not treat it as circle.
+    left_is_circle = seg.left_mr < 0 or (seg.left_mr == 0 and zm.has_boundary_mr)
+    right_is_circle = seg.right_mr < 0 or (seg.right_mr == 0 and zm.has_boundary_mr)
+    if is_left and left_is_circle:
         return ('circle', j)
-    # Circle boundary θ₁ = 2π (last segment's right end) → fold onto left track.
-    if is_right and seg.right_mr <= 0 and (seg.right_mr < 0 or zm.has_boundary_mr):
+    if is_right and right_is_circle:
         return ('circle', int(boundary_perm_inv[j]))
 
     # Shared interior MR endpoint: same roots array on both sides, same track.
-    if is_left and seg.left_mr > 0:
+    # Reaches here for any left_mr/right_mr >= 0 that is not the circle seam
+    # — including interior MR index 0 when has_boundary_mr is False.
+    if is_left:
         return ('mr', seg.left_mr, j)
-    if is_right and seg.right_mr > 0:
+    if is_right:
         return ('mr', seg.right_mr, j)
 
     # Interior sample — a unique exact touch, keep it.

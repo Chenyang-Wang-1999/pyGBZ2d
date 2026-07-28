@@ -266,9 +266,20 @@ class SegmentData:
     abs_argsort : np.ndarray (int, shape (N, K))
         Per-row argsort by |β₂|.
     left_mr : int
-        MR index at the left boundary (-1 = start of circle).
+        MR index at the left boundary.  Indexing convention (see
+        ``ZeroManager.run``): ``mr == -1`` is the ONLY "no MR" case — it marks
+        the θ₁ = 0 / 2π circle seam (segment 0's left, last segment's right).
+        Any ``mr >= 0`` is a genuine MR listed in ``multiple_roots[mr]``.
+        When ``has_boundary_mr`` is True the boundary MR at θ₁ = 0 occupies
+        index 0, so interior MRs start at index 1; **when ``has_boundary_mr``
+        is False there is no boundary MR, and interior MRs start at index 0**
+        — i.e. ``multiple_roots[0]`` is then the first interior MR, NOT the
+        seam.  Do not treat ``mr == 0`` as the seam without checking
+        ``has_boundary_mr``; the seam is identified solely by ``mr < 0``,
+        with no exceptions.
     right_mr : int
-        MR index at the right boundary (-1 = end of circle).
+        MR index at the right boundary.  Same convention as ``left_mr``:
+        ``-1`` is the θ₁ = 2π / 0 circle seam; any ``>= 0`` is a real MR.
     """
     theta1_arr: np.ndarray
     tracked_roots: np.ndarray
@@ -321,10 +332,15 @@ class ZeroManager:
         indices, and modulus-sorted β₂ roots.
       - ``segments`` : list[SegmentData] — curve segments, each with
         ``left_mr`` / ``right_mr`` indices into ``multiple_roots``
-        (-1 = no MR at that boundary).
+        (-1 = the θ₁=0/2π circle seam, the ONLY non-MR boundary).
       - ``boundary_perm``: np.ndarray (int, K) permutation from right boundary
         to left boundary: roots_right[boundary_perm] == roots_left.
       - ``has_boundary_mr``: bool — whether there is a multiple root at θ₁=0.
+        This is also the indexing base shift: when True, the boundary MR is
+        ``multiple_roots[0]`` and interior MRs start at index 1; when False,
+        there is no boundary MR and interior MRs start at index 0.  Either
+        way, a segment's ``left_mr``/``right_mr == -1`` always means the seam,
+        never ``mr == 0`` — see ``SegmentData`` for the full convention.
     """
     has_boundary_mr: bool
     left_boundary_roots: np.ndarray
