@@ -321,3 +321,159 @@ class TestSegmentMrRange:
                 for mr in (seg.left_mr, seg.right_mr):
                     assert mr == -1 or 0 <= mr < n_mr, (
                         f"{name}: segment mr {mr} out of range (n_mr={n_mr})")
+
+
+# ===========================================================================
+# Interpolation & insertion
+# ===========================================================================
+
+class TestInterpolation:
+    """Cubic-Hermite interpolation (interpolate_roots) and insert_solution."""
+
+    def test_tangents_stored(self, poly_D):
+        zm = ZeroManager(poly_D, 0j, 0.0)
+        zm.run()
+        for seg in zm.segments:
+            assert seg.tangents is not None
+            assert seg.tangents.shape == seg.tracked_roots.shape
+
+    def test_locate_returns_containing_interval(self, poly_D):
+        zm = ZeroManager(poly_D, 0j, 0.0)
+        zm.run()
+        seg = zm.segments[0]
+        arr = seg.theta1_arr
+        # A θ strictly inside [arr[5], arr[6]] → i == 5.
+        theta_mid = 0.5 * (arr[5] + arr[6])
+        s_idx, i = zm.locate(theta_mid)
+        assert s_idx == 0
+        assert i == 5
+        # A θ on a mesh point → the interval starting at that point.
+        s_idx, i = zm.locate(float(arr[3]))
+        assert i == 3
+
+    def test_interpolate_at_mesh_point_exact(self, poly_D):
+        zm = ZeroManager(poly_D, 0j, 0.0)
+        zm.run()
+        seg = zm.segments[0]
+        arr = seg.theta1_arr
+        for i in (0, 3, len(arr) - 1):
+            got = zm.interpolate_roots(float(arr[i]))
+            assert np.allclose(got, seg.tracked_roots[i, :]), (
+                f"interpolate at mesh point {i} mismatch"
+            )
+
+    def test_interpolate_accuracy(self, poly_D):
+        """Cubic Hermite reproduces a smooth track to ~1e-3 (4th-order)."""
+        zm = ZeroManager(poly_D, 0j, 0.0)
+        zm.run()
+        seg = zm.segments[0]
+        arr = seg.theta1_arr
+        theta = 0.5 * (arr[5] + arr[6])
+        interp = zm.interpolate_roots(theta)
+        solved = zm._solve(theta)
+        perm = hungarian_match_indices(interp, solved)
+        matched = solved[perm]
+        r3_a = to_sphere_r3(interp)
+        r3_b = to_sphere_r3(matched)
+        max_chordal = float(np.max(np.linalg.norm(r3_a - r3_b, axis=1)))
+        assert max_chordal < 1e-3, f"interpolation error {max_chordal} too large"
+
+    def test_interpolate_explicit_indices_skip_search(self, poly_D):
+        zm = ZeroManager(poly_D, 0j, 0.0)
+        zm.run()
+        seg = zm.segments[0]
+        arr = seg.theta1_arr
+        theta = 0.5 * (arr[5] + arr[6])
+        via_search = zm.interpolate_roots(theta)
+        via_idx = zm.interpolate_roots(theta, seg_idx=0, i=5)
+        assert np.allclose(via_search, via_idx)
+
+    def test_interpolate_mr_linear_fallback(self, poly_F):
+        """Boundary MR at θ=0 → segment 0's i=0 interval uses linear."""
+        zm = ZeroManager(poly_F, 0j, 0.0)
+        zm.run(h0=0.1, cluster_tol=1e-4, min_dtheta=1e-6)
+        seg = zm.segments[0]
+        assert seg.left_mr == 0  # boundary MR
+        arr = seg.theta1_arr
+        theta = 0.5 * (arr[0] + arr[1])
+        got = zm.interpolate_roots(theta, seg_idx=0, i=0)
+        s = (theta - arr[0]) / (arr[1] - arr[0])
+        linear = seg.tracked_roots[0, :] + s * (
+            seg.tracked_roots[1, :] - seg.tracked_roots[0, :]
+        )
+        assert np.allclose(got, linear), (
+            "MR-touching interval did not fall back to linear"
+        )
+
+    def test_insert_solution(self, poly_D):
+        zm = ZeroManager(poly_D, 0j, 0.0)
+        zm.run()
+        seg = zm.segments[0]
+        arr = seg.theta1_arr
+        n_before = len(arr)
+        theta = 0.5 * (arr[5] + arr[6])
+        new_idx, changed = zm.insert_solution(theta)
+        assert changed is True
+        assert new_idx == 6
+        arr_after = seg.theta1_arr
+        assert len(arr_after) == n_before + 1
+        assert np.all(np.diff(arr_after) >= -1e-12)  # monotonic
+        assert seg.tracked_roots.shape[0] == len(arr_after)
+        assert seg.abs_argsort.shape[0] == len(arr_after)
+        assert seg.tangents.shape[0] == len(arr_after)
+        # interpolate at the inserted θ now returns the inserted row exactly.
+        assert np.allclose(zm.interpolate_roots(theta),
+                            seg.tracked_roots[new_idx, :])
+
+    def test_interpolate_matches_inserted_solution(self, poly_D):
+        """The cubic-Hermite prediction (from the pre-insertion neighbors)
+        must agree with the roots ``insert_solution`` actually solves and
+        reorders at the same θ — both are anchored on the same neighbor
+        pair, so their difference is the cubic interpolation error (~1e-3),
+        not a track-mismatch."""
+        zm = ZeroManager(poly_D, 0j, 0.0)
+        zm.run()
+        seg = zm.segments[0]
+        arr = seg.theta1_arr
+        theta = 0.5 * (arr[5] + arr[6])
+
+        interp = zm.interpolate_roots(theta)          # pre-insertion cubic
+        new_idx, changed = zm.insert_solution(theta)           # true solve + reorder
+        inserted = seg.tracked_roots[new_idx, :]
+
+        r3_a = to_sphere_r3(interp)
+        r3_b = to_sphere_r3(inserted)
+        max_chordal = float(np.max(np.linalg.norm(r3_a - r3_b, axis=1)))
+        assert max_chordal < 1e-3, (
+            f"interpolation vs inserted solution chordal {max_chordal} too large"
+        )
+
+    def test_insert_endpoint_returns_unchanged(self, poly_D):
+        zm = ZeroManager(poly_D, 0j, 0.0)
+        zm.run()
+        seg = zm.segments[0]
+        arr = seg.theta1_arr
+        n_before = len(arr)
+        # left endpoint → unchanged, returns that endpoint's index.
+        idx, changed = zm.insert_solution(float(arr[5]), seg_idx=0, i=5)
+        assert changed is False
+        assert idx == 5
+        assert len(seg.theta1_arr) == n_before  # no row added
+        # right endpoint → unchanged, returns the right endpoint's index.
+        idx, changed = zm.insert_solution(float(arr[6]), seg_idx=0, i=5)
+        assert changed is False
+        assert idx == 6
+        assert len(seg.theta1_arr) == n_before
+
+    def test_insert_single_row_raises(self, poly_D):
+        """A 1-row segment has no interval → ValueError on both methods."""
+        zm = ZeroManager(poly_D, 0j, 0.0)
+        zm.run()
+        seg0 = zm.segments[0]
+        seg0.theta1_arr = np.array([0.3])
+        seg0.tracked_roots = seg0.tracked_roots[:1, :]
+        seg0.tangents = seg0.tangents[:1, :]
+        with pytest.raises(ValueError):
+            zm.interpolate_roots(0.3)
+        with pytest.raises(ValueError):
+            zm.insert_solution(0.35)

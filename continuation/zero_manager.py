@@ -286,6 +286,14 @@ class SegmentData:
     abs_argsort: np.ndarray
     left_mr: int
     right_mr: int
+    # Per-mesh-row analytic tangent V_j = d(ln β₂ⱼ)/dθ₁ (shape (N, K),
+    # complex; ``None`` for test-built segments that never call the
+    # interpolation/insert methods).  Row i is ``compute_tangent(...)`` at
+    # ``theta1_arr[i]``; the 0 entries mark singular/divergent tracks (the
+    # 0/∞ padding roots and MR-cluster tracks where ∂f/∂β₂ = 0), which the
+    # cubic-Hermite interpolation uses to detect divergence and fall back
+    # to linear.
+    tangents: Optional[np.ndarray] = None
 
     def __post_init__(self):
         n = len(self.theta1_arr)
@@ -293,6 +301,11 @@ class SegmentData:
             raise ValueError(
                 f"theta1_arr length {n} != tracked_roots rows "
                 f"{self.tracked_roots.shape[0]}"
+            )
+        if self.tangents is not None and self.tangents.shape != self.tracked_roots.shape:
+            raise ValueError(
+                f"tangents shape {self.tangents.shape} != tracked_roots "
+                f"shape {self.tracked_roots.shape}"
             )
 
 
@@ -631,6 +644,190 @@ class ZeroManager:
         return len(self.segments)
 
     # ------------------------------------------------------------------
+    # Interpolation & insertion
+    # ------------------------------------------------------------------
+
+    def locate(self, theta1: float) -> tuple[int, int]:
+        """Find the segment and mesh interval containing *theta1*.
+
+        Returns ``(seg_idx, i)`` such that
+        ``segments[seg_idx].theta1_arr[i] <= theta1 < theta1_arr[i+1]``
+        (left-closed / right-open; the final mesh point is clamped to the
+        last interval).
+
+        θ₁ is normalized to ``[0, 2π)`` first (``_normalize_theta``); a value
+        within ``_BOUNDARY_THETA_TOL`` of 2π snaps to 0 → segment 0, ``i = 0``
+        (≡ ``left_boundary_roots``, consistent with the closing-row
+        convention).  Raises ``ValueError`` if no segment covers *theta1*
+        — surfaces a half-built topology loudly rather than silently.
+
+        Containment is tested with exact ``lo <= θ <= hi``: adjacent segments
+        share their endpoint θ *exactly* (the MR θ is stored once in
+        ``multiple_roots`` and prepended to the next segment by ``run()``),
+        so no floating-point cushion is needed — a boundary θ is caught by
+        the first segment whose range contains it.
+
+        *i* is clamped to ``[0, N-2]``; a single-row segment (``N == 1``)
+        yields ``i = 0`` and callers that need a real interval
+        (``interpolate_roots``, ``insert_solution``) raise on it themselves.
+        """
+        theta1_wrapped = _normalize_theta(theta1)
+        for s_idx, seg in enumerate(self.segments):
+            arr = seg.theta1_arr
+            lo, hi = arr[0], arr[-1]
+            if lo <= theta1_wrapped < hi:
+                n = len(arr)
+                if n < 2:
+                    return s_idx, 0
+                i = int(np.searchsorted(arr, theta1_wrapped, side='right') - 1)
+                i = max(0, min(i, n - 2))
+                return s_idx, i
+        raise ValueError(
+            f"theta1={theta1} (normalized {theta1_wrapped}) is not covered by "
+            f"any of the {len(self.segments)} segments"
+        )
+
+    def interpolate_roots(
+        self,
+        theta1: float,
+        seg_idx: Optional[int] = None,
+        i: Optional[int] = None,
+    ) -> np.ndarray:
+        """Cubic-Hermite interpolate the track-ordered β₂ roots at *theta1*.
+
+        Uses the value *and* analytic tangent (``SegmentData.tangents``) at
+        both ends of the mesh sub-interval ``[θ_i, θ_{i+1}]`` of
+        ``segments[seg_idx]`` — per-track cubic Hermite, the same kernel as
+        :func:`predict_roots_hermite`.  Exact for tracks that are cubic in θ₁.
+
+        *seg_idx* / *i* may be passed to skip the θ₁→index search; either
+        left ``None`` is resolved via :meth:`locate`.
+
+        **Linear fallback (whole interval):** when the sub-interval touches a
+        segment MR boundary — ``i == 0`` with ``left_mr >= 0`` or
+        ``i == N-2`` with ``right_mr >= 0`` — ``dβ₂/dθ₁`` diverges on the
+        cluster tracks as ``(θ − θ_MR)^{-1/2}`` (square-root branch), so the
+        cubic Hermite tangent is unusable.  Linear interpolation
+        ``r_a + s·(r_b − r_a)`` is used for *all* tracks instead of a
+        per-track fallback: per-track fallback would silently hold the
+        cluster fixed while Hermite-interpolating the smooth tracks, hiding
+        the kink.  Linear is honest and bounded.  The same fallback applies
+        when ``tangents`` is ``None`` (test-built segments).
+
+        Raises ``ValueError`` for a single-row segment (no interval to
+        interpolate).
+        """
+        if seg_idx is None or i is None:
+            seg_idx, i = self.locate(theta1)
+        seg = self.segments[seg_idx]
+        arr = seg.theta1_arr
+        n = len(arr)
+        if n < 2:
+            raise ValueError(
+                f"segment {seg_idx} has {n} row(s); cannot interpolate"
+            )
+        theta_a, theta_b = arr[i], arr[i + 1]
+        r_a = seg.tracked_roots[i, :]
+        r_b = seg.tracked_roots[i + 1, :]
+        theta1_wrapped = _normalize_theta(theta1)
+
+        # Whose tangents are usable?  An interval touching an MR boundary has
+        # a divergent dβ₂/dθ₁ on the cluster tracks → linear for everyone.
+        # Also fall back to linear when no tangents were stored.
+        touches_mr = (
+            (i == 0 and seg.left_mr >= 0)
+            or (i == n - 2 and seg.right_mr >= 0)
+        )
+        if touches_mr or seg.tangents is None:
+            s = (theta1_wrapped - theta_a) / (theta_b - theta_a)
+            return r_a + s * (r_b - r_a)
+
+        return predict_roots_hermite(
+            theta1_wrapped, theta_a, r_a, seg.tangents[i, :],
+            theta_b, r_b, seg.tangents[i + 1, :],
+        )
+
+    def insert_solution(
+        self,
+        theta1: float,
+        seg_idx: Optional[int] = None,
+        i: Optional[int] = None,
+    ) -> int:
+        """Solve β₂ roots at an interior *theta1* and insert the new row.
+
+        Solves ``self._solve(theta1)``, reorders the ``np.roots``-order result
+        onto the segment's track frame via Hungarian matching against
+        :meth:`interpolate_roots` as the prediction anchor, and inserts the
+        row at mesh position ``i + 1`` so ``theta1_arr`` stays monotonic.
+        The new row's tangent is recomputed with :func:`compute_tangent` and
+        spliced into ``SegmentData.tangents``; ``abs_argsort`` is refreshed.
+
+        Returns ``(insert_at, changed)`` where *insert_at* is the mesh index
+        of the (existing or inserted) row and *changed* is ``True`` when a
+        new row was actually inserted.  When *theta1* coincides with an
+        existing mesh point (``theta_a`` or ``theta_b``), *insert_at* is the
+        index of that point, *changed* is ``False``, and no mutation occurs.
+
+        *seg_idx* / *i* follow :meth:`interpolate_roots` (either may be
+        ``None`` → resolved via :meth:`locate`).
+
+        Raises ``ValueError`` when the segment has fewer than 2 rows or
+        *theta1* is outside the specified interval.
+        """
+        if seg_idx is None or i is None:
+            seg_idx, i = self.locate(theta1)
+        seg = self.segments[seg_idx]
+        arr = seg.theta1_arr
+        n = len(arr)
+        if n < 2:
+            raise ValueError(
+                f"segment {seg_idx} has {n} row(s); cannot insert"
+            )
+
+        theta1_wrapped = _normalize_theta(theta1)
+        theta_a, theta_b = arr[i], arr[i + 1]
+        # Coincidence with an existing mesh point: return its index, no mutation.
+        if theta1_wrapped == theta_a:
+            return i, False
+        if theta1_wrapped == theta_b:
+            return i + 1, False
+        if not (theta_a <= theta1_wrapped < theta_b):
+            raise ValueError(
+                f"theta1={theta1} (normalized {theta1_wrapped}) outside interval "
+                f"[{theta_a}, {theta_b}] of segment {seg_idx}, i={i}"
+            )
+
+        roots = self._solve(theta1_wrapped)
+        # Reorder np.roots-order onto the segment track frame via Hungarian
+        # matching against ``interpolate_roots`` as the prediction anchor.
+        # Using interpolate_roots rather than the raw _to_track_order Hermite
+        # prediction is deliberate: when the bracketing interval is near a
+        # multiple root, interpolate_roots falls back to whole-interval
+        # linear interpolation (see its docstring), yielding a bounded,
+        # honest prediction for ALL tracks including the cluster ones — the
+        # per-track Hermite→lerp fallback in _to_track_order would silently
+        # hold cluster tracks at one endpoint while Hermite-interpolating the
+        # smooth ones, hiding the near-MR divergence.
+        predicted = self.interpolate_roots(
+            theta1_wrapped, seg_idx=seg_idx, i=i,
+        )
+        perm = hungarian_match_indices(predicted, roots)
+        roots = roots[perm]
+
+        insert_at = i + 1
+        seg.theta1_arr = np.insert(arr, insert_at, theta1_wrapped)
+        seg.tracked_roots = np.insert(
+            seg.tracked_roots, insert_at, roots, axis=0,
+        )
+        seg.abs_argsort = _abs_argsort(seg.tracked_roots)
+        if seg.tangents is not None:
+            beta1 = exp(self.mu1 + 1j * theta1_wrapped)
+            V_new, _ = compute_tangent(self.poly, self.E_ref, beta1, roots)
+            seg.tangents = np.insert(seg.tangents, insert_at, V_new, axis=0)
+
+        return insert_at, True
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
@@ -751,6 +948,38 @@ class ZeroManager:
     # run() helpers
     # ------------------------------------------------------------------
 
+    def _compute_tangents(
+        self, theta1_arr: np.ndarray, tracked_roots: np.ndarray,
+    ) -> np.ndarray:
+        """Per-mesh-row analytic tangent V for every row of a finalized segment.
+
+        ``tangents[i] = compute_tangent(...)[0]`` evaluated at
+        ``theta1_arr[i]`` on the track-ordered roots.  Recomputed over the
+        finalized arrays rather than collected during ``integrate_segment``
+        because ``run()`` transforms the mesh/roots after integration
+        (pending-segment merges, boundary-MR row prepend, the
+        ``completed``-branch closing-row replacement); mirroring those
+        transforms on a collected-V array is error-prone, while a one-pass
+        recompute over the final arrays is simple and correct.  Cost is
+        ``O(N·K)`` ``eval_partials`` calls per segment — negligible vs the
+        integration itself.
+
+        At an MR-boundary row the cluster tracks have ∂f/∂β₂ ≈ 0, so
+        ``compute_tangent`` returns ``V_j = 0`` for them (see
+        :func:`compute_tangent`); the stored ``0`` is exactly what the
+        interpolation uses to detect the divergence and fall back to linear.
+        """
+        n = len(theta1_arr)
+        tangents = np.zeros((n, self.K), dtype=complex)
+        for i in range(n):
+            theta = theta1_arr[i]
+            beta1 = exp(self.mu1 + 1j * _normalize_theta(theta))
+            V, _ = compute_tangent(
+                self.poly, self.E_ref, beta1, tracked_roots[i, :]
+            )
+            tangents[i, :] = V
+        return tangents
+
     def _append_segment(
         self,
         theta1_arr: np.ndarray,
@@ -758,7 +987,7 @@ class ZeroManager:
         left_mr: int,
         right_mr: int,
     ) -> None:
-        """Append a SegmentData with abs_argsort computed from tracked_roots."""
+        """Append a SegmentData with abs_argsort and tangents precomputed."""
         self.segments.append(
             SegmentData(
                 theta1_arr=theta1_arr,
@@ -766,6 +995,7 @@ class ZeroManager:
                 abs_argsort=_abs_argsort(tracked_roots),
                 left_mr=left_mr,
                 right_mr=right_mr,
+                tangents=self._compute_tangents(theta1_arr, tracked_roots),
             )
         )
 
