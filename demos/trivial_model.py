@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from continuation import ZeroManager
 from gbz_types import CharPoly, LineSubset
 import brute_force_amoeba as bfa
+import brute_force_SGBZ as bfs
 
 
 DEFAULT_PARAMS = {
@@ -91,6 +92,28 @@ def solve_amoeba_E():
             print(tx * np.cos(theta1 + phix) + ty * np.cos(theta2 + phiy))
     plt.show()
 
+
+def solve_SGBZ_E():
+    E_ref = 1
+    tx, ty, phix, phiy = DEFAULT_PARAMS["tx"], DEFAULT_PARAMS["ty"], DEFAULT_PARAMS["phix"], DEFAULT_PARAMS["phiy"]
+    model = get_model(**DEFAULT_PARAMS)
+    coeffs, degs = model.get_characteristic_polynomial_data()
+    res = bfs.collect_GBZ_subsets(coeffs, degs, E_ref, 0.0, debug_mode=True)
+    print(res)
+
+def sweep_SGBZ():
+    E_list = np.linspace(-4, 4, 500)
+    model = get_model(**DEFAULT_PARAMS)
+    coeffs, degs = model.get_characteristic_polynomial_data()
+    res_list = []
+    for E_ref in E_list:
+        res_list.append(bfs.collect_GBZ_subsets(coeffs, degs, E_ref, 0.0, debug_mode=True))
+    plt.plot(E_list, [res.success for res in res_list])
+    plt.show()
+ 
+ 
 if __name__ == "__main__":
     # solve_zeros()
-    solve_amoeba_E()
+    # solve_amoeba_E()
+    # solve_SGBZ_E()
+    sweep_SGBZ()

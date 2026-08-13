@@ -6,7 +6,7 @@ Non-Hermitian spectrum computation based on the SGBZ (Strip Generalized Brilloui
 
 ### 1.1 SGBZ and Strip Winding Number
 
-SGBZ integrates along the $\theta_1$ direction, with the base manifold $\mu_2 = \rho_{2,0}(\theta_1; E, \mu_1)$ (the PMGBZ curve determined by $|\beta_M| = |\beta_{M+1}|$). The strip winding number $W(E, \mu_1)$ is the winding number around the $\theta_2$ direction integrated over $\theta_1$.
+SGBZ integrates along the $\theta_1$ direction, with the base manifold $\mu_2 = \rho_{2,0}(\theta_1; E, \mu_1)$ (the PMGBZ curve determined by $|\beta_M| = |\beta_{M+1}|$). The average major-axis winding number $W(E, \mu_1)$ is the winding number around the $\theta_2$ direction integrated over $\theta_1$.
 
 ### 1.2 PMGBZ Point Classification
 
@@ -29,267 +29,321 @@ In general, the SGBZ spectrum is a subset of the amoeba spectrum. For uniform ba
 
 ## 2. Key Components
 
-### 2.1 `PolyDiffContext` (`winding.py`)
+### 2.1 `continuum.py` — Continuum Detection
 
-A cached context bundling a polynomial with its precomputed partial derivatives, separated from `WindingFun`:
+Two-stage detection operating directly on `ZeroManager` segments:
 
-```python
-class PolyDiffContext:
-    char_poly: pt.CLaurent          # characteristic polynomial
-    dchar_poly: list[pt.CLaurent]   # partial derivatives w.r.t. each variable (precomputed cache)
+**Stage 1**: Candidate scan (`_continuum_runs`)
+- Per-row check at sorted positions M-1 and M (0-based)
+- Both (a) modulus gap < `continuum_tol` and (b) $\frac{d(\ln|\beta_2|)}{d\theta_1}$ match within `dV_tol`
+- Runs are maximal consecutive row intervals with ≥ 2 rows
 
-    def eval_val(var) -> complex             # evaluate polynomial
-    def eval_partials(var) -> list[complex]  # evaluate partial derivatives
-    def eval_dmu2(var) -> tuple[float, float]  # (dμ₂/dμ₁, dμ₂/dθ₁)
-```
+**Stage 2**: Whole-column voting (`_pair_vote`)
+- Fraction of rows across the ENTIRE segment where $|\ln|\beta_{2,j}| - \ln|\beta_{2,k}|| < $ `continuum_tol` must exceed `vote_frac`
+- Real-analyticity means genuine pairs vote near 1.0; accidental near-crossings vote near 0
 
-### 2.2 `WindingFun` / `MatWindingFun` (`winding.py`)
+Two versions:
+- `detect_continuum_simple`: presence-only flag, used by μ₁ bisection
+- `detect_continuum_full`: per-segment degeneracy clusters (for future §2.4 full extractor)
 
-Winding number computation shells:
-- `WindingFun`: polynomial winding, parametrized loop + analytical derivatives
-- `MatWindingFun`: matrix winding (sparse solver), for large matrix models
+### 2.2 `crossings.py` — Crossing Detection
 
-### 2.3 Continuum Detection & Winding Solver
+Simplified 0D PMGBZ-boundary crossing detection with inline charge classification.
 
-**Continuum detection** (`pmgbz_detector.py`):
+**Two-phase batch algorithm**:
+1. **Snapshot + Cubic Construction**: Build all cubic Hermite polynomials from endpoint snapshots before any Newton insertions (avoids cross-pair corruption)
+2. **Newton Refinement**: Each prediction refined independently; charge classified from frozen $f' = \text{Re}(V_a) - \text{Re}(V_b)$
 
-The `get_roots_and_PMGBZ` call with `refine_continuum=False` (sweep mode)
-uses a cheap existence-only check: degenerate mesh runs of ≥2 consecutive
-points are classified as continuum directly (their refined width is
-provably > point_like_theta_tol).  Single-point runs retain the full
-refinement path to distinguish accidental points from pinched continua.
-This mirrors amoeba's `_compute_winding_from_tracks(refine_crossings=False)`.
+**Charge classification** (`_classify_charge`):
+- **Ordinary** (charge ±1): determined by sign of $f'$
+- **MR** (charge 0): near a multiple root
+- **Tangent** (charge 0): $|f'|$ too small
+- **Unknown** (charge 0): $f'$ not finite
 
-**Winding evaluation** (`strip_winding_number.py`):
+MR boundary entries are detected separately (`_mr_boundary_entries`) and added without Newton refinement.
 
-`get_strip_winding` returns `(winding, gbz_product)` where `winding` is
-`None` when a continuum is detected — the perturbation analysis is moved
-to the solver layer.
+### 2.3 `winding.py` — Average Winding Computation
 
-**μ₁ solver** (`SGBZ.py`):
+Computes the average major-axis winding number $W(E_{\text{ref}}, \mu_1)$ from a `ZeroManager` at fixed $(E_{\text{ref}}, \mu_1)$.
 
-`solve_SGBZ_for_E` uses an Illinois false-position method with
-explicit continuum interception at every iterate.  When the winding is
-`None` (continuum), `_resolve_continuum_winding` computes perturbed left/
-right limits; opposite signs signal the SGBZ boundary (`is_continuum=True`,
-immediate return); same sign → bracket update with proxy winding.
-This matches amoeba's `bisect_amoeba_ronkin_min` / `_resolve_continuum`.
+**Design**:
+- Loop: $\beta_2 = \exp(\mu_{2,\text{mid}}(\theta_1) + i\theta_2)$ with fixed $\theta_2$
+- No spline interpolation — the adaptive mesh IS the polyline through the data
+- Crossings partition $\theta_2$ into regions (hard boundaries) and intervals (soft boundaries)
+- One seed interval per region: pick $\theta_2$ maximizing distance to all roots, compute $w_0$, propagate via charges
 
-**Deferred precise solve** (`collect_GBZ_subsets`):
+### 2.4 `sgbz_solver.py` — μ₁ Bisection Solver
 
-After the plateau check, continuum results undergo one full-mode
-`get_roots_and_PMGBZ` call to crisp the `GBZResult`.  Plateau false
-positives skip this step entirely (zero cost).
+Top-level solver using bracket expansion + plain midpoint bisection.
 
-### 2.4 `process_interval()` (`pmgbz_detector.py`)
+**Bracket expansion**: Expand left/right until winding signs straddle zero
+**Bisection**: Plain midpoint (not false-position) because winding has flat plateaus
+**Continuum interception**: When `w_mid` is `None` (continuum), resolve left/right limits via perturbation; if they straddle zero, that $\mu_1$ IS the SGBZ boundary
 
-Unified recursive interval processor (core of this refactoring round):
+### 2.5 `plateau.py` — Zero-Plateau Detection
 
-```
-process_interval(θ_left, roots_left, θ_right, roots_right):
-  1. Analyze boundary cluster matching confidence (_analyze_boundary_matching)
-     - Evaluate on the local cost matrix of the M-1/M boundary equimodular cluster
-     - Compute cost difference between "current match" and "boundary-swapped alternative"
-     - confidence = min_exchange_margin / cost_scale
-  2. If not confident → subdivide interval (recurse)
-  3. If confident and no cross-boundary exchange → interval complete
-  4. If confident with cross-boundary exchange → perform PMGBZ search
-     - refine_accidental_point() bisection to locate
-     - _validate_pmgbz_point() validate and classify positive/negative/zero charge
-  5. Recurse on left and right sub-intervals
-```
+Two-stage check:
+1. **Clustering pre-check** (`_check_pmgbz_points_clustered`): Euclidean distance on $(\theta_1, \theta_2)$ torus
+2. **Probe ladder** (`_probe_zero_plateau_near_mu1`): Test $\mu_1 \pm \text{step}$ for zero winding with empty GBZ
 
-### 2.4 Riemann Sphere Chordal Distance Matching (`strip_winding_number.py`)
+**Clustering metric**: `d = sqrt(circ_dist(θ₁_i, θ₁_j)² + circ_dist(θ₂_i, θ₂_j)²)`
 
-Hungarian matching uses chordal distance on the Riemann sphere as the cost function (avoids $0/\infty$ false swaps in the complex plane):
+Rationale: Degenerate pairs share $\theta_1$ but have different $\beta_2$, so $\theta_1$-only check would misclassify.
 
-```python
-def _chordal_cost_matrix(roots_from, roots_to):
-    # Project complex roots to the Riemann sphere (R³)
-    # Use Euclidean distance in R³ as matching cost
-```
-
-### 2.5 Continuum Handling
+### 2.6 Continuum Handling
 
 When $|\beta_M| = |\beta_{M+1}|$ holds over a continuous $\theta_1$ interval:
-- Strip winding returns a $(W_{\text{left}}, W_{\text{right}})$ tuple
-- Left/right limits are resolved by perturbing $\mu_1$ by $\pm\varepsilon$
+- `detect_continuum_simple` returns `True` → winding undefined
+- `_resolve_continuum_winding` computes left/right limits via perturbation
+- If limits straddle zero: that $\mu_1$ is the SGBZ boundary (1D LineSubset case)
+- **LineSubset extraction is TODO**: `collect_GBZ_subsets` returns `is_continuum=True` with no subsets
 
 ## 3. API Reference
 
-### 3.1 `calculate_point_roots`
+### 3.1 `detect_continuum_simple`
 
 ```python
-def calculate_point_roots(
-    char_poly: pt.CLaurent,
-    param_ind_ctype: pt.CIndexVec,   # parameter variable indices (0,1) = (E,β₁)
-    param_val: np.ndarray,           # parameter values
-    var_ind_ctype: pt.CIndexVec,     # variable to solve for [2] = β₂
-    M_max: int,                      # denominator order
-    N_max: int,                      # max numerator degree - M
-) -> list[complex]:
+def detect_continuum_simple(
+    zm: ZeroManager,
+    poly: CharPoly,
+    *,
+    continuum_tol: float = 1e-6,
+    dV_tol: float = 1e-3,
+    vote_frac: float = 0.9,
+) -> bool:
 ```
 
-Fix $(E, \beta_1)$ and solve for all $\beta_2$ roots of the resulting univariate Laurent polynomial.
+Simplified continuous modulus equality detection — presence only.
 
-### 3.2 `get_roots_and_PMGBZ`
+Two stages per segment:
+1. Candidate scan: ≥ 2 consecutive rows where the M-1/M boundary pair has matching modulus and derivative
+2. Whole-column voting: verify that SOME pair of columns is genuinely whole-column modulus-equal
+
+Returns `True` as soon as any run produces one confirmed degenerate pair; false positives are skipped, the scan continues.
+
+Used by the μ₁ bisection for an early-out (a continuum makes W undefined there).
+
+### 3.2 `detect_continuum_full`
 
 ```python
-def get_roots_and_PMGBZ(
-    poly_diff: PolyDiffContext,
-    E_ref: complex,
-    mu1: float,
-    N_points: int = 301,
-    zero_tol: float = 1e-10,
-    GBZ_check_tol: float = 1e-6,
-    refine_continuum: bool = True,
-) -> tuple[GBZResult, np.ndarray, np.ndarray, dict]:
+def detect_continuum_full(
+    zm: ZeroManager,
+    poly: CharPoly,
+    *,
+    continuum_tol: float = 1e-6,
+    dV_tol: float = 1e-3,
+    vote_frac: float = 0.9,
+) -> list[list[tuple[int, ...]]]:
 ```
 
-**Returns**: `(gbz_result, theta1_arr, sols_arr, info)`
-- `gbz_result`: `GBZResult` with `PointSubset` / `LineSubset` entries
-- `theta1_arr`: extended θ₁ grid (with periodic closure; when `refine_continuum=False` and continuum detected, uses only the base mesh)
-- `sols_arr`: corresponding sorted root array
-- `info`: `{"M", "N", "continuum_flag", "_pmgbz_raw"}`
+Full continuous modulus equality detection — per-segment clusters.
 
-`refine_continuum=False` (sweep mode) skips boundary refinement and
-stage-3 accidental-point detection when any continuum interval with ≥2
-consecutive degenerate mesh points is found — a cheap existence-only
-detection that is sufficient for winding-zero search.
+Extends the simplified version: instead of returning at the first confirmed pair, ALL candidate runs of a segment are collected, their column sets are merged, and every pair of involved columns is voted on over the whole segment.
 
-### 3.2a `solve_roots_on_mesh`
+Returns one entry per segment, in segment order: `result[seg_idx] = [(j, ...), ...]` — each cluster is a tuple of tracked_roots column indices sharing one $|\beta_2|(\theta_1)$ curve.
+
+**Note**: Currently no caller consumes this output — the §2.4 full subset extractor is not yet implemented.
+
+### 3.3 `detect_crossings_simple`
 
 ```python
-def solve_roots_on_mesh(
-    poly_diff: PolyDiffContext,
-    E_ref: complex,
-    mu1: float,
-    N_points: int = 301,
-    extra_thetas: tuple[float, ...] = (),
-) -> tuple[np.ndarray, np.ndarray]:
+def detect_crossings_simple(
+    zm: ZeroManager,
+    poly: CharPoly,
+    *,
+    crossing_tol: float = 1e-10,
+    detect_threshold: float = 1e-2,
+    max_newton: int = 10,
+    dedup_tol: float = 1e-6,
+) -> tuple[list[PointSubset], list[dict]]:
 ```
 
-Lightweight root-only solver: uniform mesh ∪ extra_thetas, no PMGBZ
-detection.  Returns `(theta1_arr, sols_arr)` with periodic closure.
-Used internally by `LineSubset.fill_beta2`.
+Simplified 0D PMGBZ-boundary crossing detection + charge classification.
 
-### 3.3 `get_strip_winding`
+Assumes no continuum (caller should gate with `detect_continuum_simple` first).
+
+**Algorithm**:
+1. **Detection**: for each sub-interval, check all columns' $\ln|\beta_{2,j}| - \mu_{2,\text{mid}}$ for sign change or near-miss
+2. **Solving**: for each candidate column pair (a, b), build a cubic Hermite diff polynomial, find roots via `np.roots`, then Newton-refine
+3. **MR echo drop**: crossings near a boundary multiple root are dropped and replaced by the exact ZeroManager record
+4. **Dedup check**: raise `NotImplementedError` if two crossings of DIFFERENT column pairs coincide
+5. **Charge + PointSubset construction**: each surviving crossing is classified inline from its frozen $f'$
+
+**Returns**:
+- `subsets`: list of `PointSubset` (two per crossing plus one per boundary MR)
+- `charges`: list of charge dicts with keys `theta1`, `theta2_a`, `theta2_b`, `charge`, `kind`
+
+**Warning**: This function MUTATES `zm` (Newton iterations insert mesh rows). Run continuum detection BEFORE calling this function.
+
+### 3.4 `detect_crossings_and_winding`
 
 ```python
-def get_strip_winding(
-    poly_diff: PolyDiffContext,
-    E_ref: complex,
-    mu1: float,
-    N_points: int = 301,
-    with_gap_info: bool = False,
-    continuum_perturb: float = 1e-2,
-    zero_tol: float = 1e-10,
-    GBZ_check_tol: float = 1e-6,
-    refine_continuum: bool = True,
-) -> tuple:
+def detect_crossings_and_winding(
+    zm: ZeroManager,
+    poly: CharPoly,
+    *,
+    crossing_tol: float = 1e-10,
+    detect_threshold: float = 1e-2,
+    max_newton: int = 10,
+    dedup_tol: float = 1e-6,
+) -> tuple[list[PointSubset], float]:
 ```
 
-**Returns**: `(winding, gbz_result)` or `(winding, gbz_result, gap_info)`
+Convenience function: crossing detection + average major-axis winding in one call.
 
-When continuum exists, `winding` is `None`.  The caller (`solve_SGBZ_for_E`)
-resolves the continuum via `_resolve_continuum_winding`.
+**Returns**: `(subsets, W_avg)` where `W_avg` is the average major-axis winding number.
 
-### 3.4 `get_loop_winding`
+### 3.5 `compute_average_winding`
 
 ```python
-def get_loop_winding(
-    poly_diff: PolyDiffContext,
-    E_ref: complex,
-    mu1: float,
-    mu2_fun: callable,    # μ₂(θ₁) interpolation function
-    theta2: float,        # fixed θ₂
-    N_seg: int = 5,
+def compute_average_winding(
+    zm: ZeroManager,
+    poly: CharPoly,
+    M: int,
+    charges: list[dict],
 ) -> float:
 ```
 
-Single-loop winding number (fixed θ₂, along the PMGBZ curve).
+Compute the average major-axis winding number $W(E_{\text{ref}}, \mu_1)$.
 
-### 3.5 `solve_SGBZ_for_E`
+**Topology**: crossings come in two kinds:
+- **Ordinary** (charge ±1, SOFT): only partitions $\theta_2$ into intervals within a region
+- **MR / tangent / unknown** (charge 0, HARD): delimits regions
+
+The algorithm partitions the circle into regions delimited by hard boundaries, picks ONE seed interval per region (farthest from all boundaries), computes $w_0$ there, and propagates across soft boundaries via charges.
+
+### 3.6 `solve_SGBZ_for_E`
 
 ```python
 def solve_SGBZ_for_E(
-    poly_diff: PolyDiffContext,
+    poly: CharPoly,
     E_ref: complex,
     mu1_guess: tuple[float, float] = (-1, 1),
     zero_tol: float = 1e-10,
-    N_points: int = 101,
     continuum_perturb: float = 1e-2,
-    refine: bool = True,
     max_iter: int = 60,
     xtol: float = 2e-12,
+    zm_run_kwargs: Optional[dict] = None,
+    *,
+    continuum_tol: float = 1e-6,
+    dV_tol: float = 1e-3,
+    vote_frac: float = 0.9,
+    crossing_tol: float = 1e-10,
+    detect_threshold: float = 1e-2,
+    max_newton: int = 10,
+    dedup_tol: float = 1e-6,
 ) -> dict:
 ```
 
-Process-level solver (no class — mirrors amoeba's `bisect_amoeba_ronkin_min`).
-Returns a dict with `"mu1"`, `"gbz"`, `"winding"` (float or None for
-continuum), `"is_continuum"`, and debug fields.
+Locate the winding-zero $\mu_1$ and return solve diagnostics.
 
-### 3.5a `_resolve_continuum_winding`
+Uses bracket expansion + plain bisection (midpoint). When a continuum-degenerate $\mu_1$ is encountered, the left/right winding limits are resolved; if they straddle zero that $\mu_1$ is the SGBZ boundary (`is_continuum=True`).
 
-```python
-def _resolve_continuum_winding(
-    poly_diff, E_ref, mu1, N_points=301,
-    continuum_perturb=1e-2,
-) -> tuple[float | None, float | None]:
-```
+**Plain bisection** is chosen over false-position methods because the winding has flat plateaus (±1) with a narrow transition zone; false position stalls on this shape while midpoint guarantees bracket halving.
 
-Perturbs `mu1 ± scale·epsilon` for `scale ∈ (1, 2, 4, 8)` until both
-sides escape the degenerate band, returning `(w_left, w_right)`.
-Mirrors amoeba's `_resolve_continuum` (bisect.py).
+**Returns**: dict with keys:
+- `"mu1"`: the solution $\mu_1$
+- `"subsets"`: list of `PointSubset` or `None` (for continuum)
+- `"winding"`: float or `None`
+- `"is_continuum"`: bool
+- `"_mu1_bracket"`, `"_winding_bracket"`, `"_exit_reason"`: debug fields
 
-### 3.6 `collect_GBZ_subsets`
+**Convergence check**: Only applied when `w_mid` is a real winding number. When `w_mid` is `None` (continuum proxy), the algorithm continues iteration without convergence testing.
+
+### 3.7 `collect_GBZ_subsets`
 
 ```python
 def collect_GBZ_subsets(
-    coeffs: np.ndarray, degs: np.ndarray,
-    E_ref: complex, perc: float,
+    coeffs: np.ndarray,
+    degs: np.ndarray,
+    E_ref: complex,
+    perc: float = None,
     debug_mode: bool = False,
+    **options,
 ) -> GBZResult:
 ```
 
-Batch checking entry point.  Runs the solver sweep in `refine=False`
-mode, performs the plateau check, and **only then** computes a precise
-continuum GBZ if needed — plateau-detected false positives cost nothing.
+Main entry point. Check the SGBZ condition and return GBZ points for a reference energy.
 
-### 3.7 Other Exports
+Builds the characteristic polynomial from `(coeffs, degs)`, solves for the $\mu_1$ where the average major-axis winding number vanishes, and optionally reclassifies the candidate as empty when a zero plateau exists.
 
-| Function | Purpose |
-|----------|---------|
-| `complex_root` | Complex equation root finding (with analytical Jacobian) |
-| `ComplexEqConverter` | Complex → real equation Jacobian conversion |
-| `poly_to_np_coefficients` | Laurent polynomial → numpy coefficient array |
-| `calculate_point_roots` | Solve β₂ roots at a single (E, β₁) point |
-| `get_winding_number` | Numerical integration for winding number |
-| `get_minor_degrees` | Extract (M, N) |
-| `solve_roots_on_mesh` | Lightweight root solver (no PMGBZ detection) |
+**Parameters**:
+- `coeffs`: complex coefficients of the characteristic Laurent polynomial
+- `degs`: `(n_terms, 3)` integer exponents of `(E, beta1, beta2)` per term
+- `E_ref`: reference energy to test
+- `perc`: progress fraction in `[0, 1]`, printed as a percentage
+- `debug_mode`: if `True`, re-raise solver exceptions
+- `**options`: solver options including:
+  - `"mu1_guess"`: default `(-1, 1)`
+  - `"zero_tol"`: default `1e-10`
+  - `"continuum_perturb"`: default `1e-2`
+  - `"max_iter"`: default `60`
+  - `"xtol"`: default `2e-12`
+  - `"plateau_check"`: default `True`
+  - `"zm_run_kwargs"`: default `{}`
 
-## 5. Key Numerical Parameters
+**Returns**: `GBZResult` with connected subsets. `gbz.is_empty` means $E_{\text{ref}}$ is outside the SGBZ spectrum. `gbz.is_continuum` means in-spectrum but `LineSubset` extraction is TODO.
+
+### 3.8 Other Exports
+
+| Function/Constant | Purpose |
+|-------------------|---------|
+| `CONTINUUM_TOL` | Default tolerance for continuum detection (1e-6) |
+| `CONTINUUM_FRAC` | Default vote fraction for whole-column voting (0.9) |
+| `CharPoly` | Characteristic polynomial wrapper (from `gbz_types`) |
+| `get_minor_degrees` | Extract (M, N) from polynomial degrees (from `gbz_types`) |
+| `PointSubset`, `LineSubset`, `GBZResult` | Data types (from `gbz_types`) |
+
+## 4. Key Numerical Parameters
+
+### Continuum Detection
 
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
-| `zero_tol` | 1e-10 | PMGBZ gap zero-threshold; Illinois convergence tolerance |
-| `GBZ_check_tol` | 1e-6 | Equimodular cluster boundary detection tolerance |
-| `match_confidence_tol` | 1e-3 | Hungarian matching confidence relative margin |
-| `continuum_perturb` | 1e-2 | μ₁ perturbation amount for continuum resolution |
-| `double_root_tol` | `GBZ_check_tol` | Double root detection tolerance |
-| `xtol` | 2e-12 | Minimum μ₁ bracket width for Illinois convergence |
-| `max_iter` | 60 | Maximum Illinois iterations |
-| `refine_continuum` | True | When False, skip continuum boundary refinement and stage-3 detection |
+| `continuum_tol` | 1e-6 | Modulus gap threshold for continuum candidate rows |
+| `dV_tol` | 1e-3 | Derivative consistency threshold for continuum detection |
+| `vote_frac` | 0.9 | Fraction of rows required for whole-column vote pass |
 
-`match_confidence_tol` is an empirical threshold and may need tuning based on actual model scan results.
+### Crossing Detection
 
-## 6. Relation to `brute_force_amoeba`
+| Parameter | Default | Meaning |
+|-----------|---------|---------|
+| `crossing_tol` | 1e-10 | Newton convergence tolerance |
+| `detect_threshold` | 1e-2 | Near-miss threshold for suspicious interval detection |
+| `max_newton` | 10 | Maximum Newton iterations per crossing |
+| `dedup_tol` | 1e-6 | L²-distance threshold for duplicate crossing detection |
+| `_TANGENT_F_TOL` | 1e-6 | \|f\| threshold for tangent touch classification |
+| `_MR_PROXIMITY_TOL` | 1e-4 | θ₁ distance threshold for MR echo detection |
+| `_TANGENCY_THRESHOLD` | 1e-3 | \|f'\| threshold for tangency classification |
 
-| Aspect | brute_force_SGBZ (SGBZ) | brute_force_amoeba |
-|--------|---------------------------|---------------------|
+### Bisection Solver
+
+| Parameter | Default | Meaning |
+|-----------|---------|---------|
+| `zero_tol` | 1e-10 | Winding zero threshold |
+| `continuum_perturb` | 1e-2 | μ₁ perturbation scale for continuum resolution |
+| `max_iter` | 60 | Maximum bisection iterations |
+| `xtol` | 2e-12 | Minimum μ₁ bracket width for convergence |
+
+### Plateau Detection
+
+| Parameter | Default | Meaning |
+|-----------|---------|---------|
+| `plateau_check` | True | Enable zero-plateau detection |
+| `plateau_probe_radius` | None | Probe radius (default: auto from bracket) |
+
+**Note**: The `vote_frac` parameter controls the whole-column voting for continuum detection. A genuine degenerate pair should vote near 1.0; an accidental near-crossing votes near 0. The default 0.9 threshold may need tuning for models with numerical noise in the degenerate modulus curves.
+
+## 5. Relation to `brute_force_amoeba`
+
+| Aspect | brute_force_SGBZ | brute_force_amoeba |
+|--------|------------------|---------------------|
+| Backend | `continuation.ZeroManager` (adaptive β₂-root tracking) | `continuation.ZeroManager` (same backend) |
 | Base manifold | $\mu_2 = \rho_{2,0}(\theta_1)$ variable curve | $\mu_2 = \text{const}$ level surface |
-| Root ordering | By $\vert\beta_2\vert$ | Hungarian matching continuous tracking |
-| Integration direction | $\theta_1$ only | Both $\theta_1$ and $\theta_2$ |
-| Continuum criterion | $\vert\beta_M\vert \approx \vert\beta_{M+1}\vert$ | $\vert\ln\vert\beta_2\vert - \mu_2\vert \approx 0$ |
-| Matching confidence | Exchange cost margin analysis | Not needed (continuous tracking) |
+| Root ordering | By $|\beta_2|$ at each $\theta_1$ mesh row | Hungarian matching across segments |
+| Integration direction | $\theta_1$ only (average major-axis winding) | Both $\theta_1$ and $\theta_2$ (Ronkin winding) |
+| Continuum criterion | $|\beta_M| \approx |\beta_{M+1}|$ + derivative match + whole-column vote | $|\ln|\beta_2| - \mu_2| \approx 0$ + Ronkin minimum |
+| Crossing detection | Cubic Hermite + Newton refinement, batch processing | Line intersection + Newton refinement |
+| Charge classification | Inline from frozen $f'$ at Newton iterate | From Ronkin gradient at crossing |
+| Solver method | Plain midpoint bisection (flat winding plateaus) | Plain midpoint bisection (same) |
 | Spectral inclusion | $\sigma_{\text{SGBZ}} \subseteq \sigma_{\text{Amoeba}}$ | — |

@@ -12,14 +12,13 @@ brute-force-non-hermitian/
 │                            # + shared utils: sort_by_root_abs, chordal_cost_matrix,
 │                            #   hungarian_match_indices, find_cyclic_true_intervals,
 │                            #   get_minor_degrees, generate_probe_steps, to_sphere_r3
-├── brute_force_SGBZ/        # SGBZ / strip winding number formulation
+├── brute_force_SGBZ/        # SGBZ / average major-axis winding formulation
 │   ├── __init__.py             # Whitelist exports (re-exports gbz_types classes)
-│   ├── root_solver.py          # calculate_point_roots, complex_root, poly_to_np_coefficients
-│   ├── winding.py              # PolyDiffContext, WindingFun, MatWindingFun, get_winding_number
-│   ├── pmgbz_detector.py       # get_roots_and_PMGBZ — root solving on theta1 mesh,
-│   │                           #   continuum detection, accidental point refinement (~800 lines)
-│   ├── strip_winding_number.py # get_strip_winding, get_loop_winding
-│   └── SGBZ.py                 # solve_SGBZ_for_E, collect_GBZ_subsets (returns GBZResult)
+│   ├── continuum.py            # Continuum detection (detect_continuum_simple/full)
+│   ├── crossings.py            # Crossing detection + charge classification
+│   ├── winding.py              # Average winding computation (compute_average_winding)
+│   ├── plateau.py              # Zero-plateau detection (clustering + probe)
+│   └── sgbz_solver.py          # solve_SGBZ_for_E, collect_GBZ_subsets (returns GBZResult)
 ├── brute_force_amoeba/        # Amoeba / Ronkin function formulation
 │   ├── __init__.py             # Whitelist exports (re-exports gbz_types classes)
 │   ├── tracks.py               # Root tracks via Hungarian matching (get_hungarian_sorted_roots)
@@ -39,7 +38,7 @@ brute-force-non-hermitian/
 ├── diagnostics/                # Debug scripts and analysis reports
 ├── data/                       # Pickled computation results (demos / replication)
 ├── log/                        # Change logs
-│   ├── log-old.md              # log before git init
+│   ├── ......
 ├── doc/                        # Documentation
 │   ├── SGBZ.md                 # SGBZ theory, architecture, API
 │   ├── amoeba.md               # Amoeba theory, algorithm, API
@@ -57,3 +56,5 @@ brute-force-non-hermitian/
 - 注释应当讲述“为什么”，而不是“做什么”。
 
 - Ask WHY before HOW. Check the FACT before reach the CONCLUSION. Never assert a bug before you get the solid evidence.
+
+- 遇到与预期不符的结果时，要立刻汇报。

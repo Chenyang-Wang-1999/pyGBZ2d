@@ -126,8 +126,8 @@ class CharPoly:
     def solve_roots_1d(self, param_indices, param_vals, var_indices, M=None, N=None) -> np.ndarray:
         """Partial-evaluate fixing param variables, solve 1D polynomial.
 
-        Replaces the ``calculate_point_roots`` / ``partial_eval`` /
-        ``batch_get_data`` pattern with a single method.
+        Replaces the old ``partial_eval`` / ``batch_get_data`` pattern with a
+        single method.
 
         Parameters:
             param_indices: e.g. ``(0, 1)`` to fix E and beta1.
@@ -266,13 +266,20 @@ class GBZResult:
         error: Error message if ``success`` is False.
         subsets: List of connected subsets (PointSubset / LineSubset).
         index: (n_0D, n_1D) counts.  ``(0, 0)`` means the energy is
-               outside the GBZ.
+               outside the GBZ — unless ``is_continuum`` is set (see below).
+        is_continuum: True when the SGBZ subset at this energy is a continuum
+               (1D LineSubset) whose materialization is not yet implemented.
+               Such a result is *in spectrum* (``is_gbz`` is True) even though
+               ``subsets`` is empty and ``index == (0, 0)``: the caller should
+               treat it as "on the GBZ, LineSubset TODO".  Amoeba (which has a
+               LineSubset extractor) never sets this flag.
     """
     E_ref: complex
     success: bool = True
     error: Optional[str] = None
     subsets: list[ConnectedSubset] = None  # type: ignore[assignment]
     index: tuple[int, int] = (0, 0)
+    is_continuum: bool = False
 
     def __post_init__(self):
         if self.subsets is None:
@@ -285,7 +292,7 @@ class GBZResult:
     @property
     def is_gbz(self) -> bool:
         """True if this energy point lies on the GBZ."""
-        return self.success and self.index != (0, 0)
+        return self.success and (self.index != (0, 0) or self.is_continuum)
 
 
 ConnectedSubset = Union[PointSubset, LineSubset]
@@ -468,3 +475,14 @@ def generate_probe_steps(
         step *= 2.0
 
     return sorted(s for s in steps if s > 0 and s <= eps_max * (1 + 1e-12))
+
+
+def circ_dist(a: float, b: float) -> float:
+    """Shortest arc distance on any 2π-periodic circle (θ₁ or θ₂).
+
+    Needed because a boundary MR sits at θ₁ = 0 while its neighbourhood
+    extends to θ₁ ≈ 2π; likewise for θ₂ boundaries near the seam.  Robust
+    to inputs outside [0, 2π) via the leading ``% (2π)``.
+    """
+    d = abs(a - b) % (2 * math.pi)
+    return min(d, 2 * math.pi - d)

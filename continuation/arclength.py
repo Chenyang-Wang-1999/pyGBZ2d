@@ -116,20 +116,17 @@ def compute_tangent(
         df_dbeta1 = partials[1]
         df_dbeta2 = partials[2]
 
-        # At a multiple root ∂f/∂β₂ = 0 and the implicit-function derivative
-        # diverges (β₂ is no longer a smooth function of θ₁).  Leave V_j = 0
-        # so the tangent is reported undefined for this track; the caller's
-        # step-collapse / min_dtheta guards surface the multiple root, and
-        # prediction-based matchers (predict_roots_hermite) hold the track
-        # fixed.  A bare ``df_dbeta1 / df_dbeta2`` would ZeroDivisionError
-        # here instead — the guards never run.
+        # At a multiple root ∂f/∂β₂ = 0, dβ₂/dθ₁ diverges.  Set V_j = ∞
+        # so downstream code can distinguish "undefined" from "truly zero".
         if df_dbeta2 == 0:
+            V[j] = np.inf + 0j
             continue
 
         dbeta2_dtheta1 = -1j * beta1 * df_dbeta1 / df_dbeta2
         V_j = dbeta2_dtheta1 / beta2
 
         if not np.isfinite(V_j):
+            V[j] = np.inf + 0j
             continue
 
         V[j] = V_j
@@ -154,7 +151,7 @@ def predict_roots(
         if _is_singular_root(beta2):
             predicted[j] = beta2
             continue
-        if V[j] == 0:
+        if not np.isfinite(V[j]):
             predicted[j] = beta2
             continue
         predicted[j] = beta2 * np.exp(V[j] * dtheta1)

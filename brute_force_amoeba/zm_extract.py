@@ -45,6 +45,11 @@ CONTINUUM_FRAC = 0.9
 # dropped.  Decoupled from CONTINUUM_TOL so the snap radius is independent of
 # band-detection sensitivity.
 SNAP_TOL = 1e-3
+# Root-match tolerance for Rule 1's curve-consistency screen: the shared
+# boundary rows carry the SAME root values (an MR's roots are stored once and
+# shared by both segments), so the same curve matches to machine precision; a
+# different root (same θ₁, unconnected track) differs by O(1).
+ROOT_TOL = 1e-9
 
 ExtractMode = Literal['coarse', 'fine', 'solve']
 
@@ -283,7 +288,13 @@ def _merge_two(
         # Align rp[-1] (θ=2π) with cp[0] (θ=0) — the seam — by putting rp first.
         th = np.concatenate([rp.theta1_arr, cp.theta1_arr[1:]])
         b2 = np.concatenate([rp.beta2_arr, cp.beta2_arr[1:]])
-        new_ml, new_mr = cp.ml, rp.mr
+        # merged = [rp, cp[1:]]: the left end is rp's left end (segment rp.ml),
+        # the right end is cp's right end (segment cp.mr) — same as the
+        # non-cyclic case.  (Previously this was swapped to cp.ml/rp.mr, which
+        # mislabeled the merged piece's endpoints and let the join loop
+        # re-match an already-joined piece at the seam — visible only when MR
+        # snapping makes a far endpoint's root coincide with the seam root.)
+        new_ml, new_mr = rp.ml, cp.mr
     else:
         th = np.concatenate([rp.theta1_arr, cp.theta1_arr[1:]])
         b2 = np.concatenate([rp.beta2_arr, cp.beta2_arr[1:]])
@@ -330,7 +341,10 @@ def extract_amoeba_subsets(
 
     Boundary dedup (after snap-to-mean, MR endpoints are exactly degenerate):
       - Rule 1 — drop any crossing within ``snap_tol`` of a continuum LineSubset
-        endpoint (continuum/MR edge, not a genuine discrete zero).
+        endpoint (continuum/MR edge, not a genuine discrete zero), provided its
+        β₂ matches an in-band endpoint root within ``ROOT_TOL`` — the crossing
+        is then the line's own endpoint curve.  A same-θ₁ crossing on a
+        different, unconnected root is a genuine discrete zero and survives.
       - Rule 2 — ``d == 0`` exact touches are deduplicated by zero-point
         identity, not by θ₁.  A zero's identity is ``(endpoint, track)``:
         an interior touch gets a unique key; a touch on a shared MR endpoint
@@ -394,6 +408,11 @@ def extract_amoeba_subsets(
     cont_endpoints = np.array(
         [t for p in line_pieces for t in (p.theta1_start, p.theta1_end)]
     ) if line_pieces else None
+    # Endpoint roots, element-wise aligned with cont_endpoints (each piece's
+    # start / end pair) — feeds Rule 1's curve-consistency screen.
+    cont_endpoint_roots = np.array(
+        [r for p in line_pieces for r in (p.beta2_arr[0], p.beta2_arr[-1])]
+    ) if line_pieces else None
 
     # Inverse of zm.boundary_perm: boundary_perm[inv[k]] == k, so
     # roots_right[j] corresponds to left-boundary track inv[j].  Used to fold
@@ -410,9 +429,18 @@ def extract_amoeba_subsets(
         la = zm.seg_logabs[s]
         t1, b2 = _finalize_crossing(kind, i, j, th, tr, la, mu2, mode, poly, E, mu1)
 
-        # Rule 1: continuum-endpoint snap.
-        if cont_endpoints is not None and np.min(np.abs(cont_endpoints - t1)) < snap_tol:
-            continue
+        # Rule 1: continuum-endpoint snap (θ₁), plus a root-distance screen —
+        # only a crossing whose β₂ matches an in-band endpoint root (the SAME
+        # curve as the LineSubset) is dropped.  Each hit is judged on its own:
+        # b2 is THIS crossing's root; the screen asks whether ANY in-band
+        # endpoint root matches it (∃ — a single scalar vs the endpoint-root
+        # array).  A boundary point on a different, unconnected track (same
+        # θ₁, root differs by O(1)) survives.
+        if (cont_endpoints is not None
+                and np.min(np.abs(cont_endpoints - t1)) < snap_tol):
+            in_band = np.abs(cont_endpoints - t1) < snap_tol
+            if np.any(np.abs(cont_endpoint_roots[in_band] - b2) < ROOT_TOL):
+                continue
 
         # Rule 2: dedup exact-touch ('zero') hits by zero identity.
         # 'cross' hits are interior sign-changes and are always unique.

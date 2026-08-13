@@ -182,7 +182,7 @@ def sweep_SGBZ_a1():
     E_list = E_mesh.flatten()
 
     pool = mp.Pool(mp.cpu_count())
-    results = pool.starmap(bfs.collect_GBZ_subsets, [(coeffs, degs, E, j / len(E_list), True) for j, E in enumerate(E_list)])
+    results = pool.starmap(bfs.collect_GBZ_subsets, [(coeffs, degs, E, j / len(E_list)) for j, E in enumerate(E_list)])
     pool.close()
     pool.join()
 
@@ -389,6 +389,42 @@ def plot_SGBZ_mu(which="a1"):
     plt.colorbar(sca)
 
 
+def plot_index_E(which=""):
+    """子集数-E 图：每个 GBZResult 的 index (n_0D, n_1D) 在能量复平面上着色。
+
+    每种不同的 index（如 (1,0)、(0,2)、(0,0)）映射为一种颜色；(0,0) 表示
+    E 在 GBZ 外（或计算失败）。index 是 ``GBZResult.index`` = (PointSubset
+    数, LineSubset 数)。
+    """
+    with open("data/Haldane-gain-loss-amoeba%s.pkl" % which, "rb") as fp:
+        data = pickle.load(fp)
+    E_real, E_imag, results = data["E_real"], data["E_imag"], data["results"]
+    E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
+    E_list = (E_real_mesh + 1j * E_imag_mesh).flatten()
+
+    def get_index(res):
+        if isinstance(res, dict):          # 兼容旧版 dict 结果
+            return tuple(res.get("index", (0, 0)))
+        return tuple(res.index)
+
+    index_keys = [get_index(res) for res in results]
+    unique = sorted(set(index_keys))
+    key_num = {k: n for n, k in enumerate(unique)}
+    cvals = np.array([key_num[k] for k in index_keys])
+    print(key_num, cvals)
+
+    plt.figure()
+    from matplotlib.colors import ListedColormap
+    base = plt.cm.get_cmap("tab20" if len(unique) <= 20 else "viridis")
+    cmap = ListedColormap([base(i % base.N) for i in range(len(unique))])
+    sca = plt.scatter(E_list.real, E_list.imag, c=cvals, cmap=cmap, s=8)
+    cbar = plt.colorbar(sca, ticks=range(len(unique)))
+    cbar.ax.set_yticklabels([f"({a},{b})" for a, b in unique])
+    plt.xlabel("Re E")
+    plt.ylabel("Im E")
+    plt.title("GBZ subsets index $(n_{0D}, n_{1D})$ vs $E$")
+
+
 if __name__ == "__main__":
     # sweep_amoeba()
     # sweep_amoeba_multiband()
@@ -396,11 +432,14 @@ if __name__ == "__main__":
     # sweep_SGBZ_a2()
     # sweep_SGBZ_x()
     # sweep_SGBZ_y()
-    plot_amoebic_spectrum()
+    # plot_amoebic_spectrum()
     # plot_amoeba_mu()
-    plot_amoebic_spectrum("-xy")
-    # plot_SGBZ("a1")
-    # plot_SGBZ("a2")
-    # plot_SGBZ("x")
-    # plot_SGBZ("y")
+    # plot_amoebic_spectrum("-xy")
+    plot_SGBZ("a1")
+    plot_SGBZ("a2")
+    plot_SGBZ("x")
+    plot_SGBZ("y")
+    # plot_index_E("a1")
+    # plot_index_E("")
+    # plot_index_E("-xy")
     plt.show()

@@ -192,7 +192,7 @@ def collect_GBZ_subsets(
     coeffs: np.ndarray,
     degs: np.ndarray,
     E_ref: complex,
-    perc: float,
+    perc: float = None,
     debug_mode: bool = False,
     **options,
 ) -> GBZResult:
@@ -207,7 +207,8 @@ def collect_GBZ_subsets(
         GBZResult with connected subsets.  ``gbz.is_empty`` means E_ref is
         outside the amoeba GBZ spectrum.
     """
-    print("%.2f" % (perc * 100) + r"%")
+    if perc is not None:
+        print("%.2f" % (perc * 100) + r"%")
     char_poly = CharPoly(coeffs, degs)
 
     solver_options = dict(options)

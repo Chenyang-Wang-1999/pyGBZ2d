@@ -6,7 +6,7 @@ This package implements two complementary formulations for determining the gener
 
 | Module | Approach | Key Object |
 |--------|----------|------------|
-| `brute_force_SGBZ` | SGBZ / strip winding number | PMGBZ points, strip winding $W(E, \mu_1)$ |
+| `brute_force_SGBZ` | SGBZ / average major-axis winding | PMGBZ points, average winding $W(E, \mu_1)$ |
 | `brute_force_amoeba` | Amoeba / Ronkin function | Average winding numbers, Ronkin minimum $(\mu_1, \mu_2)$ |
 
 The characteristic polynomial $f(E, \beta_1, \beta_2) = \det[E - h(\beta_1, \beta_2)]$ of a 2D non-Hermitian tight-binding model is a Laurent polynomial in $\beta_j = e^{\mu_j + i\theta_j}$. Both modules solve for the non-Bloch decay factors $(\mu_1, \mu_2)$ that satisfy the GBZ condition, but through different mathematical routes.
@@ -57,14 +57,17 @@ char_poly.set_Laurent_by_terms(coeffs, degs)
 
 ### SGBZ Solver
 
-Find the critical $\mu_1$ where the strip winding number vanishes:
+Find the critical $\mu_1$ where the average major-axis winding number vanishes:
 
 ```python
-from brute_force_SGBZ import SGBZSolver
+from brute_force_SGBZ import collect_GBZ_subsets, CharPoly
 
-solver = SGBZSolver(char_poly)
-mu1, pmgbz_points = solver.solve_for_E(1.0 + 0j)
-print(f"mu1 = {mu1:.6f}, PMGBZ points: {len(pmgbz_points)}")
+# Build characteristic polynomial
+poly = CharPoly(coeffs, degs)
+
+# Check spectrum membership for a reference energy
+gbz = collect_GBZ_subsets(coeffs, degs, E_ref=1.0 + 0j)
+print(f"In spectrum: {not gbz.is_empty}, subsets: {len(gbz.subsets)}")
 ```
 
 ### Amoeba Solver
@@ -82,17 +85,14 @@ print(f"mu1 = {result['mu1']:.6f}, mu2 = {result['mu2']:.6f}")
 
 ### `brute_force_SGBZ`
 
-| Function / Class | Description |
-|-----------------|-------------|
-| `SGBZSolver(char_poly)` | Main SGBZ solver. `solve_for_E(E_ref)` returns `(mu1, PMGBZ_points)` |
-| `SGBZChecker(char_poly)` | Check if a given $(E, \mu_1)$ satisfies the SGBZ condition |
-| `get_strip_winding(poly_diff, E_ref, mu1)` | Compute strip winding number $W(E, \mu_1)$ |
-| `get_roots_and_PMGBZ(poly_diff, E_ref, mu1)` | Solve roots and detect PMGBZ points |
-| `get_loop_winding(poly_diff, E_ref, mu1, mu2_fun, theta2)` | Single-loop winding number |
-| `PolyDiffContext(char_poly)` | Polynomial + precomputed partial derivatives |
-| `calculate_point_roots(char_poly, ...)` | Solve 1D polynomial roots at a parameter point |
-| `WindingFun(char_poly, loop_fun, loop_range)` | Winding number integrand (polynomial) |
-| `MatWindingFun(mat_fun, dmat_fun, ...)` | Winding number integrand (sparse matrix, requires BerryPy) |
+| Function | Description |
+|----------|-------------|
+| `collect_GBZ_subsets(coeffs, degs, E_ref)` | Main entry point — check SGBZ condition for reference energy |
+| `solve_SGBZ_for_E(poly, E_ref)` | Locate $\mu_1$ where average winding vanishes |
+| `detect_continuum_simple(zm, poly)` | Continuum detection (presence only) |
+| `detect_crossings_simple(zm, poly)` | Crossing detection + charge classification |
+| `compute_average_winding(zm, poly, M, charges)` | Compute average major-axis winding number |
+| `CharPoly(coeffs, degs)` | Characteristic polynomial wrapper |
 
 ### `brute_force_amoeba`
 
@@ -151,7 +151,7 @@ The amoeba spectrum is a superset of the union of SGBZ spectra. For uniform band
 
 ## References
 
-The SGBZ formulation is based on the strip winding number approach for 2D non-Hermitian systems. The amoeba formulation uses the Ronkin function of Laurent polynomials. See [doc/](doc/) for detailed theoretical background.
+The SGBZ formulation is based on the average major-axis winding number approach for 2D non-Hermitian systems. The amoeba formulation uses the Ronkin function of Laurent polynomials. See [doc/](doc/) for detailed theoretical background.
 
 ## License
 
