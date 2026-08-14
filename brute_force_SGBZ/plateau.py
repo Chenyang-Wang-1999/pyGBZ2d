@@ -22,7 +22,8 @@ from typing import Optional
 import numpy as np
 
 from gbz_types import (
-    CharPoly, GBZResult, PointSubset, circ_dist, generate_probe_steps,
+    CharPoly, GBZResult, PointSubset,
+    check_points_clustered_on_torus, probe_zero_plateau,
 )
 from continuation import ZeroManager
 
@@ -36,54 +37,25 @@ def _check_pmgbz_points_clustered(
     gbz: GBZResult,
     tol_normalized: float = 1e-2,
 ) -> bool:
-    """Check whether every PMGBZ point has a neighbour within tol.
+    """Whether every PMGBZ point has a neighbour within *tol_normalized*.
 
-    Port of amoeba's ``_check_zeros_are_clustered`` (amoeba.py:32-75).
-    Uses Euclidean distance on the (θ₁, θ₂) torus, normalized by 2π.
+    Thin SGBZ adapter over
+    :func:`gbz_types.check_points_clustered_on_torus`: extracts ``(θ₁, θ₂)``
+    from the result's ``PointSubset``s (SGBZ points are PointSubsets, unlike
+    amoeba's ``(θ₁, θ₂, jump)`` tuples) and forwards.
 
     At a genuine GBZ point the PMGBZ points are well-separated (they
     partition the circle into meaningful segments).  At a zero-plateau
     boundary the winding changes sign over a vanishingly narrow angular
     region, so the points cluster into nearly degenerate pairs — each
     point sits within ``tol_normalized`` of a neighbour.
-
-    Returns True when ALL points have a neighbour (suspicious →
-    run probe), False when any point is isolated (genuine GBZ →
-    skip expensive probe).
     """
     twopi = 2 * math.pi
-
-    # Extract (theta1, theta2) pairs from PointSubsets
-    points: list[tuple[float, float]] = []
-    for s in gbz.subsets:
-        if isinstance(s, PointSubset):
-            theta1 = cmath.phase(s.beta1) % twopi
-            theta2 = cmath.phase(s.beta2) % twopi
-            points.append((theta1, theta2))
-
-    if len(points) < 2:
-        return False
-
-    # Tolerance in radians (normalized by 2π)
-    tol_rad = tol_normalized * twopi
-
-    for i in range(len(points)):
-        t1_i, t2_i = points[i]
-        has_neighbor = False
-        for j in range(len(points)):
-            if i == j:
-                continue
-            t1_j, t2_j = points[j]
-            # Euclidean distance on (θ₁, θ₂) torus
-            d1 = circ_dist(t1_i, t1_j)
-            d2 = circ_dist(t2_i, t2_j)
-            d = math.sqrt(d1 * d1 + d2 * d2)
-            if d < tol_rad:
-                has_neighbor = True
-                break
-        if not has_neighbor:
-            return False
-    return True
+    points: list[tuple[float, float]] = [
+        (cmath.phase(s.beta1) % twopi, cmath.phase(s.beta2) % twopi)
+        for s in gbz.subsets if isinstance(s, PointSubset)
+    ]
+    return check_points_clustered_on_torus(points, tol_normalized)
 
 
 # ---- plateau probe ----
@@ -169,9 +141,12 @@ def _probe_zero_plateau_near_mu1(
 ) -> dict:
     """Check whether a nonempty-PMGBZ candidate sits next to a zero plateau.
 
-    Probes ``mu1 ± step`` for a geometric ladder of steps.  A plateau is
-    found when a probe succeeds, is not a continuum, has empty GBZ, and its
-    winding vanishes within *zero_tol*.
+    Thin SGBZ adapter over :func:`gbz_types.probe_zero_plateau`: the step
+    ladder, ``±side`` loop and found/not_found/inconclusive classification
+    are shared; the per-probe *evaluation* (build a ZeroManager, gate on
+    continuum, else run crossing detection + winding) and the plateau
+    criterion (empty GBZ + zero winding) are SGBZ-specific, supplied as the
+    ``evaluator`` closure.
     """
     if probe_radius is None:
         probe_radius = continuum_perturb
@@ -180,64 +155,25 @@ def _probe_zero_plateau_near_mu1(
     if mu1_bracket is not None:
         bracket_width = abs(float(mu1_bracket[1]) - float(mu1_bracket[0]))
 
-    steps = generate_probe_steps(bracket_width, probe_radius, zero_tol)
-
-    probe_points = []
-    found_plateau = False
-    saw_left_nonplateau = False
-    saw_right_nonplateau = False
-
     eval_kwargs = dict(
         continuum_tol=continuum_tol, dV_tol=dV_tol, vote_frac=vote_frac,
         crossing_tol=crossing_tol, detect_threshold=detect_threshold,
         max_newton=max_newton, dedup_tol=dedup_tol,
     )
 
-    for step in steps:
-        for side in (-1, 1):
-            mu1_probe = mu1 + side * step
-            point = {
-                "mu1": mu1_probe,
-                "side": side,
-                "step": step,
-                "success": False,
-            }
-            res = _evaluate_probe(
-                poly, E_ref, mu1_probe, zm_run_kwargs, **eval_kwargs,
-            )
-            point.update(res)
-            if _is_zero_plateau_probe(point, zero_tol):
-                found_plateau = True
-            elif point["success"] and (not point["is_continuum"]):
-                if side < 0:
-                    saw_left_nonplateau = True
-                else:
-                    saw_right_nonplateau = True
-            probe_points.append(point)
-            if found_plateau:
-                return {
-                    "status": "found",
-                    "found": True,
-                    "zero_tol": zero_tol,
-                    "probe_radius": probe_radius,
-                    "bracket_width": bracket_width,
-                    "steps": steps,
-                    "points": probe_points,
-                }
+    def evaluator(mu1_probe: float) -> dict:
+        res = _evaluate_probe(
+            poly, E_ref, mu1_probe, zm_run_kwargs, **eval_kwargs,
+        )
+        # Collapse the SGBZ-specific criterion to the one bool the shared
+        # loop reads; keep the raw fields for diagnostics.
+        res["is_plateau"] = _is_zero_plateau_probe(res, zero_tol)
+        return res
 
-    if found_plateau:
-        status = "found"
-    elif saw_left_nonplateau and saw_right_nonplateau:
-        status = "not_found"
-    else:
-        status = "inconclusive"
-
-    return {
-        "status": status,
-        "found": found_plateau,
-        "zero_tol": zero_tol,
-        "probe_radius": probe_radius,
-        "bracket_width": bracket_width,
-        "steps": steps,
-        "points": probe_points,
-    }
+    return probe_zero_plateau(
+        mu1, mu1_bracket,
+        zero_tol=zero_tol,
+        probe_radius=probe_radius,
+        bracket_width=bracket_width,
+        evaluator=evaluator,
+    )

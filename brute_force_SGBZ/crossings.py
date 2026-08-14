@@ -44,6 +44,7 @@ from continuation import ZeroManager
 
 from .mu2mid import (
     Mu2MidZM, _cubic_hermite_coeffs, _cubic_roots_in_interval, _dv_column,
+    logabs_clamped, _LOGABS_CLAMP_L,
 )
 
 
@@ -118,7 +119,8 @@ def _track_g_and_gp(zm: Mu2MidZM, s_idx: int, row: int, j: int) -> tuple[float, 
     seam copies.  NaN derivative when tangents are unavailable.
     """
     seg = zm.segments[s_idx]
-    la = float(np.log(np.abs(seg.tracked_roots[row, j])))
+    la = float(np.clip(np.log(np.abs(seg.tracked_roots[row, j])),
+                       -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L))
     g = la - float(zm.seg_mu2_values[s_idx][row])
     if seg.tangents is None:
         return g, float('nan')
@@ -175,6 +177,13 @@ def _bracket_crossing(
     bracket width < xtol.  Robust where Newton diverges (branch points) and
     where a sign-change check deadlocks (g_pred agreeing with both ends).
 
+    The bracket endpoints are exact mesh rows but NOT necessarily adjacent:
+    an earlier successful bracket on another track sharing the same interval
+    inserts its θ* row between them.  The two endpoints are re-resolved
+    against the current mesh every iteration (locate for θ_lo, searchsorted
+    for θ_hi), so the cubic is an interpolant over whatever rows the bracket
+    currently spans and the tightening loop stays valid.
+
     Returns ``(theta1, beta2, g_prime, charge, kind, converged)``; ``None``
     if the interval has no transversal root (cubic false positive) or the
     direction is undefined (tangency / branch point).  *beta2*, *g_prime*
@@ -195,26 +204,38 @@ def _bracket_crossing(
             return None
         seg = zm.segments[si]
         th = seg.theta1_arr
-        if i + 1 >= len(th) or abs(th[i] - theta_lo) > 1e-15 \
-           or abs(th[i + 1] - theta_hi) > 1e-15:
+        if i + 1 >= len(th) or abs(th[i] - theta_lo) > 1e-15:
+            return None
+        # θ_hi is resolved independently (searchsorted, left side = the row
+        # equal to θ_hi) rather than assumed to be row i+1: an EARLIER
+        # successful bracket on another track sharing this interval inserts
+        # its θ* row between θ_lo and θ_hi, so the endpoints are mesh rows
+        # but no longer adjacent.  Requiring adjacency here silently drops
+        # the second member of a boundary pair crossing the same interval
+        # (an accidental dedup — the PMGBZ point is a β₂ pair).  The bracket
+        # works on any two mesh rows bracketing the root: the cubic Hermite
+        # is an interpolant over a wider interval and the tightening loop
+        # re-locates both endpoints each iteration.
+        k = int(np.searchsorted(th, theta_hi, side='left'))
+        if k >= len(th) or abs(th[k] - theta_hi) > 1e-15 or k <= i:
             return None
 
         v0, _ = _track_g_and_gp(zm, si, i, j)
-        v1, _ = _track_g_and_gp(zm, si, i + 1, j)
+        v1, _ = _track_g_and_gp(zm, si, k, j)
 
         # endpoint touches: the root IS a mesh row (e.g. a crossing landing
         # on the θ₁ = 2π seam).  Read its true direction and return.
         if abs(v0) < xtol:
-            b2, gp, q, k = _charge_at_row(zm, si, i, j, theta_lo)
-            return theta_lo, b2, gp, q, k, True
+            b2, gp, q, kk = _charge_at_row(zm, si, i, j, theta_lo)
+            return theta_lo, b2, gp, q, kk, True
         if abs(v1) < xtol:
-            b2, gp, q, k = _charge_at_row(zm, si, i + 1, j, theta_hi)
-            return theta_hi, b2, gp, q, k, True
+            b2, gp, q, kk = _charge_at_row(zm, si, k, j, theta_hi)
+            return theta_hi, b2, gp, q, kk, True
 
         # bracket converged by width → root at the left row.
         if theta_hi - theta_lo < xtol:
-            b2, gp, q, k = _charge_at_row(zm, si, i, j, theta_lo)
-            return theta_lo, b2, gp, q, k, True
+            b2, gp, q, kk = _charge_at_row(zm, si, i, j, theta_lo)
+            return theta_lo, b2, gp, q, kk, True
 
         # a transversal crossing must have opposite signs; same sign ⇒ no
         # root (abandon — the caller only passes sign-change intervals, but
@@ -226,10 +247,10 @@ def _bracket_crossing(
         N = len(th)
         touches_mr = (
             (i == 0 and seg.left_mr >= 0)
-            or (i == N - 2 and seg.right_mr >= 0)
+            or (k == N - 1 and seg.right_mr >= 0)
         )
         _, dv0 = _track_g_and_gp(zm, si, i, j)
-        _, dv1 = _track_g_and_gp(zm, si, i + 1, j)
+        _, dv1 = _track_g_and_gp(zm, si, k, j)
         # MR / divergent tangent → linear fallback (bounded, §2.3).
         if not (np.isfinite(dv0) and np.isfinite(dv1)):
             dv0 = (v1 - v0) / h
@@ -259,12 +280,16 @@ def _bracket_crossing(
             return None
 
         try:
-            insert_at, _ = zm.insert_solution(theta_pred, si, i)
+            # locate the containing interval inside insert_solution (θ_pred
+            # may fall outside [th[i], th[i+1]] now that the bracket can span
+            # rows inserted by earlier brackets — the stale hint i would raise
+            # "outside interval" and drop the crossing).
+            insert_at, _ = zm.insert_solution(theta_pred, si)
         except (ValueError, RuntimeError):
             return None
 
         seg = zm.segments[si]
-        la = np.log(np.abs(seg.tracked_roots))
+        la = logabs_clamped(seg.tracked_roots)
         g_pred = float(la[insert_at, j]) - float(zm.seg_mu2_values[si][insert_at])
         if seg.tangents is not None:
             g_prime = float(seg.tangents[insert_at, j].real) \
@@ -445,7 +470,7 @@ def detect_crossings_simple(
         N = len(th)
         if N < 2:
             continue
-        la = np.log(np.abs(seg.tracked_roots))           # (N, K)
+        la = logabs_clamped(seg.tracked_roots)           # (N, K)
         mu2 = m.seg_mu2_values[s_idx]                    # (N,) built μ₂_mid curve
         for j in range(K):
             g = la[:, j] - mu2                            # (N,) track j vs μ₂_mid

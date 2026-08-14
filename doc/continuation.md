@@ -6,9 +6,10 @@ full-circle integration with automatic multiple-root detection and refinement.
 
 ## 1. Motivation
 
-Both SGBZ (`root_solver.py`) and amoeba (`tracks.py`) currently use fixed uniform $\theta_1$
-meshes for root tracking.  When roots change rapidly — near degeneracies, crossings, or
-poles — a uniform mesh may miss features or produce incorrect Hungarian matchings.
+Both SGBZ and amoeba now use `continuation.ZeroManager` as their root-solving backend,
+which replaces the prior fixed uniform $\theta_1$ meshes.  When roots change rapidly —
+near degeneracies, crossings, or poles — a uniform mesh may miss features or produce
+incorrect Hungarian matchings.
 
 The pseudo-arclength approach adapts the step size to the local root dynamics: steps are
 small where roots move quickly, large where they are quiescent.
@@ -145,7 +146,14 @@ components of the chordal-distance proximity graph (using
    - **MR encountered / in interval** → refine via `solve_multiple_roots_in_interval`.
      If a cluster is confirmed, record the MR and its roots; otherwise treat as a
      false positive and merge the segments.
-3. **Fallback**: if `completed` was never reached (e.g. all segments ended at MRs),
+3. **False-positive MR (`pending`)**: when `_refine_mr` reports `cluster=[]` — the
+   trigger fired but `detect_cluster` finds no real cluster at the located $\theta_1$ —
+   the segment is held back in a `_PendingSeg` (its data minus the false-MR row, plus
+   the current `left_mr`) instead of being appended with a sentinel.  The next
+   iteration's segment is vstacked onto the pending one, preserving `left_mr`, and the
+   merged segment is then closed at the next real MR or at $2\pi$.  This replaces the
+   former `right_mr == -2` post-loop patch.
+4. **Fallback**: if `completed` was never reached (e.g. all segments ended at MRs),
    manually match the last segment's right boundary to the left boundary.
 
 Results are stored in:
@@ -177,8 +185,7 @@ from continuation import ZeroManager
 zm = ZeroManager(poly, E_ref, mu1)
 zm.run(
     h0=0.1,             # initial arclength step
-    max_step=0.5,        # max arclength step
-    min_step=1e-12,      # h threshold for step rejection
+    ctrl=StepControl(),  # RK45-style tolerances and step bounds
     min_dtheta=1e-10,    # Δθ₁ threshold for point trigger
     cluster_tol=1e-4,    # chordal-distance threshold for clusters
     mr_jump=1e-6,        # θ₁ step to jump past a refined MR
@@ -208,7 +215,16 @@ seg.tracked_roots    # np.ndarray (N, K) — track-ordered β₂ roots
 seg.abs_argsort      # np.ndarray (N, K) — per-row |β₂| argsort
 seg.left_mr          # int — MR index at left boundary (-1 = none)
 seg.right_mr         # int — MR index at right boundary (-1 = none)
+seg.tangents         # np.ndarray (N, K) — per-row analytic V_j; None for test-built segs
 ```
+
+`ZeroManager.insert_solution(theta1, seg_idx=None, i=None)` is a **mutating** operation:
+it solves the β₂ roots at an interior θ₁, reorders them onto the segment's track frame via
+Hungarian matching against `interpolate_roots` (the prediction anchor), and splices the new
+row into `SegmentData.theta1_arr`, `tracked_roots`, `abs_argsort`, and `tangents` *in place*
+(at mesh index `i + 1`).  Any external references to those arrays are invalidated by the
+splice — callers must re-fetch `segments[seg_idx]` after `insert_solution` returns.  This is
+the hook `Mu2MidZM` overrides to densify the mesh at μ₂-refinement sites.
 
 ### 3.2 Low-level functions
 
@@ -218,6 +234,7 @@ from continuation import (
     multiple_root_point_trigger, MultipleRootIntervalTrigger,
     detect_cluster, solve_multiple_roots_in_interval,
     integrate_segment,
+    StepResult, StepControl,
 )
 ```
 
@@ -226,13 +243,13 @@ from continuation import (
 | `compute_tangent(poly, E_ref, beta1, roots)` | `(V, norm_V)` | Tangent vector and its norm |
 | `predict_roots(roots, V, dtheta1)` | `predicted` | First-order tangent extrapolation |
 | `estimate_error(predicted, actual)` | `error_norm` | Chordal-distance error norm |
-| `arclength_step(poly, E_ref, mu1, theta1, roots, h)` | `StepResult` | One adaptive step |
-| `multiple_root_point_trigger(dtheta)` | `bool` | Step-size collapse check |
+| `arclength_step(poly, E_ref, mu1, theta1, roots, h, ctrl=StepControl())` | `StepResult` | One adaptive step |
+| `multiple_root_point_trigger(dtheta, *, min_dtheta=1e-10)` | `bool` | Step-size collapse check |
 | `MultipleRootIntervalTrigger(min_dist_threshold)` | callable | Sign-flip detector |
-| `detect_cluster(roots, cluster_tol)` | `list[tuple[int,...]]` | Connected components of close roots |
-| `solve_multiple_roots_in_interval(poly, E_ref, mu1, left, right, ref)` | `(theta1_mr, clusters)` | Brent refinement (1D, fixed μ₁) |
+| `detect_cluster(roots, *, cluster_tol=1e-6)` | `list[tuple[int,...]]` | Connected components of close roots |
+| `solve_multiple_roots_in_interval(poly, E_ref, mu1, theta1_left, theta1_right, roots_ref, min_pair=None)` | `theta1_mr` | Brent refinement (1D, fixed μ₁) |
 | `solve_multiple_roots_iterative(poly, E_ref, beta1_approx, beta2_approx)` | `(beta1_mr, beta2_mr)` | Newton refinement (4D, free β₁) |
-| `integrate_segment(poly, E_ref, mu1, theta_start, roots, theta_end)` | `SegmentResult` | Segment integration |
+| `integrate_segment(poly, E_ref, mu1, theta_start, roots_start, theta_end, *, h0, ctrl, min_dtheta, min_dist_threshold)` | `SegmentResult` | Segment integration |
 
 ## 4. Synthetic Test Polynomials
 
@@ -269,8 +286,8 @@ The test suite includes analytically constructed polynomials for stress-testing:
    the full space of multiple-root behaviours.
 
 5. **Compatible output format**.  `SegmentData.tracked_roots` and `.abs_argsort`
-   mirror the structure of `_compute_root_tracks` (amoeba) and
-   `get_hungarian_sorted_roots`, making it straightforward to plug into either
+   mirror the shape amoeba's per-column extraction and SGBZ's `Mu2MidZM` /
+   crossing detector expect, making it straightforward to plug into either
    pipeline.
 
 ## 6. File Layout
@@ -278,18 +295,27 @@ The test suite includes analytically constructed polynomials for stress-testing:
 ```
 continuation/
 ├── __init__.py          # Re-exports public API
-├── arclength.py         # Low-level step functions (~210 lines):
-│                        #   compute_tangent, predict_roots, estimate_error,
-│                        #   arclength_step, StepResult
-├── multiple_roots.py    # MR detection & refinement (~370 lines):
-│                        #   MultipleRootInfo, multiple_root_point_trigger,
+├── arclength.py         # Low-level step functions (~318 lines):
+│                        #   StepControl (RK45-style tolerances bundled so
+│                        #     arclength_step / integrate_segment / ZeroManager.run
+│                        #     share one knob set), StepResult, compute_tangent,
+│                        #     predict_roots, predict_roots_hermite (matching
+│                        #     anchor for ZM / MR solvers), estimate_error,
+│                        #   arclength_step
+├── multiple_roots.py    # MR detection & refinement (~448 lines):
+│                        #   MultipleRootInfo (with cluster_stds),
+│                        #   snap_clusters_to_mean, multiple_root_point_trigger,
 │                        #   MultipleRootIntervalTrigger, detect_cluster,
-│                        #   _pairwise_deriv, _min_pairwise_deriv,
-│                        #   solve_multiple_roots_in_interval,
-│                        #   solve_multiple_roots_iterative
-└── zero_manager.py      # Orchestration (~620 lines):
-                         #   StopReason, SegmentResult, integrate_segment,
-                         #   SegmentData, ZeroManager
+│                        #   _pair_distance_deriv, _closest_pair_deriv,
+│                        #   solve_multiple_roots_in_interval (1D Brent, fixed μ₁),
+│                        #   solve_multiple_roots_iterative (4D Newton, free β₁)
+└── zero_manager.py      # Orchestration (~1100 lines):
+                         #   StopReason, _MREndpoint, SegmentResult, SegmentData,
+                         #   _PendingSeg (held-back false-positive-MR segment),
+                         #   integrate_segment, ZeroManager (with .locate,
+                         #   .interpolate_roots, .insert_solution — mutating,
+                         #   overrides hook for Mu2MidZM — ._predict_roots_at_2pi,
+                         #   ._boundary_perm_from_right, ._refine_mr)
 
 tests/
 ├── test_continuation.py    # Low-level + integration tests

@@ -46,7 +46,7 @@ from gbz_types import CharPoly, PointSubset
 from continuation import ZeroManager
 
 from .crossings import detect_crossings_simple, _ensure_mu2mid, _MAX_NEWTON_ITER
-from .mu2mid import Mu2MidZM
+from .mu2mid import Mu2MidZM, _LOGABS_CLAMP_L
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +188,24 @@ class _Mu2MidPath:
         val = a * (s * h) ** 3 + b * (s * h) ** 2 + d0 * (s * h) + v0
         # f'(t) = 3a·(t-t0)² + 2b·(t-t0) + d0
         deriv = 3.0 * a * (s * h) ** 2 + 2.0 * b * (s * h) + d0
+
+        # μ₂_mid is defined as the mean of logabs_clamped values, so it is
+        # bounded to ±_LOGABS_CLAMP_L (a 0/∞ boundary root's ln|β| saturates at
+        # the band edge — see mu2mid.py:_LOGABS_CLAMP_L).  The endpoint *values*
+        # honour this (they come from logabs_clamped), but the endpoint
+        # *derivatives* d0/d1 are the raw analytic tangent Re(V)=d(ln|β|)/dθ₁
+        # (compute_tangent applies NO cap), which is huge near a boundary root
+        # collapsing to 0/∞.  Feeding huge unclamped derivatives into a cubic
+        # whose values are clamped lets the interpolant overshoot μ₂_mid far
+        # outside the band (to ±10²–10³), so β₂ = exp(μ₂_mid) overflows in the
+        # winding loop and the quad of Im[f'/f] returns nan.  Clamp the path to
+        # the same band the data lives in; where the cubic tried to escape, the
+        # clamped function is saturated (derivative 0), consistent with the
+        # clamped-value model and bounded (no overflow, no divergent quad).
+        if val > _LOGABS_CLAMP_L:
+            return float(_LOGABS_CLAMP_L), 0.0
+        if val < -_LOGABS_CLAMP_L:
+            return float(-_LOGABS_CLAMP_L), 0.0
         return float(val), float(deriv)
 
 
@@ -337,9 +355,6 @@ def _pick_seed_theta2(
             b = b + twopi
         for fr in fracs:
             t2 = (a + fr * (b - a)) % twopi
-            # cheap pre-screen: skip candidates whose β₂ loop grazes a root
-            if _loop_min_dist(t2, roots_mesh, mu2_mid_mesh) <= 0.0:
-                continue
             fmin = _loop_min_f(t2, zm, poly)
             if fmin > best_f:
                 best_f = fmin
@@ -393,7 +408,8 @@ def compute_average_winding(
     # ≤ 1 boundary: the full θ₂ circle is one region with constant winding.
     if len(boundaries) <= 1:
         t2, _ = _pick_seed_theta2([(0.0, twopi)], m, poly)
-        return round(_loop_winding_quad(m, poly, E_ref, mu1, M, t2))
+        w0 = _loop_winding_quad(m, poly, E_ref, mu1, M, t2)
+        return round(w0)
 
     boundaries.sort(key=lambda x: x[0])
     N = len(boundaries)

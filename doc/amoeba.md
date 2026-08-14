@@ -2,6 +2,8 @@
 
 Non-Hermitian spectrum computation based on the amoeba formulation. Complementary to the SGBZ formulation (`brute_force_SGBZ/`).
 
+The zero-solving backend is `continuation.ZeroManager` (wrapped as `AmoebaZeroManager`); subset extraction and winding computation live in `zm_extract.py`. There is no separate `tracks.py` module — root tracking via Hungarian matching is now handled inside `ZeroManager`.
+
 ## 1. Theoretical Background
 
 ### 1.1 Amoeba Definition
@@ -41,204 +43,178 @@ In a **hole** of the amoeba — i.e., a connected open set $\boldsymbol{\mu} \no
 | Aspect | SGBZ | Amoeba |
 |--------|------|--------|
 | Base manifold | $X(E,\mu_1)$, $\mu_2 = \rho_{2,0}(\theta_1;E,\mu_1)$ varies with $\theta_1$ | Level surface $\mu_2 = \text{const}$ |
-| Root ordering | By $\vert\beta_2\vert$ | Hungarian matching for continuous tracking |
-| Continuum detection | $\vert\beta_M\vert \approx \vert\beta_{M+1}\vert$ | $\vert\ln\vert\beta_2\vert - \mu_2\vert < \text{tol}$ |
+| Root tracking | Fixed $\theta_1$ mesh, Hungarian matching across samples | `continuation.ZeroManager` — adaptive $\beta_2$-root tracks that correctly cross multiple roots, with Hungarian matching handled inside the ZM |
+| Continuum detection | $\vert\beta_M\vert \approx \vert\beta_{M+1}\vert$ | Per-segment fraction of samples with $\vert\ln\vert\beta_2\vert - \mu_2\vert < \text{tol}$ exceeding `frac` |
 | Spectral inclusion | $\sigma_{\text{Amoeba}} \supset \cup_j \sigma_{\text{SGBZ},j}$ | — |
 
 ## 2. Algorithm Architecture
 
-### 2.1 Hungarian Matching for Root Tracking
+### 2.1 Zero-Manager Backend
 
-Unlike SGBZ which sorts by $\vert\beta_2\vert$, the amoeba method uses Hungarian matching to track each root continuously:
+The root-tracking layer is `continuation.ZeroManager` (see `continuation/`), wrapped as `AmoebaZeroManager(ZeroManager)` in `zm_extract.py`. Unlike a fixed uniform $\theta_1$ mesh, the ZM produces adaptive $\beta_2$-root tracks that correctly cross through multiple-root (MR) points and segments.
 
-1. Solve for $\beta_2$ roots at each point on a $\theta_1$ mesh
-2. Starting from $\theta_1 = 0$, propagate matching relations point by point using the Hungarian algorithm
-3. Cost function: chordal distance on the Riemann sphere (avoids $0/\infty$ false swaps)
-4. Output: continuous root tracks `tracked[θ₁_idx, root_j]`
+`AmoebaZeroManager` adds one cached field on top of `ZeroManager`:
 
-The periodic boundary ($\theta_1 = 0 \to 2\pi$) is handled with an extra Hungarian matching step to ensure root identities are preserved across the wrap-around, preventing spurious crossings at the periodic boundary.
+- `seg_logabs`: `list[np.ndarray]`, where `seg_logabs[s]` has shape `(N_s, K)` = `np.log(np.abs(segments[s].tracked_roots))`.
 
-### 2.2 Crossing Detection and Lazy Refinement
+This caching is central to the amoeba pipeline: the same root tracks are evaluated at many $\mu_2$ values (subset extraction plus ~30 $\mu_2$-bisection steps), and the cached logs let the extractor and winding code index a precomputed array rather than recomputing logs on every call. The ZM is $\mu_2$-independent — built once per `(E, μ₁)` and reused across all $\mu_2$ evaluations.
 
-For each root track, detect where $\ln\vert\beta_2\vert$ crosses $\mu_2$:
+The periodic boundary ($\theta_1 = 0 \to 2\pi$) is handled inside the ZM via `boundary_perm`, which the extractor folds back through `boundary_perm_inv` (see `_zero_identity_key` in §5).
 
-- **Discrete crossing**: $d_0 \cdot d_1 < 0$ ($d_i = \ln\vert\beta_2\vert - \mu_2$). Each crossing is labeled with its jump direction: crossing upward through μ₂ → jump=+1, downward → jump=−1.
-- **Continuum noise filtering**: if both sides of a crossing lie within the continuum band, it is numerical noise — skip.
-- **Lazy refinement**: skip fsolve during bisection iterations (`refine_crossings=False`), using linear interpolation $(\theta_1^{\text{approx}}, \theta_2^{\text{approx}})$ directly as zeros. Only perform one fsolve refinement after bisection converges to the final $\mu_2$.
+### 2.2 Continuum Detection and Mask
 
-**Dual continuum+crossing extraction**: When the bisection finds a continuum (`is_continuum=True`), it means the Ronkin minimum is at a continuum boundary — but the θ₁ circle is not entirely continuum. The subset collection step in `collect_GBZ_subsets` does two passes over the root tracks:
+A track is declared **continuum** for a segment when a fraction `> frac` (default 0.9) of its samples satisfy $|\ln|\beta_2| - \mu_2| < \text{tol}$ (default `CONTINUUM_TOL = 1e-6`). This is computed by `_continuum_mask` (zm_extract.py:93), which returns a `list[np.ndarray]` of shape `(K,)` per segment — `mask[s][j]` is True when track `j` of segment `s` is in the continuum band.
 
-1. **Continuum intervals** → `LineSubset` objects: extended θ₁ ranges where $|\ln|\beta_2| - \mu_2| < \mathrm{continuum\_tol}$ spans ≥ `min_continuum_pts` consecutive mesh points.
-2. **Discrete crossings in gaps** → `PointSubset` objects: isolated sign changes detected in the non-continuum θ₁ regions, filtered to exclude crossings whose θ₁ falls inside any continuum interval, then refined via `fsolve` with the exact Jacobian.
+A genuine continuum is constant-modulus to ~1e-9; a transversal crossing leaves the level after one sample. The 1e-6 tolerance separates them.
 
-### 2.3 Analytical Derivative of Average Winding w.r.t. μ₂
+### 2.3 Crossing Detection and Lazy Refinement
 
-After refinement, for each zero $(\theta_1, \theta_2)$ solve a $2\times2$ linear system to obtain $\dot{\theta}_1 = d\theta_1/d\mu_2$:
+For each non-continuum track, the winding/extraction code detects two kinds of crossings of $\ln|\beta_2| = \mu_2$:
+
+- **Sign-change crossing** (`'cross'`): $d_i \cdot d_{i+1} < 0$ where $d_i = \ln|\beta_2|_i - \mu_2$. Labeled with a jump direction: $d_i < 0 \Rightarrow \text{jump}=+1$ (upward through $\mu_2$), else $-1$.
+- **Exact touch** (`'zero'`): $d_i == 0$ at a sample. Recorded separately because the sign-change product cannot trigger when either endpoint is exactly zero.
+
+**Lazy refinement**: during bisection iterations `refine=False`, so crossings use linear interpolation $(\theta_1^{\text{approx}}, \theta_2^{\text{approx}})$ directly. Only at the final $\mu_2$ (or for the `extract_amoeba_subsets` `'solve'` mode) is `_find_exact_crossing` invoked — a `scipy.optimize.fsolve` solve of $f(E, \beta_1, \beta_2) = 0$ with the exact $2\times2$ Jacobian.
+
+### 2.4 Analytical Derivative of Average Winding w.r.t. μ₂
+
+After refinement, for each zero $(\theta_1, \theta_2)$ `_compute_zero_dtheta1_dmu2` solves a $2\times2$ real linear system (Cramer's rule) to obtain $\dot{\theta}_1 = d\theta_1/d\mu_2$:
 
 $$\frac{dW}{d\mu_2} = \frac{1}{2\pi} \sum_i \text{jump}_i \cdot \dot{\theta}_{1,i}$$
 
-This is used for a single Newton correction step on $\mu_2$ after refinement, avoiding re-bisection.
+This is computed in `amoeba_windings` (zm_extract.py:561) only when `refine=True`. It is used by `_refine_and_correct` (bisect.py:24) for a single Newton correction step on $\mu_2$ after refinement, avoiding a re-bisection:
 
-### 2.4 Unified Winding Number Computation
+$$\mu_2 \leftarrow \mu_2 - W_{\text{ref}} / (dW/d\mu_2).$$
 
-`_get_average_winding_from_zeros` handles both a1 and a2 directions uniformly:
+### 2.5 Unified Winding Number Computation
+
+`_get_average_winding_from_zeros` (ronkin_winding.py:80) handles both a1 and a2 directions uniformly. It does not itself build root tracks — it consumes the zero list produced by `amoeba_windings` or `extract_amoeba_subsets`:
 
 ```
 Given zero list [(θ₁,θ₂), ...] and direction d ∈ {1,2}:
-  1. Extract angular coordinates for direction d → sort → N segments
+  1. Partition the angular circle in the direction-d variable by the zero
+     coordinates (θ₁ for d=2, θ₂ for d=1) → sorted cut points → N segments.
   2. For each segment midpoint:
      - Fix |β_param| = exp(μ_param), solve for the other variable's roots
-     - Count roots with |β_solve| < exp(μ_count)
-     - u_d = count_below - M_d
-  3. average = Σ(u_d × segment_width) / (2π)
+     - count_below = #roots with ln|β_solve| < μ_count
+     - u_d = count_below − M
+  3. average        = Σ(u_d × segment_width) / (2π)
+     non_zero_area = Σ(|u_d| × segment_width) / (2π)
 ```
 
-The a2 direction has an independent Hungarian matching pipeline; a1 reuses the a2 zero points (different directions use different angular coordinates for partitioning).
+- **direction=2** (w2, $\partial R/\partial\mu_2$): partition by $\theta_1$, fix $\beta_1 = e^{\mu_1}$, solve $\beta_2$, count roots with $\ln|\beta_2| < \mu_2$.
+- **direction=1** (w1, $\partial R/\partial\mu_1$): partition by $\theta_2$, fix $\beta_2 = e^{\mu_2}$, solve $\beta_1$, count roots with $\ln|\beta_1| < \mu_1$.
 
-Special case — no zeros: the full circle is a single segment; u is evaluated at one midpoint (θ=0 for the appropriate variable). The return includes `non_zero_area`, a lightweight plateau indicator: when the winding is zero but concentrated in a tiny angular region, `non_zero_area` is small.
+**Special case — no zeros**: the full circle is a single segment of width $2\pi$; $u$ is evaluated at one midpoint ($\theta=0$ for the appropriate variable). The returned `non_zero_area` equals $|u|$.
 
-### 2.5 Bisection Solvers
+`non_zero_area` is a lightweight plateau indicator: at a zero-plateau boundary both w1 and w2 non-zero areas are tiny (most of the circle has $u = 0$). Callers skip the expensive plateau probe when either area exceeds a safe threshold (default `1e-2`).
 
-**Inner loop** (μ₂ bisection, `_find_mu2_for_w2_zero`):
+### 2.6 Bisection Solvers
 
-```
-Given (E, μ₁), bisect μ₂ so that w2 winding = 0:
-  1. Pre-compute _compute_root_tracks (one Hungarian pass) → cached tracks dict
-  2. Adaptive range expansion: fast evaluation with unrefined winding (refine_crossings=False)
-  3. Bisection: one _compute_winding_from_tracks per step (no fsolve)
-  4. Continuum handling inside bisection: μ₂ ± ε perturbation
-     - Opposite signs → this μ₂ is the w2=0 boundary → return is_continuum=True
-     - Same sign → use perturbed winding to guide bisection
-  5. Post-convergence refinement: refine_crossings=True → refined zeros + dW/dμ₂
-  6. Newton correction (_refine_and_correct): μ₂ ← μ₂ − W_ref / (dW/dμ₂)
-```
-
-Key design: root tracks are μ₂-independent — computed once per `(E, μ₁)` and reused across ~30 μ₂ evaluations.
-
-**Outer loop** (μ₁ bisection, `bisect_amoeba_ronkin_min`):
+**Inner loop** ($\mu_2$ bisection, `_find_mu2_for_w2_zero`, bisect.py:100):
 
 ```
-Given E, bisect μ₁ so that w1 winding = 0 (while maintaining w2 = 0):
-  1. At each μ₁ endpoint, run inner bisection → (μ₂, zeros)
-  2. Evaluate w1 from zeros at each endpoint — adaptive range expansion until w1_low * w1_high ≤ 0
-  3. Bisection on μ₁:
-     a. At μ₁_mid, inner bisection finds μ₂ with w2 = 0 → (μ₂, zeros, is_continuum)
-     b. Continuum path (is_continuum=True):
-        - _resolve_continuum: perturb μ₂ ± ε → w2 limits, perturb μ₁ ± ε → w1 limits
-        - w2_opposite and w1_opposite → Ronkin minimum (continuum boundary)
-        - w2_opposite but not w1_opposite → use w1 sign for bracket update
-     c. Normal path (is_continuum=False):
-        - Compute w1 from zeros via _get_average_winding_from_zeros (direction=1)
-     d. |w1_mid| < xtol or bracket < xtol → converged
-  4. Return {"mu1", "mu2", "zeros", "is_continuum"} plus internal fields
+Given (E, μ₁), bisect μ₂ so that w2 average winding = 0:
+  1. Build one AmoebaZeroManager at (E, μ₁) (or accept a pre-built _zm)
+     → reused across ~30 μ₂ evaluations (μ₂-independent).
+  2. Adaptive range expansion with unrefined winding (refine=False):
+     - If an endpoint falls in a continuum (winding is None), expand and retry.
+     - Stop when w_low * w_high ≤ 0.
+  3. Bisection with unrefined winding (no fsolve per step):
+     - If a midpoint hits a continuum, perturb μ₂ ± continuum_perturb:
+       * w_left * w_right < 0 → this μ₂ is the w2=0 boundary → return
+         is_continuum=True, zeros=[].
+       * Same sign → use the perturbed winding to update the bracket.
+  4. On convergence (|w_mid| < xtol or bracket < xtol), refine:
+     - _refine_and_correct: refine crossings (refine=True) + analytical
+       Newton correction on μ₂ via dW/dμ₂. Falls back to bracket midpoint
+       when dW/dμ₂ ≈ 0; clamps the step to the initial bracket.
 ```
 
-### 2.6 Plateau Detection
+Returns a dict with keys `mu2`, `zeros`, `is_continuum`, `winding`, `_zm`. The `winding` field is `(w_left, w_right)` when `is_continuum=True` (the perturbed limits), else the refined winding scalar.
 
-At some energies (particularly near zero-plateau boundaries in next-nearest-neighbor models), the bisection may converge to a false Ronkin minimum where the winding changes sign over a vanishingly narrow angular region. The plateau check in `collect_GBZ_subsets` filters these out:
+**Outer loop** ($\mu_1$ bisection, `bisect_amoeba_ronkin_min`, bisect.py:347):
 
-**Pre-check** (3 lightweight conditions, all must be satisfied to trigger the expensive probe):
-1. `w1_area < threshold`: the a1 non-zero winding interval is tiny (most of θ₂ has u₁ = 0)
-2. `w2_area < threshold`: same for a2 (most of θ₁ has u₂ = 0)
-3. `_check_zeros_are_clustered`: every zero has another zero within `threshold × 2π` distance on the (θ₁, θ₂)-torus
+```
+Given E, bisect μ₁ so that w1 = 0 while maintaining w2 = 0:
+  1. At each μ₁ endpoint, run the inner bisection → (μ₂, zeros, _zm).
+     Evaluate w1 via _get_average_winding_from_zeros(direction=1) from the
+     inner zeros. Adaptive range expansion until w1_low * w1_high ≤ 0.
+  2. Bisection on μ₁:
+     a. At μ₁_mid, build a fresh AmoebaZeroManager and run() it.
+     b. Inner bisection at μ₁_mid → (μ₂_mid, zeros_mid, is_continuum).
+     c. Continuum path (is_continuum=True):
+        - _resolve_continuum: perturb μ₂ ± ε → w2 limits; perturb μ₁ ± ε,
+          re-run inner bisection at each, compute w1 from the resulting
+          (μ₂, zeros) → w1 limits.
+        - w2_opposite AND w1_opposite → Ronkin minimum at a continuum
+          boundary → return is_continuum=True, zeros=[].
+        - w2_opposite but not w1_opposite → use w1 sign for bracket update.
+        - Neither → RuntimeError (the inner b2 straddle check disagrees
+          with the continuum resolution; the top-level collector turns
+          this into a failed GBZResult rather than a fake success).
+     d. Normal path (is_continuum=False):
+        - Compute w1 (and w1_area) from zeros_mid via
+          _get_average_winding_from_zeros(direction=1).
+     e. |w1_mid| < xtol or bracket < xtol → converged.
+  3. Return dict (see §3.4).
+```
 
-**Probe** (`_probe_zero_plateau_near_mu1`): step away from the candidate μ₁ in both directions; at each step, re-run the inner μ₂ bisection and check for the definitive plateau signature — w1 ≈ 0 and zero w2 crossings. If found, the result is classified as non-amoeba (empty subsets).
+### 2.7 Subset Extraction
+
+`extract_amoeba_subsets` (zm_extract.py:317) turns a solved `AmoebaZeroManager` at the critical `(μ₁, μ₂)` into structured GBZ subsets. Three modes: `'coarse'` (linear only), `'fine'`/`'solve'` (fsolve refinement, falling back to linear on failure). `collect_GBZ_subsets` uses `'solve'`.
+
+**Per-segment collection** (before MR joining):
+- Continuum tracks (mask True) → one `_LinePiece` per segment per track, carrying the full segment's `theta1_arr` and `beta2_arr` plus `ml`/`mr` = outermost segment indices spanned.
+- Non-continuum tracks → record `hits` as `(seg_idx, i, j, kind)` with `kind ∈ {'zero', 'cross'}`, deferred to a second pass for boundary dedup.
+
+**Continuum join across MRs** (`_join_continuum_across_mrs`, zm_extract.py:157): a segment boundary is an MR, but only the roots listed in `multiple_roots[mr].cluster_indices` are genuinely multiple there; every other root passes straight through. A continuum track whose endpoint root is **not** in the cluster continues into the adjacent segment on the matched track. The join:
+- Matches by root **value** (frame-independent) — works whether the boundary row is modulus-sorted (the boundary MR at $\theta_1=0$) or track-ordered (an interior MR).
+- `_is_cluster_endpoint` (zm_extract.py:127) tests whether an endpoint root value is part of the MR cluster; `mr < 0` marks the $\theta_1=0/2\pi$ circle seam (no MR there).
+- `_merge_two` (zm_extract.py:263) concatenates as `[prev, cur[1:]]` — drops the shared MR row, keeps $\theta_1$ monotonic. For the cyclic seam ($\theta_1=0 \equiv 2\pi$), `prev` is the last segment and `cur` is segment 0; the seam lands inside the array so the array's two ends fall on the real terminators.
+- Iterated to a fixpoint so chains and the cyclic seam converge. Raises `ValueError` on a topology inconsistency (a track ends as a non-cluster root in one segment but the matched track is a cluster root in the other).
+
+**PointSubset finalization** (after MR joining):
+- `_finalize_crossing` (zm_extract.py:516) turns each hit into `(θ₁, β₂)` per `mode`.
+- **Rule 1** (continuum-endpoint snap): a crossing within `snap_tol` (default `SNAP_TOL = 1e-3`) of a continuum LineSubset endpoint is dropped **only if** its `β₂` matches an in-band endpoint root within `ROOT_TOL = 1e-9` — i.e., the crossing is the line's own endpoint curve. A same-$\theta_1$ crossing on a different, unconnected root survives.
+- **Rule 2** (exact-touch dedup): `d == 0` exact touches are deduplicated by zero identity, never by $\theta_1$. `_zero_identity_key` (zm_extract.py:467) returns `(endpoint, track)`:
+  - Interior sample → unique key `('interior', id(seg), i, j)`, never deduped.
+  - Shared interior MR endpoint → `('mr', R, j)` collapses both sides.
+  - Circle boundary $\theta_1=0\equiv2\pi$ → `('circle', j_left)` (or `boundary_perm_inv[j]` on the right) folds the right end onto the left track.
+- Sign-change `'cross'` hits are always unique.
+- The `ml`/`mr` joining fields are dropped; the public GBZ output is plain `LineSubset`/`PointSubset`.
+
+### 2.8 Winding for the μ₂-Bisection
+
+`amoeba_windings` (zm_extract.py:561) is the winding source used by the $\mu_2$ bisection. It uses **RAW** crossing detection — every crossing participates in the winding integral, with no Rule 1/Rule 2 boundary filtering (those are subset-output concerns).
+
+Returns `(winding, zeros, has_continuum, dW_dmu2)`:
+- If any track is in the continuum band on any segment → `(None, None, True, None)`. The caller (`_find_mu2_for_w2_zero`) reacts by perturbing $\mu_2$.
+- Otherwise `zeros` is a list of `(θ₁, θ₂, jump)` refined (or linear, if `refine=False`) crossing pairs, `winding` is computed by `_get_average_winding_from_zeros(direction=2)`, and `dW_dmu2` is the analytical derivative when `refine=True` (else `0.0`).
+
+### 2.9 Plateau Detection
+
+At some energies (particularly near zero-plateau boundaries in next-nearest-neighbor models), the bisection may converge to a false Ronkin minimum where the winding changes sign over a vanishingly narrow angular region. The plateau check in `collect_GBZ_subsets` filters these out.
+
+**Pre-check** (three lightweight conditions, all must be satisfied to trigger the expensive probe; non-continuum case only):
+1. `w1_area < plateau_area_threshold`: the a1 non-zero winding interval is tiny.
+2. `w2_area < plateau_area_threshold`: same for a2.
+3. `_check_zeros_are_clustered`: every zero has another zero within `plateau_area_threshold × 2π` distance on the $(\theta_1, \theta_2)$-torus (thin adapter over `gbz_types.check_points_clustered_on_torus`, dropping the trailing `jump`).
+
+**Probe** (`_probe_zero_plateau_near_mu1`, amoeba.py:59): shared `gbz_types.probe_zero_plateau` driver. Steps away from the candidate $\mu_1$ in both directions; at each step, re-runs the inner $\mu_2$ bisection and tests the strict plateau signature — `success`, `not is_continuum`, `zero_count == 0`, and $|w1| \le$ `winding_tol`. If found, the result is classified as non-amoeba (empty subsets).
 
 This check is applied only in the non-continuum case. Continuum results skip plateau detection since continuum bands are genuinely part of the GBZ.
 
 ## 3. API Reference
 
-### 3.1 `get_hungarian_sorted_roots`
-
-```python
-def get_hungarian_sorted_roots(
-    char_poly: pt.CLaurent,
-    E_ref: complex,
-    mu1: float,
-    N_points: int = 301,
-) -> tuple[np.ndarray, np.ndarray, int, int]:
-```
-
-**Returns**: `(theta1_arr, tracked_roots, M, N)`
-- `theta1_arr`: (N_points,) θ₁ mesh
-- `tracked_roots`: (N_points, M+N) continuous root tracks
-- `M`: denominator order in β₂
-- `N`: max numerator degree in β₂ − M
-
-### 3.2 `get_a2_average_winding`
-
-```python
-def get_a2_average_winding(
-    char_poly: pt.CLaurent,
-    E_ref: complex,
-    mu1: float,
-    mu2: float,
-    N_points: int = 301,
-    continuum_tol: float = 1e-8,
-    min_continuum_pts: int = 3,
-) -> float:
-```
-
-**Returns**: $\partial R / \partial \mu_2$, the a2-direction average winding number.
-
-Continuum handling: when a root track stays at $|\beta_2| \approx \exp(\mu_2)$ over an extended θ₁ range, spurious crossings from numerical noise are filtered out. Callers should perturb μ₂ to resolve the ambiguity.
-
-### 3.3 `get_a1_average_winding`
-
-```python
-def get_a1_average_winding(
-    char_poly: pt.CLaurent,
-    E_ref: complex,
-    mu1: float,
-    mu2: float,
-    N_points: int = 301,
-    continuum_tol: float = 1e-8,
-    min_continuum_pts: int = 3,
-) -> float:
-```
-
-**Returns**: $\partial R / \partial \mu_1$. Reuses a2 zero points (no independent Hungarian matching needed).
-
-### 3.4 `bisect_amoeba_ronkin_min`
-
-```python
-def bisect_amoeba_ronkin_min(
-    char_poly: pt.CLaurent,
-    E_ref: complex,
-    mu1_low: float = -1,
-    mu1_high: float = 1,
-    mu2_low: float = -1,
-    mu2_high: float = 1,
-    N_points: int = 301,
-    continuum_tol: float = 1e-8,
-    min_continuum_pts: int = 3,
-    continuum_perturb: float = 1e-4,
-    max_iter: int = 60,
-    xtol: float = 1e-10,
-    max_range_expansions: int = 10,
-    range_expand_factor: float = 2.0,
-) -> dict:
-```
-
-**Returns**: `{"mu1", "mu2", "zeros", "is_continuum", "_mu1_bracket", "_w1_bracket", "_exit_reason", "_w1_area", "_tracks"}`
-
-Find the Ronkin function minimum — the $(\mu_1, \mu_2)$ satisfying w1 = w2 = 0 simultaneously. Outer bisection on μ₁, inner bisection on μ₂, with adaptive range expansion and continuum handling.
-
-Key return fields:
-- `mu1`, `mu2`: critical point where w1 = w2 = 0
-- `zeros`: list of `(θ₁, θ₂)` crossing pairs (empty `[]` when `is_continuum=True`)
-- `is_continuum`: whether the result is a continuum boundary (vs. discrete zeros)
-- `_tracks`: cached root tracks dict (passed through to avoid re-computation in `collect_GBZ_subsets`)
-- `_w1_area`: normalized non-zero interval area for w1 (plateau pre-check)
-
-### 3.5 `collect_GBZ_subsets`
+### 3.1 `collect_GBZ_subsets`
 
 ```python
 def collect_GBZ_subsets(
     coeffs: np.ndarray,
     degs: np.ndarray,
     E_ref: complex,
-    perc: float,
+    perc: float = None,
     debug_mode: bool = False,
     **options,
 ) -> GBZResult:
@@ -246,27 +222,124 @@ def collect_GBZ_subsets(
 
 **Returns**: `GBZResult` with `subsets` (list of `PointSubset | LineSubset`), `index=(n_0d, n_1d)`, and `is_gbz` / `is_empty` properties.
 
-The main entry point. Runs `bisect_amoeba_ronkin_min`, then converts the result into structured GBZ subsets:
+The main entry point. Builds a `CharPoly(coeffs, degs)`, runs `bisect_amoeba_ronkin_min`, then reuses the solved `_zm` (AmoebaZeroManager built at the converged $\mu_1$) for subset extraction via `extract_amoeba_subsets(..., mode='solve')` — no second ZM run. Plateau detection is optionally applied (non-continuum case). `debug_mode=True` re-raises exceptions instead of returning a failed `GBZResult`.
 
-- **Continuum case** (`is_continuum=True`): extracts both continuum intervals (`LineSubset`) and discrete crossings in the gaps (`PointSubset`).
-- **Discrete case** (`is_continuum=False`): converts zero pairs into `PointSubset` objects.
-- **Plateau check**: optionally probes for false Ronkin minima (zero-plateau boundaries), returning empty subsets when detected.
+**Options** (passed through `**options` to `bisect_amoeba_ronkin_min`):
 
-Key options (passed through `**options`):
 | Option | Default | Description |
 |--------|---------|-------------|
+| `mu1_low`, `mu1_high` | `-1, 1` | Initial $\mu_1$ bracket |
+| `mu2_low`, `mu2_high` | `-1, 1` | Initial $\mu_2$ bracket |
+| `N_points` | `301` | Accepted but **ignored** — the mesh is adaptive inside ZeroManager. Kept for API compatibility. |
+| `continuum_tol` | `1e-6` | Tolerance for continuum band detection (`CONTINUUM_TOL`) |
+| `min_continuum_pts` | `3` | Accepted but **ignored** — continuum is now fraction-based via `frac`. Kept for API compatibility. |
+| `continuum_perturb` | `1e-4` | $\mu_2$ / $\mu_1$ perturbation step for continuum resolution |
+| `max_iter` | `60` | Maximum bisection iterations (inner and outer) |
+| `xtol` | `1e-10` | Convergence tolerance |
+| `max_range_expansions` | `10` | Maximum adaptive range expansions |
+| `range_expand_factor` | `2.0` | Multiplicative range expansion factor |
+| `frac` | `CONTINUUM_FRAC` (0.9) | Continuum fraction threshold |
 | `plateau_check` | `True` | Enable zero-plateau detection |
 | `plateau_winding_tol` | `None` | w1 tolerance for plateau probe (default: `max(xtol, 1e-10)`) |
 | `plateau_probe_radius` | `None` | Step size for plateau probe (default: `continuum_perturb`) |
 | `plateau_area_threshold` | `1e-2` | Threshold for pre-check winding area and zero clustering |
-| `N_points` | `301` | θ₁ mesh resolution |
-| `continuum_tol` | `1e-8` | Tolerance for continuum band detection |
-| `min_continuum_pts` | `3` | Minimum mesh points for a valid continuum interval |
-| `continuum_perturb` | `1e-4` | Perturbation step for continuum resolution |
-| `max_iter` | `60` | Maximum bisection iterations |
-| `xtol` | `1e-10` | Convergence tolerance |
-| `mu1_low`, `mu1_high` | `-1, 1` | Initial μ₁ bracket |
-| `mu2_low`, `mu2_high` | `-1, 1` | Initial μ₂ bracket |
+| `zm_run_kwargs` | `{}` | Keyword arguments forwarded to `ZeroManager.run()` (e.g. `h0`, `ctrl`, `min_dtheta`, `cluster_tol`, `mr_jump`, `verbose`). Kept separate from the bisection options, which `ZeroManager.run` does not accept. |
+
+### 3.2 `bisect_amoeba_ronkin_min`
+
+```python
+def bisect_amoeba_ronkin_min(
+    char_poly: CharPoly,
+    E_ref: complex,
+    mu1_low: float = -1,
+    mu1_high: float = 1,
+    mu2_low: float = -1,
+    mu2_high: float = 1,
+    N_points: int = 301,
+    continuum_tol: float = 1e-6,
+    min_continuum_pts: int = 3,
+    continuum_perturb: float = 1e-4,
+    max_iter: int = 60,
+    xtol: float = 1e-10,
+    max_range_expansions: int = 10,
+    range_expand_factor: float = 2.0,
+    frac: float = CONTINUUM_FRAC,
+    zm_run_kwargs: Optional[dict] = None,
+) -> dict:
+```
+
+Find the Ronkin function minimum — the $(\mu_1, \mu_2)$ satisfying $w_1 = w_2 = 0$ simultaneously. Outer bisection on $\mu_1$, inner bisection on $\mu_2$, with adaptive range expansion and continuum handling.
+
+**Returns** a dict with keys:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `mu1` | `float` | Critical $\mu_1$ where $w_1 = 0$ |
+| `mu2` | `float` | Critical $\mu_2$ where $w_2 = 0$ |
+| `zeros` | `list[(θ₁, θ₂, jump)]` | Crossing pairs at the critical point; `[]` when `is_continuum=True` |
+| `is_continuum` | `bool` | Whether the result is a continuum boundary (vs. discrete zeros) |
+| `_mu1_bracket` | `(float, float)` | Final $\mu_1$ bisection bracket (consumed by the plateau probe) |
+| `_w1_bracket` | `(float, float)` | Final $w_1$ bracket |
+| `_exit_reason` | `str` | `"w1_zero"`, `"bracket_xtol"`, or `"continuum_boundary"` |
+| `_w1_area` | `float` | Normalized non-zero interval area for $w_1$ (plateau pre-check). Present only in the non-continuum path. |
+| `_zm` | `AmoebaZeroManager` | The ZM built at the solved $\mu_1$ — reused by `collect_GBZ_subsets` for subset extraction (no second run). |
+
+Note: `_w2_area` is **not** returned; only `_w1_area` is. (The $w_2$ area is computed on demand in `collect_GBZ_subsets` only when the pre-check fires.)
+
+### 3.3 `extract_amoeba_subsets`
+
+```python
+def extract_amoeba_subsets(
+    zm: AmoebaZeroManager,
+    poly: CharPoly,
+    E: complex,
+    mu1: float,
+    mu2: float,
+    *,
+    mode: ExtractMode = 'solve',
+    tol: float = CONTINUUM_TOL,
+    frac: float = CONTINUUM_FRAC,
+    snap_tol: float = SNAP_TOL,
+) -> list:
+```
+
+Build GBZ subsets at $\ln|\beta_1|=\mu_1$, $\ln|\beta_2|=\mu_2$ from a solved ZM's tracks. `mode ∈ {'coarse', 'fine', 'solve'}`; `collect_GBZ_subsets` uses `'solve'`. Returns a `list[PointSubset | LineSubset]`. See §2.7 for the full algorithm.
+
+### 3.4 `amoeba_windings`
+
+```python
+def amoeba_windings(
+    zm: AmoebaZeroManager,
+    poly: CharPoly,
+    E: complex,
+    mu1: float,
+    mu2: float,
+    *,
+    tol: float = CONTINUUM_TOL,
+    frac: float = CONTINUUM_FRAC,
+    refine: bool = True,
+) -> tuple[Optional[float], Optional[list], bool, Optional[float]]:
+```
+
+Returns `(winding, zeros, has_continuum, dW_dmu2)`:
+- `winding`: w2 average winding number; `None` when a continuum is present.
+- `zeros`: list of `(θ₁, θ₂, jump)`; `None` when a continuum is present.
+- `has_continuum`: whether any track is in the $\mu_2$ band over a whole segment.
+- `dW_dmu2`: analytical derivative $dW/d\mu_2$; `0.0` when `refine=False` or no crossings; `None` when a continuum is present.
+
+Uses RAW crossing detection — no Rule 1/Rule 2 boundary filtering. See §2.8.
+
+### 3.5 `AmoebaZeroManager`
+
+```python
+class AmoebaZeroManager(ZeroManager):
+    seg_logabs: list[np.ndarray]
+
+    def __init__(self, poly: CharPoly, E_ref: complex, mu1: float): ...
+    def run(self, **kwargs) -> None: ...
+```
+
+`ZeroManager` specialization caching per-segment `ln|β₂|`. After `.run()`, `seg_logabs[s]` has shape `(N_s, K) = np.log(np.abs(segments[s].tracked_roots))`. `run()` forwards `**kwargs` to `ZeroManager.run` (e.g. `h0`, `ctrl`, `min_dtheta`, `cluster_tol`, `mr_jump`, `verbose` via `zm_run_kwargs`), then recomputes the cache unconditionally (re-run resets segments).
 
 ## 4. CLaurent Polynomial Format
 
@@ -289,65 +362,71 @@ coeffs.append(-1.0);  degs.extend([ 0,  0, -1])   # -beta2^{-1}
 
 ## 5. Internal Functions
 
-### Root tracking
+### Ronkin winding primitives (`ronkin_winding.py`)
 
-| Function | File | Purpose |
-|----------|------|---------|
-| `get_hungarian_sorted_roots` | `tracks.py` | Hungarian-matched root tracks across θ₁ mesh → `(θ₁_arr, tracked, M, N)` |
-| `_compute_root_tracks` | `tracks.py` | Extends `get_hungarian_sorted_roots` with periodic boundary handling, pre-computed `ln|β₂|`, and `PolyDiffContext` → tracks dict |
+| Function | Purpose |
+|----------|---------|
+| `_find_exact_crossing` | `fsolve` + analytical Jacobian to refine a single $(\theta_1, \theta_2)$ crossing; returns `None` on non-convergence (residual ≥ 1e-10) |
+| `_get_average_winding_from_zeros` | Unified winding from a zero partition — partitions the angular circle in the direction-d variable, sums $u \times \text{width} / (2\pi)$. Returns `(avg_winding, non_zero_area)`. |
+| `_compute_zero_dtheta1_dmu2` | Analytical $d\theta_1/d\mu_2$ at a refined zero (2×2 Cramer's rule). Returns `0.0` when the determinant is near-singular. |
 
-### Winding computation
+### ZeroManager integration and extraction (`zm_extract.py`)
 
-| Function | File | Purpose |
-|----------|------|---------|
-| `_find_exact_crossing` | `ronkin_winding.py` | `fsolve` + analytical Jacobian to refine a single (θ₁, θ₂) crossing |
-| `_compute_zero_dtheta1_dmu2` | `ronkin_winding.py` | Solve dθ₁/dμ₂ at a refined zero (2×2 Cramer's rule) |
-| `_get_average_winding_from_zeros` | `ronkin_winding.py` | Unified winding: partitions angular circle by zeros, sums u×width/(2π) |
-| `_compute_winding_from_tracks` | `ronkin_winding.py` | Detect crossings + continuum + w2 + dW/dμ₂ from pre-computed tracks |
-| `_compute_crossings_and_winding` | `ronkin_winding.py` | Thin wrapper: `_compute_root_tracks` → `_compute_winding_from_tracks` |
-| `get_a2_average_winding` | `ronkin_winding.py` | Public API for w2 (μ₂-derivative of Ronkin function) |
-| `get_a1_average_winding` | `ronkin_winding.py` | Public API for w1 (μ₁-derivative, reuses a2 zeros) |
+| Function | Purpose |
+|----------|---------|
+| `AmoebaZeroManager` | `ZeroManager` subclass caching `seg_logabs` per segment. |
+| `_continuum_mask` | Per-segment boolean mask: track is continuum when fraction of in-band samples `> frac`. |
+| `extract_amoeba_subsets` | Full GBZ subset output (LineSubset + PointSubset) with Rule 1/Rule 2 boundary dedup. |
+| `_finalize_crossing` | Turn a recorded hit into `(θ₁, β₂)` per `mode` (linear / fsolve-refined). |
+| `_zero_identity_key` | Identity key for exact-touch dedup: `(endpoint, track)`, never `θ₁`. |
+| `_is_cluster_endpoint` | Whether an endpoint root value is part of the boundary MR cluster (frame-independent value match). |
+| `_join_continuum_across_mrs` | Join per-segment continuum LineSubsets passing through MRs as non-cluster roots; iterated to fixpoint. |
+| `_merge_two` | Concatenate two `_LinePiece`s, dropping the shared MR row; cyclic-seam variant puts the seam inside the array. |
+| `_LinePiece` | Per-segment continuum LineSubset being joined; carries `ml`/`mr` (outermost segment indices spanned). |
+| `amoeba_windings` | RAW w2 winding + zeros + `dW/dμ₂` for the $\mu_2$ bisection. |
+| `_crossing_thetas` | `(θ₁, θ₂)` for a winding crossing, linear or refined. |
 
-### Bisection
+### Bisection (`bisect.py`)
 
-| Function | File | Purpose |
-|----------|------|---------|
-| `_refine_and_correct` | `bisect.py` | Post-bisection refinement: fsolve zeros + analytical Newton correction on μ₂ |
-| `_find_mu2_for_w2_zero` | `bisect.py` | Inner μ₂ bisection: adaptive range expansion, lazy refinement, continuum handling |
-| `_resolve_continuum` | `bisect.py` | Resolve continuum point: w2 limits (μ₂ ± ε) and w1 limits (μ₁ ± ε, re-run inner bisection) |
-| `bisect_amoeba_ronkin_min` | `bisect.py` | Outer μ₁ bisection for Ronkin minimum (w1 = w2 = 0) |
+| Function | Purpose |
+|----------|---------|
+| `_find_mu2_for_w2_zero` | Inner $\mu_2$ bisection: builds (or accepts) the ZM, adaptive range expansion, lazy refinement, continuum handling. |
+| `_refine_and_correct` | Post-bisection refinement: fsolve zeros + analytical Newton correction on $\mu_2$. |
+| `_resolve_continuum` | Resolve a continuum point: w2 limits ($\mu_2 \pm \varepsilon$) and w1 limits ($\mu_1 \pm \varepsilon$, re-run inner bisection). |
+| `bisect_amoeba_ronkin_min` | Outer $\mu_1$ bisection for the Ronkin minimum ($w_1 = w_2 = 0$). |
 
-### Subset collection and plateau detection
+### Plateau detection (`amoeba.py`)
 
-| Function | File | Purpose |
-|----------|------|---------|
-| `collect_GBZ_subsets` | `amoeba.py` | Main entry point: bisection → GBZ subsets (PointSubset + LineSubset) |
-| `_extract_continuum_intervals` | `amoeba.py` | Extract continuum θ₁ intervals from root tracks for LineSubset creation |
-| `_detect_crossings_outside_continuum` | `amoeba.py` | Detect and refine discrete crossings in non-continuum θ₁ gaps for PointSubset creation |
-| `_check_zeros_are_clustered` | `amoeba.py` | Plateau pre-check: test whether all zeros are near-degenerate pairs |
-| `_is_zero_plateau_probe` | `amoeba.py` | Plateau probe criterion: w1≈0, no w2 crossings, not continuum |
-| `_probe_zero_plateau_near_mu1` | `amoeba.py` | Walk away from candidate μ₁, re-run inner bisection at each step |
+| Function | Purpose |
+|----------|---------|
+| `_check_zeros_are_clustered` | Thin adapter over `gbz_types.check_points_clustered_on_torus` (drops the trailing `jump`). |
+| `_is_zero_plateau_probe` | Plateau probe criterion: `success`, `not is_continuum`, `zero_count == 0`, $|w_1| \le$ tol. |
+| `_probe_zero_plateau_near_mu1` | Walk away from candidate $\mu_1$, re-run inner bisection at each step; uses shared `gbz_types.probe_zero_plateau`. |
 
 ### Shared utilities (from `gbz_types`)
 
 | Function | Purpose |
 |----------|---------|
-| `get_minor_degrees` | Extract (M, N) for a given direction from the characteristic polynomial |
+| `get_minor_degrees` | Extract `(M, N)` for a given direction from the characteristic polynomial |
 | `find_cyclic_true_intervals` | Find contiguous True intervals in a cyclic boolean array |
 | `sort_by_root_abs` | Sort complex roots by modulus |
 | `hungarian_match_indices` | Hungarian matching (linear sum assignment) with chordal distance cost |
 | `generate_probe_steps` | Generate sorted probe step sizes for plateau detection |
+| `check_points_clustered_on_torus` | Plateau pre-check: test whether all points are near-degenerate pairs |
+| `probe_zero_plateau` | Shared plateau-probe driver loop |
 
 ## 6. Package Structure
 
 ```
 brute_force_amoeba/
-├── __init__.py            # Public API exports (8 symbols)
-├── amoeba.py              # Main entry: collect_GBZ_subsets, plateau detection, continuum+crossing extraction
-├── bisect.py              # μ₂ and μ₁ bisection solvers, continuum resolution
-├── ronkin_winding.py      # Winding number computation, zero-crossing detection, fsolve refinement
-└── tracks.py              # Hungarian-matched root tracking across θ₁ mesh
+├── __init__.py            # Public API exports (10 symbols)
+├── amoeba.py              # 240 lines — collect_GBZ_subsets, plateau detection
+├── bisect.py              # 541 lines — μ₂ and μ₁ bisection solvers, continuum resolution
+├── ronkin_winding.py      # 188 lines — winding primitives (fsolve refinement, zero partition, dθ₁/dμ₂)
+└── zm_extract.py          # 678 lines — AmoebaZeroManager, subset extraction, amoeba_windings
 ```
+
+Public API (`__init__.py`): `CharPoly`, `bisect_amoeba_ronkin_min`, `AmoebaZeroManager`, `extract_amoeba_subsets`, `amoeba_windings`, `collect_GBZ_subsets`, `PointSubset`, `LineSubset`, `GBZResult`, `ConnectedSubset`.
 
 ## 7. Demo
 

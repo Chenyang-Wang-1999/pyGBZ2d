@@ -490,12 +490,21 @@ def bisect_amoeba_ronkin_min(
                     w1_low = w1_proxy
                 continue
 
-            # w2 limits not opposite or w1 not resolved — should not
-            # happen here (inner bisection already confirmed a2 opposite
-            # via w_left * w_right < 0).  Fall through to normal path
-            # as a safety measure.
-            zeros_mid = []
-            w1_mid = resolved.get("w1_left", 0.0)
+            # _resolve_continuum could not pin down the w1 sign at this
+            # continuum: either w2 itself did not straddle zero, or every
+            # mu1-perturbation scale stayed inside the continuum band
+            # (resolved["w1_left"] is None in both).  This should not happen
+            # in a well-conditioned bisection — the inner mu2 bisection
+            # already confirmed a2 opposite via w_left * w_right < 0.  A
+            # silent 0.0 here would be mistaken for a converged Ronkin
+            # minimum, so raise instead (the top-level collect_GBZ_subsets
+            # turns this into a failed GBZResult, not a fake success).
+            raise RuntimeError(
+                f"Continuum at mu1={mu1_mid:.8g} could not be resolved: "
+                f"w1_resolved=False, w2_opposite={resolved['w2_opposite']}, "
+                f"w1_left={resolved['w1_left']}. The bisection's inner "
+                f"w2 straddle check and the continuum resolution disagree."
+            )
         else:
             # ---- normal (non-continuum) path ----
             zeros_mid = inner_mid["zeros"]

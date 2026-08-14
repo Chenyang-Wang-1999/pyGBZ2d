@@ -66,6 +66,28 @@ CONTINUUM_TOL = 1e-6
 # points; 0.9 separates them, with a warning on a near-threshold pass).
 CONTINUUM_FRAC = 0.9
 
+# Clamp band for ln|β₂|.  Roots at 0 or ∞ (e.g. the 0/∞ padding roots
+# ``CharPoly.solve_roots_1d`` appends to a degree-deficient 1-D polynomial,
+# or an interior root hitting 0/∞) would make ``np.log|β|`` = ±∞, and the
+# boundary-pair mean μ₂_mid = (ln|β_{j_lo}| + ln|β_{j_hi}|)/2 would go ±∞,
+# overflowing the winding loop (β₂ = exp(±∞+iθ₂)) and corrupting the
+# track-vs-μ₂_mid comparison in crossing detection.  Clamp to ±14 — |β| ∈
+# [e⁻¹⁴, e¹⁴] ≈ [1.2e-6, 1.2e6], aligned with arclength.ZERO_THRESHOLD /
+# INF_THRESHOLD (1e-6 / 1e6).  A 0/∞ boundary root's ln|β| becomes the band
+# edge, so μ₂_mid is the mean of the band edge and the other (finite) root's
+# ln|β| — a finite, honest "the boundary ran to the band edge" value.
+_LOGABS_CLAMP_L = 14.0
+
+
+def logabs_clamped(roots: np.ndarray) -> np.ndarray:
+    """``np.log(np.abs(roots))`` with ±∞ clamped to ``±_LOGABS_CLAMP_L``.
+
+    All SGBZ μ₂_mid / crossing consumers must read ln|β₂| through this so a
+    0/∞ root never propagates ±∞ into μ₂_mid (and from there into the winding
+    loop or the track-vs-μ₂_mid sign checks).  See ``_LOGABS_CLAMP_L``.
+    """
+    return np.clip(np.log(np.abs(roots)), -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
+
 
 # ---------------------------------------------------------------------------
 # Cubic Hermite helpers (shared with crossings.py)
@@ -352,7 +374,7 @@ class Mu2MidZM(ZeroManager):
             if N == 0:
                 clusters_per_seg.append([])
                 continue
-            logabs = np.log(np.abs(seg.tracked_roots))  # (N, K)
+            logabs = logabs_clamped(seg.tracked_roots)  # (N, K)
             same = np.zeros((K, K), dtype=bool)
             for j in range(K):
                 for k in range(j + 1, K):
@@ -395,7 +417,7 @@ class Mu2MidZM(ZeroManager):
                     np.array([], dtype=int), np.array([], dtype=int),
                 ))
                 continue
-            logabs = np.log(np.abs(seg.tracked_roots))  # (N, K)
+            logabs = logabs_clamped(seg.tracked_roots)  # (N, K)
             if seg.tangents is not None:
                 tang_re = seg.tangents.real  # (N, K)
             else:
@@ -644,7 +666,7 @@ class Mu2MidZM(ZeroManager):
                 return None
 
             h = theta_hi - theta_lo
-            logabs = np.log(np.abs(seg.tracked_roots))
+            logabs = logabs_clamped(seg.tracked_roots)
             v0 = float(logabs[i, a] - logabs[i, b])
             v1 = float(logabs[i + 1, a] - logabs[i + 1, b])
 
@@ -705,7 +727,7 @@ class Mu2MidZM(ZeroManager):
             # true f_pred and true direction sign (from the inserted row's
             # tangent — more accurate than the cubic approximation).
             seg = self.segments[si]
-            logabs = np.log(np.abs(seg.tracked_roots))
+            logabs = logabs_clamped(seg.tracked_roots)
             f_pred = float(logabs[insert_at, a] - logabs[insert_at, b])
             if seg.tangents is not None:
                 f_prime = float(seg.tangents[insert_at, a].real

@@ -6,12 +6,11 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 
 from typing import Optional
 import numpy as np
-from math import pi, sqrt
 from cmath import exp
 
 from gbz_types import (
     PointSubset, LineSubset, GBZResult, CharPoly,
-    generate_probe_steps,
+    check_points_clustered_on_torus, probe_zero_plateau,
 )
 
 from .bisect import (
@@ -29,46 +28,21 @@ def _check_zeros_are_clustered(
     zeros: list[tuple[float, float, int]],
     tol_normalized: float,
 ) -> bool:
-    """Check whether every zero has another zero within tol_normalized distance.
+    """Whether every amoeba zero has a neighbour within *tol_normalized*.
 
-    Each zero is a 3-tuple (θ₁, θ₂, jump);
-    only the first two components are used.
-
-    Distance is the Euclidean metric on the (θ₁, θ₂)-torus [0, 2π)²,
-    normalized by 2π so that the full torus diagonal is √2.
+    Thin amoeba adapter over
+    :func:`gbz_types.check_points_clustered_on_torus`: amoeba zeros carry a
+    trailing ``jump`` component, so only the first two are forwarded as
+    ``(θ₁, θ₂)``.
 
     At a genuine GBZ point zeros are well-separated (they partition the
     circle into meaningful segments).  At a zero-plateau boundary the
     winding changes sign over a vanishingly narrow angular region, so
     the zeros cluster into nearly degenerate pairs — each zero sits
     within tol_normalized of a neighbour.
-
-    Returns False when any zero is isolated (no neighbour within the
-    threshold), which rules out a plateau and allows the caller to skip
-    expensive probing.
     """
-    if len(zeros) < 2:
-        return False
-    # Convert normalized tolerance back to radians
-    tol_rad = tol_normalized * (2 * pi)
-    for i in range(len(zeros)):
-        t1_i, t2_i = zeros[i][0], zeros[i][1]
-        has_neighbor = False
-        for j in range(len(zeros)):
-            if i == j:
-                continue
-            t1_j, t2_j = zeros[j][0], zeros[j][1]
-            # Torus distance in each angular dimension
-            d1 = abs(t1_i - t1_j)
-            d1 = min(d1, 2 * pi - d1)
-            d2 = abs(t2_i - t2_j)
-            d2 = min(d2, 2 * pi - d2)
-            if sqrt(d1 * d1 + d2 * d2) < tol_rad:
-                has_neighbor = True
-                break
-        if not has_neighbor:
-            return False
-    return True
+    points = [(z[0], z[1]) for z in zeros]
+    return check_points_clustered_on_torus(points, tol_normalized)
 
 
 # ---- plateau detection ----
@@ -114,76 +88,41 @@ def _probe_zero_plateau_near_mu1(
     if mu1_bracket is not None:
         bracket_width = abs(float(mu1_bracket[1]) - float(mu1_bracket[0]))
 
-    steps = generate_probe_steps(bracket_width, probe_radius, winding_tol)
+    def evaluator(mu1_probe: float) -> dict:
+        inner = _find_mu2_for_w2_zero(
+            char_poly, E_ref, mu1_probe, mu2_low, mu2_high, N_points=N_points,
+            continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
+            continuum_perturb=continuum_perturb, max_iter=max_iter,
+            xtol=xtol, max_range_expansions=max_range_expansions,
+            range_expand_factor=range_expand_factor,
+        )
+        zeros_probe = inner.get("zeros") or []
+        w1, _ = _get_average_winding_from_zeros(
+            char_poly, E_ref, mu1_probe, inner["mu2"],
+            zeros_probe, direction=1,
+        )
+        point = {
+            "success": True,
+            "mu2": inner["mu2"],
+            "w1": float(w1),
+            "zero_count": len(zeros_probe),
+            "is_continuum": bool(inner["is_continuum"]),
+        }
+        # Collapse the amoeba-specific criterion to the one bool the shared
+        # loop reads; keep the raw fields for diagnostics.
+        point["is_plateau"] = _is_zero_plateau_probe(point, winding_tol)
+        return point
 
-    probe_points = []
-    found_plateau = False
-    saw_left_nonplateau = False
-    saw_right_nonplateau = False
-
-    for step in steps:
-        for side in (-1, 1):
-            mu1_probe = mu1 + side * step
-            point = {
-                "mu1": mu1_probe,
-                "side": side,
-                "step": step,
-                "success": False,
-            }
-            inner = _find_mu2_for_w2_zero(
-                char_poly, E_ref, mu1_probe, mu2_low, mu2_high, N_points=N_points,
-                continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
-                continuum_perturb=continuum_perturb, max_iter=max_iter,
-                xtol=xtol, max_range_expansions=max_range_expansions,
-                range_expand_factor=range_expand_factor,
-            )
-            zeros_probe = inner.get("zeros") or []
-            w1, _ = _get_average_winding_from_zeros(
-                char_poly, E_ref, mu1_probe, inner["mu2"],
-                zeros_probe, direction=1,
-            )
-            point.update({
-                "success": True,
-                "mu2": inner["mu2"],
-                "w1": float(w1),
-                "zero_count": len(zeros_probe),
-                "is_continuum": bool(inner["is_continuum"]),
-            })
-            if _is_zero_plateau_probe(point, winding_tol):
-                found_plateau = True
-            elif point["success"] and (not point["is_continuum"]):
-                if side < 0:
-                    saw_left_nonplateau = True
-                else:
-                    saw_right_nonplateau = True
-            probe_points.append(point)
-            if found_plateau:
-                return {
-                    "status": "found",
-                    "found": True,
-                    "winding_tol": winding_tol,
-                    "probe_radius": probe_radius,
-                    "bracket_width": bracket_width,
-                    "steps": steps,
-                    "points": probe_points,
-                }
-
-    if found_plateau:
-        status = "found"
-    elif saw_left_nonplateau and saw_right_nonplateau:
-        status = "not_found"
-    else:
-        status = "inconclusive"
-
-    return {
-        "status": status,
-        "found": found_plateau,
-        "winding_tol": winding_tol,
-        "probe_radius": probe_radius,
-        "bracket_width": bracket_width,
-        "steps": steps,
-        "points": probe_points,
-    }
+    res = probe_zero_plateau(
+        mu1, mu1_bracket,
+        zero_tol=winding_tol,
+        probe_radius=probe_radius,
+        bracket_width=bracket_width,
+        evaluator=evaluator,
+    )
+    # Back-compat alias: amoeba diagnostics historically read ``winding_tol``.
+    res["winding_tol"] = winding_tol
+    return res
 
 
 # ---- main entry point ----

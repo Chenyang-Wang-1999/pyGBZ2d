@@ -79,6 +79,26 @@ arguably a false positive that produced the right `is_continuum` marker.
 - (B) add W-jump detection in the bisection + refine to the exact continuum;
 - (C) accept 0D-near-boundary, update the test expectation.
 
+## Resolution note (2026-08-13, post-review)
+
+`test_inside_spectrum_is_continuum` now PASSES and the continuum
+LineSubsets ARE materialized (`extract_continuum_linesubsets` is live, not
+TODO). The test was rewritten to assert the materialized output directly:
+2 `LineSubset`s, `mu1 == γ₁` (abs 2e-3), `|β₂| == exp(γ₂)` along each line,
+plus a direct `extract_continuum_linesubsets` unit test.
+
+**This does not refute the "Blocked" root-cause analysis above.** The
+bisection still detects the continuum via the left/right-winding-limit
+straddle path at `mu1 = γ₁ − 7.45e-9` — i.e. inside the `eps ~ 1e-8`
+regime the "Blocked" section flags as non-physical (gap 5e5× jump over ~14×
+in eps). The rewritten test documents this in its docstring and keeps the
+2e-3 tolerance wide enough to cover the offset without accepting a wrong
+magnitude. The underlying ZeroManager root-solver instability near the
+degenerate continuum (the "Blocked" section) remains **open** — grouped
+with the continuation `df_dbeta2 == 0` exact-zero check, the false-positive-
+MR duplicate-θ₁ row, and the `mu2_mid` 0/∞ root truncation as a single
+suspended stability pass to be addressed together.
+
 ## Known performance issue (not addressed)
 
 Each `collect_GBZ_subsets` continuum-boundary call is ~230s — `_resolve_continuum_winding`

@@ -486,3 +486,137 @@ def circ_dist(a: float, b: float) -> float:
     """
     d = abs(a - b) % (2 * math.pi)
     return min(d, 2 * math.pi - d)
+
+
+# ---------------------------------------------------------------------------
+# Zero-plateau detection (shared by SGBZ and Amoeba)
+# ---------------------------------------------------------------------------
+#
+# A zero-plateau boundary sits at the edge of the spectrum: the winding
+# changes sign over a vanishingly narrow angular region, so the GBZ points
+# cluster into nearly degenerate pairs rather than partitioning the circle.
+# Both modules detect this the same way — a torus-distance clustering
+# pre-check, then a geometric probe ladder in mu1 ± step — differing only in
+# how a single probe is *evaluated* (amoeba: mu2 bisection + Ronkin winding;
+# SGBZ: ZeroManager build + crossing winding).  The loop and the
+# classification are module-agnostic, so they live here.
+
+def check_points_clustered_on_torus(
+    points: list[tuple[float, float]],
+    tol_normalized: float,
+) -> bool:
+    """Whether every (θ₁, θ₂) point has a neighbour within *tol_normalized*.
+
+    Distance is the Euclidean metric on the (θ₁, θ₂)-torus ``[0, 2π)²``,
+    normalized by ``2π`` so the full torus diagonal is ``√2``.  At a genuine
+    GBZ point the points are well-separated (they partition the circle into
+    meaningful segments); at a zero-plateau boundary they cluster into nearly
+    degenerate pairs, each within *tol_normalized* of a neighbour.
+
+    Returns ``False`` when any point is isolated (no neighbour within the
+    threshold), which rules out a plateau and lets the caller skip the
+    expensive probe.  ``tol_normalized`` is in units of the torus period
+    (i.e. ``1.0`` = one full ``2π`` circle).
+
+    Parameters:
+        points: list of ``(theta1, theta2)`` in radians.
+        tol_normalized: neighbour threshold, in units of ``2π``.
+    """
+    if len(points) < 2:
+        return False
+    tol_rad = tol_normalized * (2 * math.pi)
+    for i, (t1_i, t2_i) in enumerate(points):
+        has_neighbor = False
+        for j, (t1_j, t2_j) in enumerate(points):
+            if i == j:
+                continue
+            d1 = circ_dist(t1_i, t1_j)
+            d2 = circ_dist(t2_i, t2_j)
+            if math.sqrt(d1 * d1 + d2 * d2) < tol_rad:
+                has_neighbor = True
+                break
+        if not has_neighbor:
+            return False
+    return True
+
+
+def probe_zero_plateau(
+    mu1: float,
+    mu1_bracket: Optional[tuple[float, float]],
+    *,
+    zero_tol: float,
+    probe_radius: Optional[float],
+    bracket_width: Optional[float],
+    evaluator,
+) -> dict:
+    """Geometric probe ladder checking ``mu1 ± step`` for a zero plateau.
+
+    Walks outward in ``±step`` over the ladder from
+    :func:`generate_probe_steps`.  A plateau is declared as soon as one probe
+    is a plateau point.  *evaluator* is a callable ``mu1_probe -> dict`` whose
+    return carries the module-specific probe; the shared loop reads only:
+
+      * ``success`` (bool) — the probe completed.
+      * ``is_continuum`` (bool) — the probe landed on a continuum (undefined
+        winding, neither plateau nor ordinary GBZ).
+      * ``is_plateau`` (bool) — the module-specific plateau criterion already
+        collapsed to one boolean (empty GBZ + zero winding, however the
+        module defines "winding" / "GBZ count").
+
+    Both sides of a step are probed before the plateau check, so the returned
+    ``points`` are symmetric and the left/right non-plateau bookkeeping is
+    correct.
+
+    Returns a dict with ``found`` (bool), ``status``
+    (``"found"``/``"not_found"``/``"inconclusive"``), ``steps``, and the
+    per-probe ``points`` list.
+    """
+    steps = generate_probe_steps(
+        float(bracket_width or 0.0),
+        float(probe_radius or 0.0),
+        zero_tol,
+    )
+    probe_points: list[dict] = []
+    found_plateau = False
+    saw_left_nonplateau = False
+    saw_right_nonplateau = False
+
+    for step in steps:
+        for side in (-1, 1):
+            mu1_probe = mu1 + side * step
+            point = {"mu1": mu1_probe, "side": side, "step": step}
+            point.update(evaluator(mu1_probe))
+            probe_points.append(point)
+            if point.get("is_plateau"):
+                found_plateau = True
+            elif point.get("success") and not point.get("is_continuum"):
+                if side < 0:
+                    saw_left_nonplateau = True
+                else:
+                    saw_right_nonplateau = True
+        if found_plateau:
+            return {
+                "status": "found",
+                "found": True,
+                "zero_tol": zero_tol,
+                "probe_radius": probe_radius,
+                "bracket_width": float(bracket_width or 0.0),
+                "steps": steps,
+                "points": probe_points,
+            }
+
+    if found_plateau:
+        status = "found"
+    elif saw_left_nonplateau and saw_right_nonplateau:
+        status = "not_found"
+    else:
+        status = "inconclusive"
+    return {
+        "status": status,
+        "found": found_plateau,
+        "zero_tol": zero_tol,
+        "probe_radius": probe_radius,
+        "bracket_width": float(bracket_width or 0.0),
+        "steps": steps,
+        "points": probe_points,
+    }

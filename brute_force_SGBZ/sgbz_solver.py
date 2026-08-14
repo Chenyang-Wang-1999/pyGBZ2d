@@ -10,7 +10,7 @@ number ``W(E_ref, mu1)`` vanishes, via bracket expansion + plain midpoint
 bisection with continuum interception.  When a continuum-degenerate
 ``mu1`` is encountered, the left/right winding limits are resolved by
 ``mu1`` perturbation; if they straddle zero that ``mu1`` IS the SGBZ
-boundary (a 1D LineSubset case — subset materialization is TODO).
+boundary (a 1D LineSubset case — materialized by ``extract_continuum_linesubsets``).
 
 Entry point: :func:`collect_GBZ_subsets`.
 '''
@@ -164,9 +164,9 @@ def solve_SGBZ_for_E(
     Uses bracket expansion + plain bisection (midpoint).  When a
     continuum-degenerate mu1 is encountered, ``_resolve_continuum_winding``
     resolves the left/right winding limits; if they straddle zero that mu1
-    is the SGBZ boundary (``is_continuum=True``) and the result is returned
-    immediately — the 1D LineSubset materialization is TODO, so ``subsets``
-    is ``None`` (the caller signals "in spectrum, subsets TODO").
+    is the SGBZ boundary (``is_continuum=True``) and the 1D LineSubsets are
+    materialized (``extract_continuum_linesubsets``) from the built ZM; the
+    returned ``subsets`` carries them (the caller signals "in spectrum").
 
     Plain bisection is chosen over false-position methods because the
     winding has flat plateaus (±1) with a narrow transition zone;
@@ -407,8 +407,8 @@ def collect_GBZ_subsets(
     Returns:
         GBZResult with connected subsets.  ``gbz.is_empty`` / ``gbz.index
         == (0,0)`` (without ``is_continuum``) means E_ref is outside the
-        SGBZ spectrum.  ``gbz.is_continuum`` means in-spectrum but LineSubset
-        extraction is TODO.
+        SGBZ spectrum.  ``gbz.is_continuum`` means in-spectrum; the
+        LineSubsets are materialized in ``subsets`` (``index == (0, n_1d)``).
     """
     if perc is not None:
         print("%.2f" % (perc * 100) + r"%")

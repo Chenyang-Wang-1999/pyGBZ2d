@@ -631,9 +631,14 @@ class ZeroManager:
             )
 
         # Sanity: completed or boundary-MR must have set boundary_perm.
-        assert boundary_perm_set, (
-            "ZeroManager loop exited without setting boundary_perm"
-        )
+        # A raise (not assert) so it survives `python -O` — a half-built
+        # topology here would otherwise AttributeError downstream on
+        # self.boundary_perm.
+        if not boundary_perm_set:
+            raise RuntimeError(
+                "ZeroManager loop exited without setting boundary_perm "
+                "(neither completed nor boundary-MR was reached)"
+            )
 
     @property
     def n_multiple_roots(self) -> int:
