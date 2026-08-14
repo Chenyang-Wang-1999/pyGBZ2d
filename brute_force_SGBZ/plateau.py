@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 import cmath
+import warnings
 from typing import Optional
 
 import numpy as np
@@ -25,9 +26,8 @@ from gbz_types import (
     CharPoly, GBZResult, PointSubset,
     check_points_clustered_on_torus, probe_zero_plateau,
 )
-from continuation import ZeroManager
 
-from .continuum_lines import detect_continuum_simple
+from .mu2mid import Mu2MidZM
 from .winding import detect_crossings_and_winding
 
 
@@ -67,44 +67,46 @@ def _evaluate_probe(
     zm_run_kwargs: dict,
     *,
     continuum_tol: float,
-    dV_tol: float,
-    vote_frac: float,
     crossing_tol: float,
-    detect_threshold: float,
     max_newton: int,
-    dedup_tol: float,
 ) -> dict:
-    """Build a ZeroManager at (E_ref, mu1) and evaluate the winding + subset count.
+    """Build ONE Mu2MidZM at (E_ref, mu1) and evaluate the winding + subset count.
+
+    The single build serves both stages — the continuum gate (inline
+    ``has_continuum``) and the crossing + winding — mirroring
+    ``sgbz_solver._evaluate_winding`` (the old version built three ZMs per
+    probe: a plain ZeroManager, one inside ``detect_continuum_simple`` and
+    another inside ``detect_crossings_and_winding``).
 
     Returns a dict with ``success``, ``is_continuum``, ``winding``, ``gbz_count``.
     ``success=False`` if the ZeroManager raised (the probe is skipped then).
     """
     point: dict = {"success": False}
     try:
-        zm = ZeroManager(poly, E_ref, mu1)
-        zm.run(**zm_run_kwargs)
-        if detect_continuum_simple(
-            zm, poly,
-            continuum_tol=continuum_tol, dV_tol=dV_tol, vote_frac=vote_frac,
-        ):
+        m = Mu2MidZM(poly, E_ref, mu1)
+        m.run(**zm_run_kwargs)
+        m.build_mu2_mid(tie_tol=continuum_tol)
+        if m.has_continuum:
             point.update({
                 "success": True, "is_continuum": True,
                 "winding": float('nan'), "gbz_count": 0,
             })
             return point
         subsets, W = detect_crossings_and_winding(
-            zm, poly,
+            m, poly,
             crossing_tol=crossing_tol,
-            detect_threshold=detect_threshold,
             max_newton=max_newton,
-            dedup_tol=dedup_tol,
         )
         point.update({
             "success": True, "is_continuum": False,
             "winding": float(W), "gbz_count": len(subsets),
         })
-    except Exception:
+    except Exception as e:
         # A failing probe is not fatal — the caller treats it as non-plateau.
+        # Surface it anyway (CLAUDE.md: unexpected results must be reported,
+        # not silently absorbed); a flood of these is itself a signal.
+        warnings.warn(
+            f"plateau probe at mu1={mu1:.8g} failed: {e}", RuntimeWarning)
         point.update({"success": False, "is_continuum": False,
                       "winding": float('nan'), "gbz_count": -1})
     return point
@@ -129,12 +131,8 @@ def _probe_zero_plateau_near_mu1(
     zm_run_kwargs: dict,
     *,
     continuum_tol: float,
-    dV_tol: float,
-    vote_frac: float,
     crossing_tol: float,
-    detect_threshold: float,
     max_newton: int,
-    dedup_tol: float,
     zero_tol: float = 1e-10,
     continuum_perturb: float = 1e-2,
     probe_radius: Optional[float] = None,
@@ -143,7 +141,7 @@ def _probe_zero_plateau_near_mu1(
 
     Thin SGBZ adapter over :func:`gbz_types.probe_zero_plateau`: the step
     ladder, ``±side`` loop and found/not_found/inconclusive classification
-    are shared; the per-probe *evaluation* (build a ZeroManager, gate on
+    are shared; the per-probe *evaluation* (build one Mu2MidZM, gate on
     continuum, else run crossing detection + winding) and the plateau
     criterion (empty GBZ + zero winding) are SGBZ-specific, supplied as the
     ``evaluator`` closure.
@@ -156,9 +154,9 @@ def _probe_zero_plateau_near_mu1(
         bracket_width = abs(float(mu1_bracket[1]) - float(mu1_bracket[0]))
 
     eval_kwargs = dict(
-        continuum_tol=continuum_tol, dV_tol=dV_tol, vote_frac=vote_frac,
-        crossing_tol=crossing_tol, detect_threshold=detect_threshold,
-        max_newton=max_newton, dedup_tol=dedup_tol,
+        continuum_tol=continuum_tol,
+        crossing_tol=crossing_tol,
+        max_newton=max_newton,
     )
 
     def evaluator(mu1_probe: float) -> dict:

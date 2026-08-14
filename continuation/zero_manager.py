@@ -752,6 +752,70 @@ class ZeroManager:
             theta_b, r_b, seg.tangents[i + 1, :],
         )
 
+    def solve_at(
+        self,
+        theta1: float,
+        seg_idx: Optional[int] = None,
+        i: Optional[int] = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Solve + track-match β₂ roots at *theta1* — WITHOUT inserting a row.
+
+        The non-mutating core of :meth:`insert_solution` (which is this
+        method plus the mesh insert): solves ``self._solve(theta1)``, reorders
+        the ``np.roots``-order result onto the segment's track frame via
+        Hungarian matching against :meth:`interpolate_roots` as the prediction
+        anchor, and computes the analytic tangent ``V``.
+
+        Unlike :meth:`insert_solution` there is no coincidence early-return:
+        ``theta1 == theta_a`` solves fine (equivalent to reading row *i* up to
+        Hungarian tie-breaking), while ``theta1 == theta_b`` raises the same
+        containment ``ValueError`` as any out-of-interval θ — the coincidence
+        semantics are handled by ``insert_solution`` *before* calling this.
+
+        Returns ``(roots, V)``; *roots* is track-ordered and *V* is the
+        ``compute_tangent`` tangent (always computed — a pure function of the
+        solved roots, independent of whether the segment stores tangents).
+        Nothing is written into ``SegmentData``.
+        """
+        if seg_idx is None or i is None:
+            seg_idx, i = self.locate(theta1)
+        seg = self.segments[seg_idx]
+        arr = seg.theta1_arr
+        n = len(arr)
+        if n < 2:
+            raise ValueError(
+                f"segment {seg_idx} has {n} row(s); cannot solve"
+            )
+
+        theta1_wrapped = _normalize_theta(theta1)
+        theta_a, theta_b = arr[i], arr[i + 1]
+        if not (theta_a <= theta1_wrapped < theta_b):
+            raise ValueError(
+                f"theta1={theta1} (normalized {theta1_wrapped}) outside interval "
+                f"[{theta_a}, {theta_b}] of segment {seg_idx}, i={i}"
+            )
+
+        roots = self._solve(theta1_wrapped)
+        # Reorder np.roots-order onto the segment track frame via Hungarian
+        # matching against ``interpolate_roots`` as the prediction anchor.
+        # Using interpolate_roots rather than the raw _to_track_order Hermite
+        # prediction is deliberate: when the bracketing interval is near a
+        # multiple root, interpolate_roots falls back to whole-interval
+        # linear interpolation (see its docstring), yielding a bounded,
+        # honest prediction for ALL tracks including the cluster ones — the
+        # per-track Hermite→lerp fallback in _to_track_order would silently
+        # hold cluster tracks at one endpoint while Hermite-interpolating the
+        # smooth ones, hiding the near-MR divergence.
+        predicted = self.interpolate_roots(
+            theta1_wrapped, seg_idx=seg_idx, i=i,
+        )
+        perm = hungarian_match_indices(predicted, roots)
+        roots = roots[perm]
+
+        beta1 = exp(self.mu1 + 1j * theta1_wrapped)
+        V, _ = compute_tangent(self.poly, self.E_ref, beta1, roots)
+        return roots, V
+
     def insert_solution(
         self,
         theta1: float,
@@ -760,12 +824,11 @@ class ZeroManager:
     ) -> int:
         """Solve β₂ roots at an interior *theta1* and insert the new row.
 
-        Solves ``self._solve(theta1)``, reorders the ``np.roots``-order result
-        onto the segment's track frame via Hungarian matching against
-        :meth:`interpolate_roots` as the prediction anchor, and inserts the
-        row at mesh position ``i + 1`` so ``theta1_arr`` stays monotonic.
-        The new row's tangent is recomputed with :func:`compute_tangent` and
-        spliced into ``SegmentData.tangents``; ``abs_argsort`` is refreshed.
+        :meth:`solve_at` (solve + track-frame matching + tangent) followed by
+        the mesh insert: the new row is inserted at mesh position ``i + 1``
+        so ``theta1_arr`` stays monotonic; ``abs_argsort`` is refreshed and
+        the tangent spliced into ``SegmentData.tangents`` (when the segment
+        stores tangents).
 
         Returns ``(insert_at, changed)`` where *insert_at* is the mesh index
         of the (existing or inserted) row and *changed* is ``True`` when a
@@ -802,22 +865,8 @@ class ZeroManager:
                 f"[{theta_a}, {theta_b}] of segment {seg_idx}, i={i}"
             )
 
-        roots = self._solve(theta1_wrapped)
-        # Reorder np.roots-order onto the segment track frame via Hungarian
-        # matching against ``interpolate_roots`` as the prediction anchor.
-        # Using interpolate_roots rather than the raw _to_track_order Hermite
-        # prediction is deliberate: when the bracketing interval is near a
-        # multiple root, interpolate_roots falls back to whole-interval
-        # linear interpolation (see its docstring), yielding a bounded,
-        # honest prediction for ALL tracks including the cluster ones — the
-        # per-track Hermite→lerp fallback in _to_track_order would silently
-        # hold cluster tracks at one endpoint while Hermite-interpolating the
-        # smooth ones, hiding the near-MR divergence.
-        predicted = self.interpolate_roots(
-            theta1_wrapped, seg_idx=seg_idx, i=i,
-        )
-        perm = hungarian_match_indices(predicted, roots)
-        roots = roots[perm]
+        # Solve + reorder onto the track frame (the non-mutating core).
+        roots, V_new = self.solve_at(theta1_wrapped, seg_idx=seg_idx, i=i)
 
         insert_at = i + 1
         seg.theta1_arr = np.insert(arr, insert_at, theta1_wrapped)
@@ -826,8 +875,6 @@ class ZeroManager:
         )
         seg.abs_argsort = _abs_argsort(seg.tracked_roots)
         if seg.tangents is not None:
-            beta1 = exp(self.mu1 + 1j * theta1_wrapped)
-            V_new, _ = compute_tangent(self.poly, self.E_ref, beta1, roots)
             seg.tangents = np.insert(seg.tangents, insert_at, V_new, axis=0)
 
         return insert_at, True

@@ -46,11 +46,8 @@ from gbz_types import CharPoly, LineSubset
 from continuation import ZeroManager
 
 from .crossings import _ensure_mu2mid
-from .mu2mid import Mu2MidZM, CONTINUUM_TOL, CONTINUUM_FRAC
+from .mu2mid import Mu2MidZM, CONTINUUM_TOL
 from brute_force_amoeba.zm_extract import _LinePiece, _is_cluster_endpoint
-
-# Backward-compat re-export (sgbz_solver / plateau / diagnostics import these).
-_DV_TOL = 1e-3
 
 
 # ---------------------------------------------------------------------------
@@ -72,8 +69,6 @@ def detect_continuum_simple(
     poly: CharPoly,
     *,
     continuum_tol: float = CONTINUUM_TOL,
-    dV_tol: float = _DV_TOL,
-    vote_frac: float = CONTINUUM_FRAC,
     zm_run_kwargs: dict | None = None,
 ) -> bool:
     """Simplified continuous-modulus-equality detection — presence only.

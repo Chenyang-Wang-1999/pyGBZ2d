@@ -268,10 +268,10 @@ class GBZResult:
         index: (n_0D, n_1D) counts.  ``(0, 0)`` means the energy is
                outside the GBZ — unless ``is_continuum`` is set (see below).
         is_continuum: True when the SGBZ subset at this energy is a continuum
-               (1D LineSubset) whose materialization is not yet implemented.
-               Such a result is *in spectrum* (``is_gbz`` is True) even though
-               ``subsets`` is empty and ``index == (0, 0)``: the caller should
-               treat it as "on the GBZ, LineSubset TODO".  Amoeba (which has a
+               (1D).  SGBZ materializes the LineSubsets into ``subsets``
+               (``index == (0, n_1d)``); the flag additionally marks the
+               result as *in spectrum* (``is_gbz`` is True) even if
+               ``subsets`` happens to be empty.  Amoeba (which has its own
                LineSubset extractor) never sets this flag.
     """
     E_ref: complex

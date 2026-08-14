@@ -25,15 +25,12 @@ from gbz_types import (
     PointSubset, LineSubset, GBZResult, CharPoly,
 )
 
-from continuation import ZeroManager
-
 from .continuum_lines import (
-    detect_continuum_simple, extract_continuum_linesubsets,
-    CONTINUUM_TOL, _DV_TOL, CONTINUUM_FRAC,
+    extract_continuum_linesubsets, CONTINUUM_TOL,
 )
 from .winding import detect_crossings_and_winding
 from .plateau import _check_pmgbz_points_clustered, _probe_zero_plateau_near_mu1
-from .crossings import _CROSSING_TOL, _DETECT_THRESHOLD, _MAX_NEWTON_ITER, _DEDUP_TOL
+from .crossings import _CROSSING_TOL, _MAX_NEWTON_ITER
 from .mu2mid import Mu2MidZM
 
 
@@ -48,12 +45,8 @@ def _evaluate_winding(
     zm_run_kwargs: dict,
     *,
     continuum_tol: float,
-    dV_tol: float,
-    vote_frac: float,
     crossing_tol: float,
-    detect_threshold: float,
     max_newton: int,
-    dedup_tol: float,
 ) -> tuple[Optional[float], Optional[list], Mu2MidZM]:
     """Evaluate W(E_ref, mu1) and the 0D subsets at *mu1*.
 
@@ -75,11 +68,7 @@ def _evaluate_winding(
     """
     zm = Mu2MidZM(poly, E_ref, mu1)
     zm.run(**zm_run_kwargs)
-    zm.build_mu2_mid(
-        tie_tol=continuum_tol,
-        # dV_tol / vote_frac are retained for API symmetry; the inline
-        # continuum detection uses the whole-segment same-modulus criterion.
-    )
+    zm.build_mu2_mid(tie_tol=continuum_tol)
 
     if zm.has_continuum:
         return None, None, zm
@@ -87,9 +76,7 @@ def _evaluate_winding(
     subsets, W = detect_crossings_and_winding(
         zm, poly,
         crossing_tol=crossing_tol,
-        detect_threshold=detect_threshold,
         max_newton=max_newton,
-        dedup_tol=dedup_tol,
     )
     return W, subsets, zm
 
@@ -102,12 +89,8 @@ def _resolve_continuum_winding(
     *,
     continuum_perturb: float,
     continuum_tol: float,
-    dV_tol: float,
-    vote_frac: float,
     crossing_tol: float,
-    detect_threshold: float,
     max_newton: int,
-    dedup_tol: float,
 ) -> tuple[Optional[float], Optional[float]]:
     """Compute the left / right winding limits at a continuum-degenerate mu1.
 
@@ -120,9 +103,9 @@ def _resolve_continuum_winding(
     scales still degenerate on that side).
     """
     eval_kwargs = dict(
-        continuum_tol=continuum_tol, dV_tol=dV_tol, vote_frac=vote_frac,
-        crossing_tol=crossing_tol, detect_threshold=detect_threshold,
-        max_newton=max_newton, dedup_tol=dedup_tol,
+        continuum_tol=continuum_tol,
+        crossing_tol=crossing_tol,
+        max_newton=max_newton,
     )
     for scale in (1.0, 2.0, 4.0, 8.0):
         eps = continuum_perturb * scale
@@ -152,12 +135,8 @@ def solve_SGBZ_for_E(
     zm_run_kwargs: Optional[dict] = None,
     *,
     continuum_tol: float = CONTINUUM_TOL,
-    dV_tol: float = _DV_TOL,
-    vote_frac: float = CONTINUUM_FRAC,
     crossing_tol: float = _CROSSING_TOL,
-    detect_threshold: float = _DETECT_THRESHOLD,
     max_newton: int = _MAX_NEWTON_ITER,
-    dedup_tol: float = _DEDUP_TOL,
 ) -> dict:
     """Locate the winding-zero mu1 and return solve diagnostics.
 
@@ -184,9 +163,9 @@ def solve_SGBZ_for_E(
         zm_run_kwargs = {}
 
     eval_kwargs = dict(
-        continuum_tol=continuum_tol, dV_tol=dV_tol, vote_frac=vote_frac,
-        crossing_tol=crossing_tol, detect_threshold=detect_threshold,
-        max_newton=max_newton, dedup_tol=dedup_tol,
+        continuum_tol=continuum_tol,
+        crossing_tol=crossing_tol,
+        max_newton=max_newton,
     )
 
     # --- winding_at: evaluate average major-axis winding in sweep mode ---
@@ -303,8 +282,10 @@ def solve_SGBZ_for_E(
     else:
         w_high, _, zm_high = winding_at(mu1_ext_right)
         if w_high is None:
-            is_boundary, proxy_w, _ = handle_continuum(
+            is_boundary, proxy_w, result = handle_continuum(
                 mu1_ext_right, zm_high, (mu1_low, mu1_ext_right))
+            if is_boundary:
+                return result
             w_high = proxy_w
 
     mu1_high = mu1_ext_right
@@ -346,11 +327,15 @@ def solve_SGBZ_for_E(
                     "_exit_reason": exit_reason,
                 }
 
-        # Bracket update
+        # Bracket update (keep the diagnostics winding bracket honest — the
+        # returned _winding_bracket should reflect the final bracket; f_mid
+        # may be a continuum proxy, whose sign is all the bisection uses).
         if w_low * f_mid < 0:
             mu1_high = mu1_mid
+            w_high = f_mid
         else:
             mu1_low = mu1_mid
+            w_low = f_mid
 
     # Max iterations exhausted — last midpoint as fallback
     mu1_final = 0.5 * (mu1_low + mu1_high)
@@ -386,10 +371,11 @@ def collect_GBZ_subsets(
     bisection with continuum interception, and (optionally) reclassifies the
     candidate as empty when a zero plateau exists right next to it.
 
-    For continuum results (a 1D LineSubset case), subset materialization is
-    TODO: the returned ``GBZResult`` is marked ``is_continuum=True`` (in
-    spectrum) with no subsets.  Spectrum membership still works: the
-    bisection's W-zero / left-right-limit straddle decides in vs out.
+    For continuum results (a 1D LineSubset case), the LineSubsets are
+    materialised by ``extract_continuum_linesubsets`` from the built ZM and
+    returned in ``subsets`` with ``is_continuum=True`` (in spectrum).
+    Spectrum membership is decided by the bisection's W-zero /
+    left-right-limit straddle.
 
     Parameters:
         coeffs: complex coefficients of the characteristic Laurent polynomial
@@ -402,7 +388,8 @@ def collect_GBZ_subsets(
         **options: solver options — "mu1_guess" (default (-1, 1)),
             "zero_tol" (1e-10), "continuum_perturb" (1e-2), "max_iter" (60),
             "xtol" (2e-12), "plateau_check" (True), "plateau_probe_radius"
-            (None), "zm_run_kwargs" ({}), plus continuum/crossing tunables.
+            (None), "zm_run_kwargs" ({}), plus the continuum/crossing
+            tunables "continuum_tol", "crossing_tol", "max_newton".
 
     Returns:
         GBZResult with connected subsets.  ``gbz.is_empty`` / ``gbz.index
@@ -426,12 +413,8 @@ def collect_GBZ_subsets(
 
     # Continuum / crossing tunables (rarely overridden).
     continuum_tol = solver_options.pop("continuum_tol", CONTINUUM_TOL)
-    dV_tol = solver_options.pop("dV_tol", _DV_TOL)
-    vote_frac = solver_options.pop("vote_frac", CONTINUUM_FRAC)
     crossing_tol = solver_options.pop("crossing_tol", _CROSSING_TOL)
-    detect_threshold = solver_options.pop("detect_threshold", _DETECT_THRESHOLD)
     max_newton = solver_options.pop("max_newton", _MAX_NEWTON_ITER)
-    dedup_tol = solver_options.pop("dedup_tol", _DEDUP_TOL)
 
     # N_points is obsolete under the adaptive ZeroManager mesh; accept it
     # silently for API compatibility with older callers.
@@ -448,9 +431,9 @@ def collect_GBZ_subsets(
             poly, E_ref, mu1_guess=mu1_guess, zero_tol=zero_tol,
             continuum_perturb=continuum_perturb, max_iter=max_iter,
             xtol=xtol, zm_run_kwargs=zm_run_kwargs,
-            continuum_tol=continuum_tol, dV_tol=dV_tol, vote_frac=vote_frac,
-            crossing_tol=crossing_tol, detect_threshold=detect_threshold,
-            max_newton=max_newton, dedup_tol=dedup_tol,
+            continuum_tol=continuum_tol,
+            crossing_tol=crossing_tol,
+            max_newton=max_newton,
         )
         subsets = sgbz_res["subsets"]
         mu1 = sgbz_res["mu1"]
@@ -479,10 +462,9 @@ def collect_GBZ_subsets(
             plateau_info = _probe_zero_plateau_near_mu1(
                 poly, E_ref, mu1, sgbz_res.get("_mu1_bracket"),
                 zm_run_kwargs,
-                continuum_tol=continuum_tol, dV_tol=dV_tol,
-                vote_frac=vote_frac, crossing_tol=crossing_tol,
-                detect_threshold=detect_threshold, max_newton=max_newton,
-                dedup_tol=dedup_tol, zero_tol=zero_tol,
+                continuum_tol=continuum_tol,
+                crossing_tol=crossing_tol, max_newton=max_newton,
+                zero_tol=zero_tol,
                 continuum_perturb=continuum_perturb,
                 probe_radius=plateau_probe_radius,
             )

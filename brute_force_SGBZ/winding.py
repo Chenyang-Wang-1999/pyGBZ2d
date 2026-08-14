@@ -46,7 +46,7 @@ from gbz_types import CharPoly, PointSubset
 from continuation import ZeroManager
 
 from .crossings import detect_crossings_simple, _ensure_mu2mid, _MAX_NEWTON_ITER
-from .mu2mid import Mu2MidZM, _LOGABS_CLAMP_L
+from .mu2mid import Mu2MidZM, _Mu2MidPath
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +105,10 @@ def get_winding_number(
     else:
         bounds = list(np.linspace(a, b, n_seg + 1))
     total = 0.0
+    # epsabs/epsrel = 1e-3 looks loose, but every caller rounds the result
+    # to an integer: the total absolute error is ≲ (#intervals)·1e-3, i.e.
+    # ~1e-2 per loop → ~1.6e-3 in winding units, two orders below the 0.5
+    # rounding margin.  Tighter tolerances only buy speed loss.
     for i in range(len(bounds) - 1):
         total += integrate.quad(
             winding_fun, bounds[i], bounds[i + 1],
@@ -116,97 +120,9 @@ def get_winding_number(
 # ---------------------------------------------------------------------------
 # Piecewise-smooth μ₂_mid loop path
 # ---------------------------------------------------------------------------
-
-class _Mu2MidPath:
-    """Piecewise-smooth ``μ₂_mid(t)`` and ``μ₂_mid'(t)`` for the loop.
-
-    Built from a :class:`Mu2MidZM`'s flat ``mu2_mid_*`` arrays and
-    ``mu2_mid_breakpoints``.  Between adjacent mesh rows the value is cubic
-    Hermite from the two rows' (value, derivative).  At a breakpoint row the
-    derivative jumps, so the cubic to its RIGHT uses ``deriv_right`` and the
-    cubic to its LEFT uses ``deriv_left`` (from :class:`Mu2MidBreakpoint`);
-    non-breakpoint rows use the smooth stored derivative on both sides.  MR
-    rows (``deriv == inf``) and rows with unusable tangents fall back to
-    linear interpolation (honest and bounded, §2.3 / §6.2).
-    """
-
-    def __init__(self, zm: Mu2MidZM):
-        self.zm = zm
-        self.th = np.asarray(zm.mu2_mid_theta1, dtype=float)
-        self.val = np.asarray(zm.mu2_mid_values, dtype=float)
-        # default (smooth) per-row derivative
-        smooth = np.asarray(zm.mu2_mid_derivs, dtype=float)
-        self.deriv_right = smooth.copy()
-        self.deriv_left = smooth.copy()
-        # override at breakpoint rows
-        for bp in zm.mu2_mid_breakpoints:
-            k = int(np.argmin(np.abs(self.th - bp.theta1)))
-            if np.isclose(self.th[k], bp.theta1, atol=1e-8):
-                self.deriv_right[k] = bp.deriv_right
-                self.deriv_left[k] = bp.deriv_left
-
-    def value_deriv(self, t: float) -> tuple[float, float]:
-        """``(μ₂_mid(t), μ₂_mid'(t))`` via per-row cubic Hermite (linear near MR)."""
-        th = self.th
-        n = len(th)
-        if n == 0:
-            return 0.0, 0.0
-        # locate interval
-        if t <= th[0]:
-            i = 0
-            s = 0.0
-        elif t >= th[-1]:
-            i = n - 2
-            s = 1.0
-        else:
-            i = int(np.searchsorted(th, t, side='right') - 1)
-            i = max(0, min(i, n - 2))
-            s = (t - th[i]) / (th[i + 1] - th[i])
-
-        h = th[i + 1] - th[i]
-        if h <= 0:
-            # zero-width (duplicate segment-boundary row) → return the value
-            return float(self.val[i]), 0.0
-
-        v0 = float(self.val[i])
-        v1 = float(self.val[i + 1])
-        d0 = float(self.deriv_right[i])
-        d1 = float(self.deriv_left[i + 1])
-
-        # MR / divergent tangent → linear (bounded, §6.2)
-        if not (math.isfinite(d0) and math.isfinite(d1)):
-            val = v0 + s * (v1 - v0)
-            deriv = (v1 - v0) / h
-            return val, deriv
-
-        # cubic Hermite of μ₂_mid on [i, i+1]: value + analytic derivative
-        h2 = h * h
-        h3 = h2 * h
-        a = (2.0 * (v0 - v1)) / h3 + (d0 + d1) / h2
-        b = (3.0 * (v1 - v0)) / h2 - (2.0 * d0 + d1) / h
-        # f(s·h) = a·s³h³ + b·s²h² + d0·s·h + v0
-        val = a * (s * h) ** 3 + b * (s * h) ** 2 + d0 * (s * h) + v0
-        # f'(t) = 3a·(t-t0)² + 2b·(t-t0) + d0
-        deriv = 3.0 * a * (s * h) ** 2 + 2.0 * b * (s * h) + d0
-
-        # μ₂_mid is defined as the mean of logabs_clamped values, so it is
-        # bounded to ±_LOGABS_CLAMP_L (a 0/∞ boundary root's ln|β| saturates at
-        # the band edge — see mu2mid.py:_LOGABS_CLAMP_L).  The endpoint *values*
-        # honour this (they come from logabs_clamped), but the endpoint
-        # *derivatives* d0/d1 are the raw analytic tangent Re(V)=d(ln|β|)/dθ₁
-        # (compute_tangent applies NO cap), which is huge near a boundary root
-        # collapsing to 0/∞.  Feeding huge unclamped derivatives into a cubic
-        # whose values are clamped lets the interpolant overshoot μ₂_mid far
-        # outside the band (to ±10²–10³), so β₂ = exp(μ₂_mid) overflows in the
-        # winding loop and the quad of Im[f'/f] returns nan.  Clamp the path to
-        # the same band the data lives in; where the cubic tried to escape, the
-        # clamped function is saturated (derivative 0), consistent with the
-        # clamped-value model and bounded (no overflow, no divergent quad).
-        if val > _LOGABS_CLAMP_L:
-            return float(_LOGABS_CLAMP_L), 0.0
-        if val < -_LOGABS_CLAMP_L:
-            return float(-_LOGABS_CLAMP_L), 0.0
-        return float(val), float(deriv)
+# _Mu2MidPath now lives in mu2mid.py (shared with crossings.py, which needs it
+# to evaluate the built μ₂_mid curve at arbitrary probe θ without mutating the
+# mesh — the 2026-08-14 zero-mutation crossing refinement).
 
 
 def _loop_winding_quad(
@@ -214,7 +130,6 @@ def _loop_winding_quad(
     poly: CharPoly,
     E_ref: complex,
     mu1: float,
-    M: int,
     theta2: float,
 ) -> float:
     """Loop winding number via quad of ``Im[f'/f]`` over the μ₂_mid loop.
@@ -244,35 +159,8 @@ def _loop_winding_quad(
 
 
 # ---------------------------------------------------------------------------
-# Seed selection (safety metric: min distance from loop to any root)
+# Seed selection (safety metric: min |f| along the loop)
 # ---------------------------------------------------------------------------
-
-def _build_root_mu2_mesh(
-    zm: Mu2MidZM,
-    M: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Flatten the mesh into (roots, mu2_mid) arrays for the seed metric.
-
-    ``roots_mesh`` (shape (P, K)) is every tracked β₂ root across all segment
-    rows; ``mu2_mid_mesh`` (shape (P,)) is the per-row boundary-pair mean of
-    ``ln|β₂|``.  Shared MR-boundary rows appear in two adjacent segments;
-    duplicates are harmless for the min-distance metric.
-    """
-    roots_parts: list[np.ndarray] = []
-    mu2_mid_parts: list[np.ndarray] = []
-    for s_idx, view in enumerate(zm._item_views):
-        seg = zm.segments[s_idx]
-        th = seg.theta1_arr
-        tr = seg.tracked_roots
-        roots_parts.append(tr)
-        rows = np.arange(len(th))
-        mu = (view.item_logabs[rows, view.j_lo]
-              + view.item_logabs[rows, view.j_hi]) / 2.0
-        mu2_mid_parts.append(mu)
-    if roots_parts:
-        return (np.concatenate(roots_parts), np.concatenate(mu2_mid_parts))
-    return np.empty((0, zm.K)), np.array([])
-
 
 def _loop_min_f(
     theta2: float,
@@ -306,23 +194,6 @@ def _loop_min_f(
     return float(worst) if math.isfinite(worst) else 0.0
 
 
-def _loop_min_dist(
-    theta2: float,
-    roots_mesh: np.ndarray,
-    mu2_mid_mesh: np.ndarray,
-) -> float:
-    """Minimum ``|β₂_loop − β₂_root|`` over the mesh at fixed *theta2*.
-
-    Retained as a cheap pre-screen; the authoritative safety metric is
-    :func:`_loop_min_f` (min ``|f|`` along the loop), which accounts for β₁
-    and ``|∂f/∂β₂|`` that this β₂-space distance ignores.
-    """
-    if len(mu2_mid_mesh) == 0:
-        return 0.0
-    beta2_loop = np.exp(mu2_mid_mesh + 1j * theta2)
-    return float(np.min(np.abs(beta2_loop[:, np.newaxis] - roots_mesh)))
-
-
 def _pick_seed_theta2(
     intervals: list[tuple[float, float]],
     zm: Mu2MidZM,
@@ -334,10 +205,10 @@ def _pick_seed_theta2(
 
     The loop-winding seed must lie inside one of the region's intervals and
     stay clear of char-poly zeros for the quad to be reliable, so the safest
-    θ₂ maximises ``min |f(E, β₁(θ₁), β₂_loop(θ₁))|`` over θ₁ (§3.2).  A
-    coarse ``min |β₂_loop−β₂_root|`` pre-screen picks candidates, then the
-    true ``|f|`` metric ranks them.  Samples are strictly interior (excluding
-    the endpoints, which are crossing root phases).
+    θ₂ maximises ``min |f(E, β₁(θ₁), β₂_loop(θ₁))|`` over θ₁ (§3.2 — the
+    true safety metric, accounting for β₁ and |∂f/∂β₂| that a β₂-distance
+    proxy ignores).  Samples are strictly interior (excluding the endpoints,
+    which are crossing root phases).
 
     Returns ``(theta2, interval_index)`` — the interval index lets the caller
     place the seed in the region's cyclic order without a fragile
@@ -345,7 +216,6 @@ def _pick_seed_theta2(
     """
     twopi = 2 * math.pi
     fracs = np.arange(1, n_per_interval + 1) / (n_per_interval + 1)
-    roots_mesh, mu2_mid_mesh = _build_root_mu2_mesh(zm, poly.M)
 
     best_t2 = float(intervals[0][0])
     best_f = -1.0
@@ -366,7 +236,6 @@ def _pick_seed_theta2(
 def compute_average_winding(
     zm: ZeroManager,
     poly: CharPoly,
-    M: int,
     charges: list[dict],
 ) -> float:
     """Compute the average major-axis winding number ``W(E_ref, mu1)``.
@@ -408,8 +277,8 @@ def compute_average_winding(
     # ≤ 1 boundary: the full θ₂ circle is one region with constant winding.
     if len(boundaries) <= 1:
         t2, _ = _pick_seed_theta2([(0.0, twopi)], m, poly)
-        w0 = _loop_winding_quad(m, poly, E_ref, mu1, M, t2)
-        return round(w0)
+        w0 = _loop_winding_quad(m, poly, E_ref, mu1, t2)
+        return float(round(w0))
 
     boundaries.sort(key=lambda x: x[0])
     N = len(boundaries)
@@ -453,7 +322,7 @@ def compute_average_winding(
         )
         best_p = valid[best_valid][0]
         seed_idx = region[best_p]
-        w0 = int(round(_loop_winding_quad(m, poly, E_ref, mu1, M, t2_seed)))
+        w0 = int(round(_loop_winding_quad(m, poly, E_ref, mu1, t2_seed)))
         windings[seed_idx] = w0
 
         # forward propagation across soft boundaries
@@ -484,9 +353,7 @@ def detect_crossings_and_winding(
     poly: CharPoly,
     *,
     crossing_tol: float = 1e-10,
-    detect_threshold: float = 1e-2,
     max_newton: int = _MAX_NEWTON_ITER,
-    dedup_tol: float = 1e-6,
     zm_run_kwargs: dict | None = None,
 ) -> tuple[list[PointSubset], float]:
     """Crossing detection + average major-axis winding.
@@ -503,9 +370,7 @@ def detect_crossings_and_winding(
     subsets, charges = detect_crossings_simple(
         m, poly,
         crossing_tol=crossing_tol,
-        detect_threshold=detect_threshold,
         max_newton=max_newton,
-        dedup_tol=dedup_tol,
     )
-    W_avg = compute_average_winding(m, poly, poly.M, charges)
+    W_avg = compute_average_winding(m, poly, charges)
     return subsets, W_avg

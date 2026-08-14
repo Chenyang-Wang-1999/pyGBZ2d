@@ -292,7 +292,7 @@ def sweep_SGBZ_y():
     E_list = E_mesh.flatten()
 
     pool = mp.Pool(mp.cpu_count())
-    results = pool.starmap(bfs.collect_GBZ_subsets, [(coeffs, degs, E, j / len(E_list)) for j, E in enumerate(E_list)])
+    results = pool.starmap(bfs.collect_GBZ_subsets, [(coeffs, degs, E, j / len(E_list), True) for j, E in enumerate(E_list)])
     pool.close()
     pool.join()
 
@@ -425,6 +425,21 @@ def plot_index_E(which=""):
     plt.title("GBZ subsets index $(n_{0D}, n_{1D})$ vs $E$")
 
 
+def debug_y_SGBZ():
+    model = Haldane_non_Hermitian_phase(*ALL_PARAMS)
+    model = model.get_supercell(
+        [(0, 0), (1, 0)],
+        np.array([
+            [1, 1],
+            [-1, 1]
+        ], dtype=int)
+    )
+    coeffs, degs = model.get_characteristic_polynomial_data()
+    E_ref = -1.098 + 0.2445j
+    print(bfs.collect_GBZ_subsets(coeffs, degs, E_ref, debug_mode=True))
+
+
+
 if __name__ == "__main__":
     # sweep_amoeba()
     # sweep_amoeba_multiband()
@@ -442,4 +457,5 @@ if __name__ == "__main__":
     # plot_index_E("a1")
     # plot_index_E("")
     # plot_index_E("-xy")
-    plt.show()
+    # plt.show()
+    # debug_y_SGBZ()

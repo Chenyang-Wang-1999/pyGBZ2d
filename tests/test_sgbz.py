@@ -282,6 +282,30 @@ class TestCrossingDetection:
         assert np.isfinite(W)
         assert W < 0  # below gamma_1 → negative winding
 
+    def test_detection_leaves_mesh_unchanged(self, poly_A):
+        """The crossing phase must not mutate the mesh (2026-08-14 contract).
+
+        A previous version inserted one row per bracket probe
+        (``insert_solution``), shifting indices mid-sweep and letting the
+        touch loop pair a β₂ with a stale θ₁.  Detection now solves probes
+        transiently (``ZeroManager.solve_at``) — only ``build_mu2_mid``
+        mutates, so the mesh row counts must be identical before and after
+        ``detect_crossings_simple``.
+        """
+        coeffs, degs = poly_A
+        poly = CharPoly(coeffs, degs)
+        zm = bfs.Mu2MidZM(poly, 1.0 + 0j, 0.1)
+        zm.run()
+        zm.build_mu2_mid()
+        assert not zm.has_continuum
+        n_before = [len(seg.theta1_arr) for seg in zm.segments]
+
+        subsets, charges = bfs.detect_crossings_simple(zm, poly)
+        assert len(subsets) == 2  # sanity: the known crossing is still found
+
+        n_after = [len(seg.theta1_arr) for seg in zm.segments]
+        assert n_after == n_before
+
 
 # ---- continuum LineSubset materialization (direct) ----
 

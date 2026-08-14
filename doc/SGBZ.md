@@ -4,9 +4,9 @@ Non-Hermitian spectrum computation based on the SGBZ (Strip Generalized Brilloui
 
 ## 1. Theoretical Background
 
-### 1.1 SGBZ and Strip Winding Number
+### 1.1 SGBZ and major-axis winding number
 
-SGBZ integrates along the `θ₁` direction, with the base manifold `μ₂ = μ₂_mid(θ₁; E, μ₁)` — the piecewise-smooth mean of the two boundary-pair moduli `ln|β_{j_lo}|` and `ln|β_{j_hi}|`, where `j_lo`/`j_hi` are the item indices occupying sorted positions `M-1`/`M` (0-based). The average major-axis winding number `W(E, μ₁)` is the winding number around the `θ₂` direction integrated over `θ₁`; its zero in `μ₁` defines the SGBZ boundary.
+SGBZ integrates along the `θ₁` direction, with the base manifold `μ₂ = μ₂_mid(θ₁; E, μ₁)` — the piecewise-smooth mean of the two boundary-pair moduli `ln|β_{j_lo}|` and `ln|β_{j_hi}|`, where `j_lo`/`j_hi` are the item indices occupying sorted positions `M-1`/`M` (0-based). The average major-axis winding number `W(E, μ₁)` is the winding number around the `θ₁` direction with constant `θ₂`; its zero in `μ₁` defines the SGBZ boundary.
 
 ### 1.2 PMGBZ Point Classification
 
@@ -44,7 +44,11 @@ In general the SGBZ spectrum is a subset of the amoeba spectrum. For uniform ban
 
 **Inline continuum detection**: after building, `has_continuum` is read directly off the ItemView — `j_lo == j_hi` (mult ≥ 2) over a fraction of a segment means the boundary pair is one continuum item. So the bisection gate *is* the build itself (§1/§6.3), with no separate two-point detector and its false-negative risk. The `_detect_continuum_clusters_internal` whole-segment same-modulus criterion (BFS transitive closure over column pairs with `max over rows |ln|β_j| − ln|β_k|| < tie_tol`) covers all three sort-adjacent pairs, not just the boundary pair — their continua also destabilise `abs_argsort`.
 
-**Post-build insert hook**: `insert_solution` is overridden to refresh the μ₂_mid representation after a post-build insertion (e.g. `_bracket_crossing` refining a multi-index crossing the build's pairwise bracket missed). During `build_mu2_mid` itself the refresh is skipped — Stage 3 `_assemble` rebuilds from the final mesh anyway.
+**Mesh-mutation contract** (2026-08-14): the mesh is mutated ONLY during `build_mu2_mid` — walls in Stage 0, sort-change refinement in Stage 2 (both via `insert_solution`, whose override skips the μ₂_mid refresh while `_mu2_mid_built` is False). The crossing phase after the build probes θ via the non-mutating `ZeroManager.solve_at` (solve + track-match + tangent, no insert), so the mesh is static throughout detection and no row index can drift mid-sweep. The override's post-build refresh branch is therefore defensive only.
+
+**0/∞ clamp policy**: the clamp to `±_LOGABS_CLAMP_L = ±14` applies **only where μ₂_mid is built** (`_assemble`, breakpoint values, the winding's seed mesh). Everywhere else — ItemView clustering, near-tie / sort-change comparison, cubic-Hermite bracketing, and the track-vs-μ₂_mid crossing detection — reads the **raw** `ln|β₂|`. A 0/∞ padding root therefore stays ±∞ outside μ₂_mid: a padding track's `g = ±∞` never changes sign (no crossing), and two same-type padding roots fail the same-modulus cluster test by NaN/±∞ arithmetic. Only μ₂_mid itself maps a 0/∞ boundary root's `ln|β|` to the band edge and averages it with the other boundary value — a finite, honest "the boundary ran to the band edge" value.
+
+> **⚠ Warning — M = 0 or N = 0 is NOT solvable.** When the characteristic polynomial has `M = 0` or `N = 0` (check `CharPoly.get_minor_degrees()`), the SGBZ boundary pair necessarily includes padding roots at `β₂ = 0` or `β₂ = ∞`, i.e. **the SGBZ modulus itself must be 0 or ∞**. This code cannot solve such models: the clamped μ₂_mid (band edge ±14) is only a finite stand-in, not the true boundary, and the crossing/winding on a degenerate 0/∞ boundary is unreliable. Callers must exclude `M = 0` / `N = 0` models before invoking `collect_GBZ_subsets`, or treat any result as unphysical.
 
 ### 2.2 `continuum_lines.py` — Continuum Detection and LineSubset Materialization
 
@@ -68,9 +72,9 @@ Per-column vs μ₂_mid crossing detection (§2), mirroring amoeba's `extract_am
 1. **Build μ₂_mid** (`Mu2MidZM.build_mu2_mid`): walls + sort-change refinement via cubic-Hermite bracketing. The post-build mesh is clean and the μ₂_mid curve is available as the first-class arrays `seg_mu2_values` / `seg_mu2_derivs`.
 2. **Per-column detection (post-build)**: for each track `j` compute `g_j = ln|β_j| − μ₂_mid_values` against the BUILT curve (track-vs-curve, numerically distinct from a track-vs-track gap comparison). A genuine **sign change** of `g_j` → bracket & refine via cubic-Hermite bracketing. No near-zero / near-miss shortcut — that used to fire spuriously where `g_j` hovers at machine-ε (the degenerate seam) without an actual crossing. Exact touches (`g == 0` at a mesh row) are read directly off the row.
 3. **MR echo drop**: crossings within `_MR_PROXIMITY_TOL` of a boundary MR (an MR whose cluster covers sorted positions M-1 AND M) are dropped and replaced by the exact ZeroManager MR record (`_mr_boundary_entries`).
-4. **Charge + PointSubset construction**: charge = `sign(g')` where `g' = Re(V_j) − μ₂_mid_derivs` (the track-vs-curve direction). `β₂`, `g'`, and the charge are read **atomically** from the root row at the instant it is identified — before any later bracket on another track can insert rows and shift indices. Two `PointSubset` per crossing (the boundary β₂ pair) plus one per boundary MR.
+4. **Charge + PointSubset construction**: charge = `sign(g')` where `g' = Re(V_j) − μ₂_mid_derivs` (the track-vs-curve direction). `β₂`, `g'`, and the charge are classified from the same `(θ, β₂, g')` triple the bracket converged on — the mesh is static during detection (2026-08-14 contract), so no later bracket can shift indices. One `PointSubset` per detected zero-curve (the two boundary tracks at a PMGBZ point are two independent zeros, so one PMGBZ point typically yields two) plus one per boundary MR.
 
-**Dedup** (§2.5): the old pairwise `raise NotImplementedError` is gone. Under the per-column-vs-μ₂_mid formulation an interior crossing's identity key `(seg, interval, track j)` is naturally unique — distinct tracks at the same `θ₁` have different `β₂` and do not collide. Dedup is only the two inherited amoeba rules: Rule 1 — a crossing landing within `snap_tol` of a continuum LineSubset endpoint with matching β₂ is dropped (continuum/MR boundary, not a discrete zero); Rule 2 — `d==0` exact touches deduplicated by zero-identity-key. MR-echo replacement (step 3) subsumes Rule 1 in practice.
+**No dedup** (§2.5): each detected zero-curve crossing (track `j` at `θ₁*`) is kept as-is — distinct tracks at the same `θ₁` are distinct zeros (the two boundary tracks at a PMGBZ point are two independent zeros, two `θ₂`), and any seam/echo double-counting is a detection issue to fix at the source, not papered over with a merge. The only removal is the MR-echo drop (step 3): crossings within `_MR_PROXIMITY_TOL` of a boundary MR are replaced by the exact ZeroManager MR record.
 
 **Charge classification** (`_classify_charge`):
 - **Ordinary** (charge ±1): `charge = sign(g')` where `g = ln|β_j| − μ₂_mid`. At the crossing `j` is a boundary column so `sign(g') = sign(½ gap')`.
@@ -88,7 +92,7 @@ Computes the average major-axis winding number `W(E_ref, μ₁)` from a built `M
 
 **Integration**: `WindingFun` computes `Im[f'(t)/f(t)]` along the loop; `get_winding_number` integrates via `scipy.integrate.quad`, **split at the μ₂_mid breakpoints** so every quad segment lies on one smooth piece. The analytic `dβ₂/dθ₁ = β₂ · μ₂_mid'(θ₁)` comes from the path's cubic-Hermite derivative.
 
-**Region/seed/charge propagation** (§3.2): crossings partition `θ₂` into regions (hard boundaries) and intervals (soft boundaries). One seed interval per region, picked by `_pick_seed_theta2` to maximize `min |f(E, β₁(θ₁), β₂_loop(θ₁))|` over `θ₁` (the true safety metric — farthest from char-poly zeros, accounting for β₁ and `|∂f/∂β₂|` that a β₂-distance proxy ignores; a cheap `min |β₂_loop−β₂_root|` pre-screen filters candidates). Compute `w₀` there via `_loop_winding_quad`, propagate across the region's soft boundaries via charges (ordinary: ±1). Each region contributes exactly one loop-winding evaluation; ±1 numerical noise is confined to the per-region seed.
+**Region/seed/charge propagation** (§3.2): crossings partition `θ₂` into regions (hard boundaries) and intervals (soft boundaries). One seed interval per region, picked by `_pick_seed_theta2` to maximize `min |f(E, β₁(θ₁), β₂_loop(θ₁))|` over `θ₁` (the true safety metric — farthest from char-poly zeros, accounting for β₁ and `|∂f/∂β₂|` that a β₂-distance proxy ignores). Compute `w₀` there via `_loop_winding_quad`, propagate across the region's soft boundaries via charges (ordinary: ±1). Each region contributes exactly one loop-winding evaluation; ±1 numerical noise is confined to the per-region seed.
 
 ### 2.5 `sgbz_solver.py` — μ₁ Bisection Solver
 
@@ -156,8 +160,6 @@ def detect_continuum_simple(
     poly: CharPoly,
     *,
     continuum_tol: float = 1e-6,
-    dV_tol: float = 1e-3,
-    vote_frac: float = 0.9,
     zm_run_kwargs: dict | None = None,
 ) -> bool
 ```
@@ -182,22 +184,20 @@ def detect_crossings_simple(
     poly: CharPoly,
     *,
     crossing_tol: float = 1e-10,
-    detect_threshold: float = 1e-2,
     max_newton: int = 100,
-    dedup_tol: float = 1e-6,
     zm_run_kwargs: dict | None = None,
 ) -> tuple[list[PointSubset], list[dict]]
 ```
 
 0D PMGBZ-boundary crossing detection + charge classification. Per-column vs μ₂_mid (§2): builds μ₂_mid, then detects each zero-curve (track) crossing the μ₂_mid curve. Assumes no continuum — gate with `detect_continuum_simple` (or `Mu2MidZM.has_continuum`) first.
 
-`max_newton` is a backward-compat name for the cubic-Hermite bracketing iteration limit (`_MAX_BRACKET_ITER = 100`). `detect_threshold` is retained for API symmetry but the near-miss shortcut it gated is removed — only genuine sign changes of `g_j = ln|β_j| − μ₂_mid` are refined.
+`max_newton` is a backward-compat name for the cubic-Hermite bracketing iteration limit (`_MAX_BRACKET_ITER = 100`). Only genuine sign changes of `g_j = ln|β_j| − μ₂_mid` are refined — no near-miss shortcut, no dedup.
 
 **Returns**:
-- `subsets`: list of `PointSubset` (two per crossing plus one per boundary MR, in detection order).
+- `subsets`: list of `PointSubset` — one per detected zero-curve crossing (a PMGBZ point crossed by both boundary tracks typically yields two) plus one per boundary MR, in detection order.
 - `charges`: list of charge dicts with keys `theta1`, `theta2`, `charge`, `kind` (`'ordinary'` / `'mr'` / `'tangent'`).
 
-**Warning**: This function MUTATES `zm` via `Mu2MidZM.build_mu2_mid` and the bracket's `insert_solution`. Run continuum detection BEFORE calling this function; do not call it twice on the same `zm`.
+**Mesh-mutation contract**: only `Mu2MidZM.build_mu2_mid` (run inside `_ensure_mu2mid`) mutates the mesh; the crossing brackets solve transiently and discard. Run continuum detection BEFORE calling this function; the scan is re-callable on the same built `zm`.
 
 ### 3.5 `detect_crossings_and_winding`
 
@@ -207,9 +207,7 @@ def detect_crossings_and_winding(
     poly: CharPoly,
     *,
     crossing_tol: float = 1e-10,
-    detect_threshold: float = 1e-2,
     max_newton: int = 100,
-    dedup_tol: float = 1e-6,
     zm_run_kwargs: dict | None = None,
 ) -> tuple[list[PointSubset], float]
 ```
@@ -222,7 +220,6 @@ Convenience function: crossing detection + average major-axis winding in one cal
 def compute_average_winding(
     zm: ZeroManager,
     poly: CharPoly,
-    M: int,
     charges: list[dict],
 ) -> float
 ```
@@ -243,12 +240,8 @@ def solve_SGBZ_for_E(
     zm_run_kwargs: Optional[dict] = None,
     *,
     continuum_tol: float = 1e-6,
-    dV_tol: float = 1e-3,
-    vote_frac: float = 0.9,
     crossing_tol: float = 1e-10,
-    detect_threshold: float = 1e-2,
     max_newton: int = 100,
-    dedup_tol: float = 1e-6,
 ) -> dict
 ```
 
@@ -295,12 +288,8 @@ Main entry point. Builds the characteristic polynomial from `(coeffs, degs)`, so
   - `"plateau_probe_radius"` (None)
   - `"zm_run_kwargs"` ({})
   - `"continuum_tol"` (1e-6)
-  - `"dV_tol"` (1e-3)
-  - `"vote_frac"` (0.9)
   - `"crossing_tol"` (1e-10)
-  - `"detect_threshold"` (1e-2)
   - `"max_newton"` (100)
-  - `"dedup_tol"` (1e-6)
 
 **Returns**: `GBZResult` with connected subsets. `gbz.is_empty` means `E_ref` is outside the SGBZ spectrum. `gbz.is_continuum` means in-spectrum with 1D LineSubsets in `subsets` (`index == (0, n_1d)`). Otherwise `index == (n_0d, 0)` with `PointSubset`s.
 
@@ -328,27 +317,21 @@ Main entry point. Builds the characteristic polynomial from `(coeffs, degs)`, so
 | `xtol` (build) | 1e-12 | Cubic-Hermite bracketing convergence tolerance for sort-change refinement |
 | `max_iter` (build) | 50 | Max cubic-Hermite bracketing iterations per sort-change |
 | `CONTINUUM_TOL` | 1e-6 | Modulus gap separating genuine continuum from transversal crossing |
-| `CONTINUUM_FRAC` | 0.9 | Fraction of segment rows in-band for a continuum track |
+| `CONTINUUM_FRAC` | 0.9 | Legacy vote fraction, exported for API compatibility (demos/diagnostics use it amoeba-style). The inline continuum gate uses `_INLINE_CONTINUUM_FRAC` = 0.1 instead |
 
 ### Continuum Detection (plateau probe path)
 
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
 | `continuum_tol` | 1e-6 | Same as `tie_tol` when passed to `build_mu2_mid` |
-| `dV_tol` | 1e-3 | Retained for API symmetry; inline detection uses whole-segment same-modulus criterion |
-| `vote_frac` | 0.9 | Retained for API symmetry; inline detection uses whole-segment same-modulus criterion |
 
 ### Crossing Detection
 
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
 | `crossing_tol` | 1e-10 | Cubic-Hermite bracketing convergence tolerance (`_CROSSING_TOL`) |
-| `detect_threshold` | 1e-2 | Near-miss threshold (retained; near-miss shortcut removed — only sign changes refined) |
 | `max_newton` | 100 | Max cubic-Hermite bracketing iterations (`_MAX_BRACKET_ITER`; backward-compat alias `_MAX_NEWTON_ITER`) |
-| `dedup_tol` | 1e-6 | L²-distance threshold for duplicate-crossing dedup (`_DEDUP_TOL`) |
-| `_TANGENT_F_TOL` | 1e-6 | `\|f\|` threshold for tangent touch classification |
 | `_MR_PROXIMITY_TOL` | 1e-4 | θ₁ distance threshold for MR echo detection |
-| `_TANGENCY_THRESHOLD` | 1e-3 | `\|g'\|` threshold for tangency classification |
 
 ### Bisection Solver
 

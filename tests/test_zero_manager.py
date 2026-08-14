@@ -477,3 +477,51 @@ class TestInterpolation:
             zm.interpolate_roots(0.3)
         with pytest.raises(ValueError):
             zm.insert_solution(0.35)
+
+    def test_solve_at_matches_insert_solution(self, poly_D):
+        """solve_at is the non-mutating core of insert_solution.
+
+        solve_at alone must not change any mesh shape, and the roots/V it
+        returns must equal the row a subsequent insert_solution stores at
+        the same θ (same _solve + same interpolate_roots anchor, so the
+        Hungarian match is identical).
+        """
+        zm = ZeroManager(poly_D, 0j, 0.0)
+        zm.run()
+        seg = zm.segments[0]
+        arr = seg.theta1_arr
+        theta = 0.5 * (arr[5] + arr[6])
+        n_before = len(arr)
+
+        roots, V = zm.solve_at(theta)
+        assert len(seg.theta1_arr) == n_before          # no mutation
+        assert seg.tracked_roots.shape[0] == n_before
+        assert seg.tangents.shape[0] == n_before
+
+        new_idx, changed = zm.insert_solution(theta)
+        assert changed is True
+        assert new_idx == 6
+        assert np.allclose(seg.tracked_roots[new_idx, :], roots)
+        assert np.allclose(seg.tangents[new_idx, :], V)
+
+    def test_solve_at_hint_equals_search(self, poly_D):
+        """Hinted solve_at (seg_idx, i) equals the locate-based call."""
+        zm = ZeroManager(poly_D, 0j, 0.0)
+        zm.run()
+        arr = zm.segments[0].theta1_arr
+        theta = 0.5 * (arr[5] + arr[6])
+        r_a, V_a = zm.solve_at(theta)
+        r_b, V_b = zm.solve_at(theta, seg_idx=0, i=5)
+        assert np.allclose(r_a, r_b)
+        assert np.allclose(V_a, V_b)
+
+    def test_solve_at_single_row_raises(self, poly_D):
+        """Mirrors test_insert_single_row_raises for the read-only method."""
+        zm = ZeroManager(poly_D, 0j, 0.0)
+        zm.run()
+        seg0 = zm.segments[0]
+        seg0.theta1_arr = np.array([0.3])
+        seg0.tracked_roots = seg0.tracked_roots[:1, :]
+        seg0.tangents = seg0.tangents[:1, :]
+        with pytest.raises(ValueError):
+            zm.solve_at(0.35)

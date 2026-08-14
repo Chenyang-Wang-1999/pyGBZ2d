@@ -27,6 +27,14 @@ The topological charge is read inline from the crossing direction
 (§3.1): ``charge = sign(g')`` where ``g = ln|β_j| − μ₂_mid``; at the
 crossing ``j`` is a boundary column so ``sign(g') = sign(½ gap')``.
 
+Mesh-mutation contract (2026-08-14): the mesh is mutated ONLY by
+``Mu2MidZM.build_mu2_mid``.  The crossing refinement probes θ by solving
+roots there transiently (:func:`_eval_g` via :meth:`ZeroManager.solve_at`)
+and never inserts a row — so every row index the detection sweep records
+stays valid for the whole sweep, and the touch/charge reads can never pair
+a β₂ with a stale θ₁ (an earlier version inserted one row per bracket
+probe, which shifted indices mid-sweep).
+
 Assumes NO continuum is present — the caller must gate with
 ``brute_force_SGBZ.continuum_lines.detect_continuum_simple`` (or
 ``Mu2MidZM.has_continuum``) first.
@@ -43,8 +51,7 @@ from gbz_types import CharPoly, PointSubset, circ_dist
 from continuation import ZeroManager
 
 from .mu2mid import (
-    Mu2MidZM, _cubic_hermite_coeffs, _cubic_roots_in_interval, _dv_column,
-    logabs_clamped, _LOGABS_CLAMP_L,
+    Mu2MidZM, _Mu2MidPath, _cubic_hermite_coeffs, _cubic_roots_in_interval,
 )
 
 
@@ -55,30 +62,14 @@ from .mu2mid import (
 # Convergence tolerance for the cubic-Hermite bracketing of a crossing.
 _CROSSING_TOL: float = 1e-10
 
-# Generous threshold for suspicious-interval near-miss detection (tangency
-# candidates).  Intervals where |ln|β₂_j| − μ₂_mid| < this at both endpoints
-# are flagged; the cubic refinement filters false positives.
-_DETECT_THRESHOLD: float = 1e-2
-
 # Max cubic-Hermite bracketing iterations per crossing.
 _MAX_BRACKET_ITER: int = 100
 # Backward-compat alias (sgbz_solver / plateau import the old Newton name).
 _MAX_NEWTON_ITER: int = _MAX_BRACKET_ITER
 
-# L²-distance threshold in (β₁, β₂) space for duplicate-crossing dedup.
-_DEDUP_TOL: float = 1e-6
-
-# |f| at the bracket's best iterate below this (without width-converging)
-# → tangent touch: f reaches ~0 but the direction sign is unreliable.
-# Genuine cubic false positives (tracks passing at distance) stay well above.
-_TANGENT_F_TOL: float = 1e-6
-
 # θ₁ within this (circular) distance of a boundary MR → the crossing is the
 # MR's own echo and is dropped in favour of the exact MR record.
 _MR_PROXIMITY_TOL: float = 1e-4
-
-# |g'| below this at a crossing → tangency (charge 0, hard region boundary).
-_TANGENCY_THRESHOLD: float = 1e-3
 
 
 # ---------------------------------------------------------------------------
@@ -119,8 +110,11 @@ def _track_g_and_gp(zm: Mu2MidZM, s_idx: int, row: int, j: int) -> tuple[float, 
     seam copies.  NaN derivative when tangents are unavailable.
     """
     seg = zm.segments[s_idx]
-    la = float(np.clip(np.log(np.abs(seg.tracked_roots[row, j])),
-                       -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L))
+    # RAW track ln|β₂| (see mu2mid._LOGABS_CLAMP_L): only μ₂_mid itself is
+    # clamped.  A 0/∞ padding track gives g = ±∞ — it never changes sign,
+    # so it contributes no crossing (and M = 0 / N = 0 models are
+    # unsolvable by design — see doc/SGBZ.md).
+    la = float(np.log(np.abs(seg.tracked_roots[row, j])))
     g = la - float(zm.seg_mu2_values[s_idx][row])
     if seg.tangents is None:
         return g, float('nan')
@@ -135,12 +129,11 @@ def _charge_at_row(
 
     The crossing's β₂, its track-vs-μ₂_mid derivative ``g'``, and the
     resulting topological charge are all taken from the **same mesh row at
-    the same instant** — the caller (``_bracket_crossing``) holds the row
-    right after inserting/touching the root, before any later bracket on
-    another track can shift row indices.  This is why charge is classified
-    *here* rather than by a post-hoc ``m.locate(theta1)`` in the
-    materialisation loop: that loop would re-locate against a mesh mutated
-    by subsequent crossings and bind ``g'`` to the wrong β₂.
+    the same instant**.  The mesh is static during detection (only
+    ``build_mu2_mid`` mutates — 2026-08-14 contract), so no later bracket
+    can shift row indices; the charge is still classified *here* rather
+    than by a post-hoc ``m.locate(theta1)`` in the materialisation loop so
+    that ``g'`` stays bound to the β₂ of this row.
     """
     seg = zm.segments[s_idx]
     beta2 = complex(seg.tracked_roots[row, j])
@@ -150,6 +143,58 @@ def _charge_at_row(
     return beta2, gp, ch['charge'], ch['kind']
 
 
+def _eval_g(
+    zm: Mu2MidZM,
+    path: _Mu2MidPath,
+    s_idx: int,
+    i: int,
+    j: int,
+    theta: float,
+    cache: dict,
+) -> tuple[float, float, complex]:
+    """``(g, g', β₂_j)`` at θ inside mesh interval ``[th[i], th[i+1]]`` — no mesh mutation.
+
+    The zero-mutation evaluation the crossing refinement uses instead of the
+    old ``insert_solution`` probe: an exact mesh row is read from the stored
+    track/μ₂_mid arrays (:func:`_track_g_and_gp`); any other θ is SOLVED
+    transiently via :meth:`ZeroManager.solve_at` (solve + Hungarian onto the
+    track frame + tangent) and the row discarded.  Results are cached per θ
+    — a predicted point becomes one of the next iteration's bracket
+    endpoints, whose true (g, g') must be reused, not re-derived.  The cache
+    is keyed by the θ float as assigned (``theta_pred`` is passed around
+    unchanged, so dict equality is exact); a ulp mismatch would at worst
+    cause one redundant deterministic solve, never a wrong value.
+
+    The mesh-row hit test is EXACT float equality (not a tolerance): inside
+    the 2π seam's ``_BOUNDARY_THETA_TOL`` wrap band ``solve_at`` raises
+    ``ValueError`` (the wrapped θ leaves the interval), which is what
+    reproduces the old near-seam abandonment — a tolerance-based hit would
+    instead treat such a θ_pred as a mesh row and emit a duplicate of the
+    interval-0 crossing.
+    """
+    if theta in cache:
+        return cache[theta]
+    seg = zm.segments[s_idx]
+    th = seg.theta1_arr
+    row = None
+    if theta == th[i]:
+        row = i
+    elif theta == th[i + 1]:
+        row = i + 1
+    if row is not None:
+        g, gp = _track_g_and_gp(zm, s_idx, row, j)
+        result = (g, gp, complex(seg.tracked_roots[row, j]))
+    else:
+        roots, V = zm.solve_at(theta, seg_idx=s_idx, i=i)
+        la = float(np.log(np.abs(roots[j])))  # RAW track ln|β₂|
+        mu2, dmu2 = path.value_deriv(theta)
+        g = la - mu2
+        gp = float(V[j].real) - dmu2
+        result = (g, gp, complex(roots[j]))
+    cache[theta] = result
+    return result
+
+
 def _bracket_crossing(
     zm: Mu2MidZM,
     j: int,
@@ -157,85 +202,86 @@ def _bracket_crossing(
     theta_lo: float,
     theta_hi: float,
     *,
-    tol: float,
     xtol: float,
     max_iter: int,
+    path: _Mu2MidPath | None = None,
 ) -> tuple[float, complex, float, int, str, bool] | None:
     """Refine ``g(θ) = ln|β_j| − μ₂_mid(θ) = 0`` in ``[theta_lo, theta_hi]``.
 
-    μ₂_mid is the BUILT piecewise-smooth curve (values ``seg_mu2_values``,
-    derivatives ``seg_mu2_derivs``) — a first-class object, not re-derived per
-    interval.  So::
+    ZERO MESH MUTATION (2026-08-14): the bracket probes θ by solving roots
+    there transiently (:func:`_eval_g`) and discards the row — only
+    ``build_mu2_mid`` ever mutates the mesh.  The bracket therefore lives
+    entirely inside ONE original adjacent mesh interval ``[th[i], th[i+1]]``
+    (tightening only shrinks it), located once at entry; the old version
+    inserted each probe as a row and had to re-resolve both endpoints
+    against the mutated mesh every iteration.
 
-        g      = ln|β_j| − μ₂_mid_values[row]
-        g'     = Re(V_j) − μ₂_mid_derivs[row]     (track vs curve)
+    μ₂_mid is the BUILT piecewise-smooth curve, evaluated through
+    :class:`_Mu2MidPath` (values + analytic derivative, correct one-sided
+    derivatives at breakpoints).  So::
+
+        g      = ln|β_j| − μ₂_mid(θ)
+        g'     = Re(V_j) − dμ₂_mid/dθ₁     (track vs curve)
 
     Cubic-Hermite bracketing (§2.3): build the cubic from the endpoints'
-    (value, g') → ``np.roots`` predicts θ_pred → ``insert_solution`` takes
-    the true g_pred and true direction → derivative sign + g_pred sign fixes
-    which side of the root θ_pred is on → tighten bracket.  Converges on
-    bracket width < xtol.  Robust where Newton diverges (branch points) and
-    where a sign-change check deadlocks (g_pred agreeing with both ends).
-
-    The bracket endpoints are exact mesh rows but NOT necessarily adjacent:
-    an earlier successful bracket on another track sharing the same interval
-    inserts its θ* row between them.  The two endpoints are re-resolved
-    against the current mesh every iteration (locate for θ_lo, searchsorted
-    for θ_hi), so the cubic is an interpolant over whatever rows the bracket
-    currently spans and the tightening loop stays valid.
+    (value, g') → ``np.roots`` predicts θ_pred → ``_eval_g`` takes the true
+    g_pred and true direction → derivative sign + g_pred sign fixes which
+    side of the root θ_pred is on → tighten bracket.  Converges on bracket
+    width < xtol.  Robust where Newton diverges (branch points) and where a
+    sign-change check deadlocks (g_pred agreeing with both ends).
 
     Returns ``(theta1, beta2, g_prime, charge, kind, converged)``; ``None``
     if the interval has no transversal root (cubic false positive) or the
-    direction is undefined (tangency / branch point).  *beta2*, *g_prime*
-    and *charge* are read atomically from the (inserted or touched) root
-    row **at the instant it is identified** — before any later bracket on
-    another track can insert rows and shift indices.  The charge is
-    classified here (not in the materialisation loop) precisely so that
-    *g'* and the β₂ it describes stay bound to the same row; a post-hoc
-    ``locate(theta1)`` would re-resolve against a mutated mesh and pair
-    *g'* with the wrong β₂.
+    direction is undefined (tangency / branch point).  On width-convergence
+    the root is reported at the LAST predicted point — its β₂ is the true
+    solved root there, more accurate than the mesh-row fallback the old
+    version returned.  The charge is classified here from the SAME
+    (θ, β₂, g') triple the bracket converged on, so g' stays bound to the
+    β₂ it describes.
     """
+    if path is None:
+        path = _Mu2MidPath(zm)
+
+    # locate the original containing interval ONCE — the mesh is static
+    # after build_mu2_mid and every θ_pred stays inside [th[i], th[i+1]].
+    si, i = zm.locate(theta_lo)
+    # the bracket stays inside the originating segment (μ₂_mid is smooth
+    # there; crossing a segment boundary = an MR breakpoint, handled by
+    # _mr_boundary_entries, not here).
+    if si != s_idx:
+        return None
+    seg = zm.segments[si]
+    th = seg.theta1_arr
+    if i + 1 >= len(th) or abs(th[i] - theta_lo) > 1e-15 \
+       or abs(th[i + 1] - theta_hi) > 1e-15:
+        return None
+
+    cache: dict[float, tuple[float, float, complex]] = {}
+    last_pred: tuple[float, complex, float] | None = None
+
+    def _finish(theta: float, b2: complex, gp: float, converged: bool):
+        ch = _classify_charge(theta, b2, gp, _is_near_mr(theta, zm))
+        return theta, b2, gp, ch['charge'], ch['kind'], converged
+
     for _ in range(max_iter):
-        si, i = zm.locate(theta_lo)
-        # the bracket stays inside the originating segment (μ₂_mid is smooth
-        # there; crossing a segment boundary = an MR breakpoint, handled by
-        # _mr_boundary_entries, not here).
-        if si != s_idx:
-            return None
-        seg = zm.segments[si]
-        th = seg.theta1_arr
-        if i + 1 >= len(th) or abs(th[i] - theta_lo) > 1e-15:
-            return None
-        # θ_hi is resolved independently (searchsorted, left side = the row
-        # equal to θ_hi) rather than assumed to be row i+1: an EARLIER
-        # successful bracket on another track sharing this interval inserts
-        # its θ* row between θ_lo and θ_hi, so the endpoints are mesh rows
-        # but no longer adjacent.  Requiring adjacency here silently drops
-        # the second member of a boundary pair crossing the same interval
-        # (an accidental dedup — the PMGBZ point is a β₂ pair).  The bracket
-        # works on any two mesh rows bracketing the root: the cubic Hermite
-        # is an interpolant over a wider interval and the tightening loop
-        # re-locates both endpoints each iteration.
-        k = int(np.searchsorted(th, theta_hi, side='left'))
-        if k >= len(th) or abs(th[k] - theta_hi) > 1e-15 or k <= i:
-            return None
+        v0, dv0, b2_0 = _eval_g(zm, path, si, i, j, theta_lo, cache)
+        v1, dv1, b2_1 = _eval_g(zm, path, si, i, j, theta_hi, cache)
 
-        v0, _ = _track_g_and_gp(zm, si, i, j)
-        v1, _ = _track_g_and_gp(zm, si, k, j)
-
-        # endpoint touches: the root IS a mesh row (e.g. a crossing landing
-        # on the θ₁ = 2π seam).  Read its true direction and return.
+        # endpoint touches: the root IS this θ (a mesh row or a previously
+        # predicted point whose true g vanished) — no further iteration.
         if abs(v0) < xtol:
-            b2, gp, q, kk = _charge_at_row(zm, si, i, j, theta_lo)
-            return theta_lo, b2, gp, q, kk, True
+            return _finish(theta_lo, b2_0, dv0, True)
         if abs(v1) < xtol:
-            b2, gp, q, kk = _charge_at_row(zm, si, k, j, theta_hi)
-            return theta_hi, b2, gp, q, kk, True
+            return _finish(theta_hi, b2_1, dv1, True)
 
-        # bracket converged by width → root at the left row.
+        # bracket converged by width → root at the best-known point: the
+        # last prediction (true solved β₂), else the left row.
         if theta_hi - theta_lo < xtol:
-            b2, gp, q, kk = _charge_at_row(zm, si, i, j, theta_lo)
-            return theta_lo, b2, gp, q, kk, True
+            if last_pred is not None:
+                theta, b2, gp = last_pred
+            else:
+                theta, b2, gp = theta_lo, b2_0, dv0
+            return _finish(theta, b2, gp, True)
 
         # a transversal crossing must have opposite signs; same sign ⇒ no
         # root (abandon — the caller only passes sign-change intervals, but
@@ -244,14 +290,7 @@ def _bracket_crossing(
             return None
 
         h = theta_hi - theta_lo
-        N = len(th)
-        touches_mr = (
-            (i == 0 and seg.left_mr >= 0)
-            or (k == N - 1 and seg.right_mr >= 0)
-        )
-        _, dv0 = _track_g_and_gp(zm, si, i, j)
-        _, dv1 = _track_g_and_gp(zm, si, k, j)
-        # MR / divergent tangent → linear fallback (bounded, §2.3).
+        # divergent / unavailable tangent → linear fallback (bounded, §2.3).
         if not (np.isfinite(dv0) and np.isfinite(dv1)):
             dv0 = (v1 - v0) / h
             dv1 = dv0
@@ -280,29 +319,24 @@ def _bracket_crossing(
             return None
 
         try:
-            # locate the containing interval inside insert_solution (θ_pred
-            # may fall outside [th[i], th[i+1]] now that the bracket can span
-            # rows inserted by earlier brackets — the stale hint i would raise
-            # "outside interval" and drop the crossing).
-            insert_at, _ = zm.insert_solution(theta_pred, si)
+            # true g_pred and true direction sign from a TRANSIENT solve at
+            # θ_pred — the row is discarded, the mesh is never mutated.
+            # ValueError reproduces the old insert_solution guard (e.g. a
+            # θ_pred inside the 2π seam's wrap band) → abandon the crossing.
+            g_pred, gp_pred, b2_pred = _eval_g(
+                zm, path, si, i, j, theta_pred, cache)
         except (ValueError, RuntimeError):
             return None
 
-        seg = zm.segments[si]
-        la = logabs_clamped(seg.tracked_roots)
-        g_pred = float(la[insert_at, j]) - float(zm.seg_mu2_values[si][insert_at])
-        if seg.tangents is not None:
-            g_prime = float(seg.tangents[insert_at, j].real) \
-                      - float(zm.seg_mu2_derivs[si][insert_at])
-        else:
-            g_prime = (3.0 * coeffs[0] * s_pred * s_pred
-                       + 2.0 * coeffs[1] * s_pred + coeffs[2])
-
-        if not np.isfinite(g_prime) or abs(g_prime) < 1e-15:
+        # compute_tangent returns V_j = inf (not NaN) at a multiple root,
+        # so the finiteness check must stay alongside the ~0 check.
+        if not np.isfinite(gp_pred) or abs(gp_pred) < 1e-15:
             return None  # direction undefined — abandon
 
+        last_pred = (theta_pred, b2_pred, gp_pred)
+
         # tighten: direction sign + g_pred sign fixes the side.
-        increasing = g_prime > 0
+        increasing = gp_pred > 0
         if (g_pred > 0) == increasing:
             theta_hi = theta_pred
         else:
@@ -394,9 +428,7 @@ def detect_crossings_simple(
     poly: CharPoly,
     *,
     crossing_tol: float = _CROSSING_TOL,
-    detect_threshold: float = _DETECT_THRESHOLD,
     max_newton: int = _MAX_BRACKET_ITER,
-    dedup_tol: float = _DEDUP_TOL,
     zm_run_kwargs: dict | None = None,
 ) -> tuple[list[PointSubset], list[dict]]:
     """0D PMGBZ-boundary crossing detection + charge classification.
@@ -419,29 +451,37 @@ def detect_crossings_simple(
        genuine **sign change** of g_j → bracket & refine (cubic Hermite).  No
        near-zero / near-miss shortcut — that used to fire spuriously where g_j
        hovers at machine-ε (the degenerate seam) without an actual crossing.
-    3. **Dedup by θ*** (circular distance): multiple tracks detect the same
-       PMGBZ point (§2.2 — every boundary-crossing track hits μ₂_mid there).
+    3. **No dedup**: each detected zero-curve crossing (track j at θ₁*) is
+       kept as-is — distinct tracks at the same θ₁ are distinct zeros (the
+       two boundary tracks at a PMGBZ point are two independent zeros, two
+       θ₂), and any seam/echo double-counting is a detection issue to fix
+       at the source, not papered over with a merge.
     4. **MR echo drop**: crossings within _MR_PROXIMITY_TOL of a boundary MR
        are replaced by the exact ZeroManager MR record.
     5. **Charge + PointSubset construction**: charge = sign(g') where
        ``g' = Re(V_j) − μ₂_mid_derivs`` (the track-vs-curve direction, §3.1);
-       two PointSubsets per crossing (the boundary β₂ pair) + one per MR.
+       one PointSubset per detected zero-curve (a PMGBZ point crossed by
+       both boundary tracks yields two) + one per MR.
 
     .. note::
-       This function MUTATES *zm* via :meth:`Mu2MidZM.build_mu2_mid` and the
-       bracket's :meth:`insert_solution`.  Consequently:
+       The detection phase does NOT mutate the mesh (2026-08-14 contract):
+       only :meth:`Mu2MidZM.build_mu2_mid` — run inside :func:`_ensure_mu2mid`
+       — inserts rows; the crossing brackets solve transiently and discard.
+       Consequently:
 
        - run continuum detection BEFORE this function;
-       - do not call this function twice on the same *zm*.
+       - the scan is re-callable on the same built *zm*.
 
     Returns
     -------
     subsets : list[PointSubset]
-        Two PointSubset per crossing (β₂_a and β₂_b) plus one per boundary
-        MR, in detection order.
+        One PointSubset per detected zero-curve crossing (track j crossing
+        μ₂_mid at θ₁*) plus one per boundary MR, in detection order.  The
+        two boundary tracks of a PMGBZ point are two independent zeros, so
+        one PMGBZ point typically yields two PointSubsets.
     charges : list[dict]
-        One charge dict per surviving crossing plus one per boundary MR
-        (``kind='mr'``, charge 0).
+        One charge dict per surviving crossing (``kind='ordinary'``,
+        charge ±1) plus one per boundary MR (``kind='mr'``, charge 0).
     """
     M = poly.M
     K = poly.M + poly.N
@@ -455,6 +495,9 @@ def detect_crossings_simple(
     E_ref = m.E_ref
     mu1 = m.mu1
     max_iter = max_newton
+    # One path evaluator for the whole sweep: the mesh is static during
+    # detection, so the μ₂_mid curve does not change between brackets.
+    path = _Mu2MidPath(m)
 
     # ---- collect per-column crossing candidates ----
     # Each candidate is ONE zero-curve (track j) crossing the BUILT μ₂_mid
@@ -470,7 +513,7 @@ def detect_crossings_simple(
         N = len(th)
         if N < 2:
             continue
-        la = logabs_clamped(seg.tracked_roots)           # (N, K)
+        la = np.log(np.abs(seg.tracked_roots))           # (N, K) RAW track ln|β₂|
         mu2 = m.seg_mu2_values[s_idx]                    # (N,) built μ₂_mid curve
         for j in range(K):
             g = la[:, j] - mu2                            # (N,) track j vs μ₂_mid
@@ -488,7 +531,7 @@ def detect_crossings_simple(
             for i in sc:
                 res = _bracket_crossing(
                     m, j, s_idx, float(th[i]), float(th[i + 1]),
-                    tol=crossing_tol, xtol=crossing_tol, max_iter=max_iter,
+                    xtol=crossing_tol, max_iter=max_iter, path=path,
                 )
                 if res is None:
                     continue
@@ -513,8 +556,9 @@ def detect_crossings_simple(
 
     # ---- one zero → one PointSubset + one single-θ₂ charge ----
     # charge (β₂, sign(g')) was fixed inside _bracket_crossing at the root
-    # row; here we only materialise it.  Re-locating against the (now
-    # mutation-rich) mesh would pair the charge with the wrong β₂.
+    # row; here we only materialise it.  Re-locating would still pair the
+    # charge with the wrong β₂ — the crossing θ is a solved point, not a
+    # mesh row.
     subsets: list[PointSubset] = []
     charges: list[dict] = []
     for t1, beta2, charge, kind in raw:

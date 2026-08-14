@@ -38,6 +38,7 @@ Usage::
 
 from __future__ import annotations
 
+import math
 from typing import NamedTuple
 
 import numpy as np
@@ -61,30 +62,46 @@ _MU2MID_MAX_ITER = 50
 # A genuine continuum is constant-modulus to ~1e-9; a transversal crossing
 # leaves the level after one sample.  1e-6 separates them.
 CONTINUUM_TOL = 1e-6
-# Fraction of a segment's rows that must be in-band for a track to count as a
-# continuum (real-analyticity ⇒ either degenerate everywhere or at isolated
-# points; 0.9 separates them, with a warning on a near-threshold pass).
+# Legacy vote fraction (0.9), retained for API compatibility: exported and
+# used by demos/diagnostics as an amoeba-style continuum voting fraction.
+# The SGBZ inline continuum gate does NOT use this — it uses
+# _INLINE_CONTINUUM_FRAC below.
 CONTINUUM_FRAC = 0.9
+# Fraction of a segment's rows that must show j_lo == j_hi for the inline
+# continuum gate to fire.  Kept LOW on purpose: whole-segment same-modulus
+# clustering already guarantees a clustered pair is genuinely same-modulus
+# everywhere, so the gate only needs to exclude a single spurious row — and
+# a missed continuum would make the bisection mis-apply the 0D winding and
+# run off the true boundary (§1: no false negatives).
+_INLINE_CONTINUUM_FRAC = 0.1
 
-# Clamp band for ln|β₂|.  Roots at 0 or ∞ (e.g. the 0/∞ padding roots
-# ``CharPoly.solve_roots_1d`` appends to a degree-deficient 1-D polynomial,
-# or an interior root hitting 0/∞) would make ``np.log|β|`` = ±∞, and the
-# boundary-pair mean μ₂_mid = (ln|β_{j_lo}| + ln|β_{j_hi}|)/2 would go ±∞,
-# overflowing the winding loop (β₂ = exp(±∞+iθ₂)) and corrupting the
-# track-vs-μ₂_mid comparison in crossing detection.  Clamp to ±14 — |β| ∈
-# [e⁻¹⁴, e¹⁴] ≈ [1.2e-6, 1.2e6], aligned with arclength.ZERO_THRESHOLD /
-# INF_THRESHOLD (1e-6 / 1e6).  A 0/∞ boundary root's ln|β| becomes the band
-# edge, so μ₂_mid is the mean of the band edge and the other (finite) root's
-# ln|β| — a finite, honest "the boundary ran to the band edge" value.
+# Clamp band for ln|β₂| — used ONLY when building μ₂_mid.  The rest of the
+# pipeline (ItemView clustering, near-tie / sort-change comparisons,
+# cubic-Hermite bracketing, track-vs-μ₂_mid crossing detection) reads the
+# RAW ``ln|β₂| = np.log(np.abs(roots))``; a 0/∞ padding root there is ±∞,
+# which is harmless by construction: an ∞/−∞ g never changes sign, so the
+# padding track contributes no crossing, and NaN/±∞ modulus differences
+# (e.g. two 0-roots) simply fail the same-modulus cluster test.
+#
+# μ₂_mid itself must stay finite because it feeds the winding loop
+# (β₂ = exp(μ₂_mid + iθ₂)) and the track-vs-μ₂_mid comparison: a 0/∞
+# boundary root's ln|β| = ±∞ would make the boundary-pair mean blow up.
+# Clamp to ±14 — |β| ∈ [e⁻¹⁴, e¹⁴] ≈ [1.2e-6, 1.2e6], aligned with
+# arclength.ZERO_THRESHOLD / INF_THRESHOLD (1e-6 / 1e6) — so a 0/∞ boundary
+# root's ln|β| becomes the band edge and μ₂_mid is the mean of the band
+# edge and the other (finite) root's ln|β|: a finite, honest "the boundary
+# ran to the band edge" value.  The clamp is NOT a solver: a model whose
+# true SGBZ modulus is 0 or ∞ (M = 0 or N = 0) is unsolvable by this code —
+# see the warning in doc/SGBZ.md.
 _LOGABS_CLAMP_L = 14.0
 
 
 def logabs_clamped(roots: np.ndarray) -> np.ndarray:
     """``np.log(np.abs(roots))`` with ±∞ clamped to ``±_LOGABS_CLAMP_L``.
 
-    All SGBZ μ₂_mid / crossing consumers must read ln|β₂| through this so a
-    0/∞ root never propagates ±∞ into μ₂_mid (and from there into the winding
-    loop or the track-vs-μ₂_mid sign checks).  See ``_LOGABS_CLAMP_L``.
+    μ₂_mid CONSTRUCTION ONLY (see ``_LOGABS_CLAMP_L``): clamp the boundary
+    pair's two ln|β₂| values before averaging.  Everywhere else the pipeline
+    reads the raw ``np.log(np.abs(roots))``.
     """
     return np.clip(np.log(np.abs(roots)), -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
 
@@ -202,7 +219,9 @@ class ItemView(NamedTuple):
     """
     rep_cols: np.ndarray      # (n_items,) representative column per item
     mults: np.ndarray         # (n_items,) multiplicity
-    item_logabs: np.ndarray   # (N, n_items) representative ln|β₂|
+    item_logabs: np.ndarray   # (N, n_items) representative ln|β₂| (RAW — ±∞
+                              # for 0/∞ padding roots; only _assemble clamps
+                              # when building μ₂_mid)
     item_tang_re: np.ndarray  # (N, n_items) representative Re(V)
     sort_to_item: np.ndarray  # (N, K) sort position → item index
     j_lo: np.ndarray          # (N,) item index at sort pos M-1
@@ -323,28 +342,21 @@ class Mu2MidZM(ZeroManager):
         The μ₂_mid representation — ``_item_views``, the per-segment
         ``seg_mu2_values`` / ``seg_mu2_derivs``, the flat ``mu2_mid_*``
         arrays, and ``mu2_mid_breakpoints`` — is *derived* in ``_assemble``
-        and would otherwise go stale: a later read like
-        ``crossings._bracket_crossing``'s ``seg_mu2_values[si][insert_at]``
-        would index a row that no longer lines up with the grown mesh, and
-        the winding's ``_Mu2MidPath`` would run on a mesh whose μ₂_mid curve
-        ignores every inserted row.
+        and would otherwise go stale.
 
-        So after a **post-build** insertion (``_mu2_mid_built`` True — e.g.
-        ``_bracket_crossing`` refining a multi-index crossing the build's
-        pairwise bracket missed), rebuild the ItemView from the frozen
-        ``_continuum_clusters`` (a transversal crossing does not change
-        which columns are same-modulus, so the clusters are invariant) and
-        re-``_assemble``.  Every later read then sees the inserted row —
-        both the bracket's own ``g_pred`` / ``g'`` and the winding path.
-
-        During ``build_mu2_mid`` itself (``_mu2_mid_built`` still False —
-        walls in Stage 0, sort-change refinement in Stage 2) the refresh is
-        skipped: those inserts mutate the mesh *before* Stage 3 ``_assemble``
-        rebuilds μ₂_mid from the final mesh anyway, and syncing here would
-        rebuild arrays that do not yet exist.  The cost of a post-build
-        refresh is one ``_assemble`` (pure numpy bookkeeping on the ~10²–10³
-        row mesh, µs) — negligible next to the ``_solve`` polynomial
-        root-find that ``insert_solution`` already pays.
+        Mesh-mutation contract (2026-08-14): the mesh is mutated ONLY during
+        ``build_mu2_mid`` (walls in Stage 0, sort-change refinement in
+        Stage 2).  The crossing phase after the build evaluates probes via
+        the non-mutating :meth:`ZeroManager.solve_at` and never inserts, so
+        the ``_mu2_mid_built`` refresh below is **defensive only** — it fires
+        if some future code path inserts post-build.  During
+        ``build_mu2_mid`` itself (``_mu2_mid_built`` still False) the refresh
+        is skipped: those inserts mutate the mesh *before* Stage 3
+        ``_assemble`` rebuilds μ₂_mid from the final mesh anyway, and syncing
+        here would rebuild arrays that do not yet exist.  The cost of a
+        post-build refresh is one ``_assemble`` (pure numpy bookkeeping on
+        the ~10²–10³ row mesh, µs) — negligible next to the ``_solve``
+        polynomial root-find that ``insert_solution`` already pays.
         """
         insert_at, changed = super().insert_solution(theta1, seg_idx, i)
         if changed and self._mu2_mid_built:
@@ -374,7 +386,12 @@ class Mu2MidZM(ZeroManager):
             if N == 0:
                 clusters_per_seg.append([])
                 continue
-            logabs = logabs_clamped(seg.tracked_roots)  # (N, K)
+            # RAW ln|β₂| (see _LOGABS_CLAMP_L): two 0/∞ padding roots give a
+            # NaN modulus difference (or ±∞ against a finite root), which
+            # fails the same-modulus test — degenerate padding pairs are
+            # naturally excluded from clustering.  M = 0 / N = 0 models
+            # (true boundary at 0/∞) are unsolvable — see doc/SGBZ.md.
+            logabs = np.log(np.abs(seg.tracked_roots))  # (N, K)
             same = np.zeros((K, K), dtype=bool)
             for j in range(K):
                 for k in range(j + 1, K):
@@ -417,7 +434,10 @@ class Mu2MidZM(ZeroManager):
                     np.array([], dtype=int), np.array([], dtype=int),
                 ))
                 continue
-            logabs = logabs_clamped(seg.tracked_roots)  # (N, K)
+            # RAW ln|β₂| — item_logabs feeds clustering / near-tie / sort
+            # comparisons and μ₂_mid assembly; only the μ₂_mid mean clamps
+            # (in _assemble).  Padding roots keep ±∞ here.
+            logabs = np.log(np.abs(seg.tracked_roots))  # (N, K)
             if seg.tangents is not None:
                 tang_re = seg.tangents.real  # (N, K)
             else:
@@ -473,10 +493,10 @@ class Mu2MidZM(ZeroManager):
         genuinely same-modulus everywhere, so a ``j_lo == j_hi`` (mult ≥ 2) row is
         a real continuum region, never a transversal 0D PMGBZ point (those are
         same-modulus at one θ only and fail the whole-segment max).  The frac
-        threshold is therefore only a guard against a single spurious row; it is
-        kept low (0.1) because a missed continuum would make the bisection
-        mis-apply the 0D winding and run off the true boundary (§1: no false
-        negatives).
+        threshold (``_INLINE_CONTINUUM_FRAC``) is therefore only a guard against
+        a single spurious row; it is kept low because a missed continuum would
+        make the bisection mis-apply the 0D winding and run off the true
+        boundary (§1: no false negatives).
         """
         for view in self._item_views:
             if len(view.j_lo) == 0:
@@ -486,7 +506,7 @@ class Mu2MidZM(ZeroManager):
                 continue
             one_item_idx = view.j_lo[one_item]
             if np.any(view.mults[one_item_idx] >= 2):
-                if float(np.mean(one_item)) > 0.1:
+                if float(np.mean(one_item)) > _INLINE_CONTINUUM_FRAC:
                     return True
         return False
 
@@ -666,7 +686,10 @@ class Mu2MidZM(ZeroManager):
                 return None
 
             h = theta_hi - theta_lo
-            logabs = logabs_clamped(seg.tracked_roots)
+            # RAW ln|β₂| (see _LOGABS_CLAMP_L): a ±∞ difference (one of the
+            # pair is a 0/∞ padding root) hits the same-sign return below —
+            # the degenerate pair is abandoned, never refined.
+            logabs = np.log(np.abs(seg.tracked_roots))
             v0 = float(logabs[i, a] - logabs[i, b])
             v1 = float(logabs[i + 1, a] - logabs[i + 1, b])
 
@@ -727,7 +750,7 @@ class Mu2MidZM(ZeroManager):
             # true f_pred and true direction sign (from the inserted row's
             # tangent — more accurate than the cubic approximation).
             seg = self.segments[si]
-            logabs = logabs_clamped(seg.tracked_roots)
+            logabs = np.log(np.abs(seg.tracked_roots))
             f_pred = float(logabs[insert_at, a] - logabs[insert_at, b])
             if seg.tangents is not None:
                 f_prime = float(seg.tangents[insert_at, a].real
@@ -779,8 +802,14 @@ class Mu2MidZM(ZeroManager):
             rows = np.arange(N)
             j_lo = view.j_lo
             j_hi = view.j_hi
-            mu = (view.item_logabs[rows, j_lo]
-                  + view.item_logabs[rows, j_hi]) / 2.0
+            # μ₂_mid is the ONE place the 0/∞ clamp applies (see
+            # _LOGABS_CLAMP_L): each boundary ln|β₂| is clamped to the band
+            # edge, then the pair is averaged.  The derivatives stay raw —
+            # the path evaluator clamps the interpolated value only.
+            mu = (np.clip(view.item_logabs[rows, j_lo],
+                          -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
+                  + np.clip(view.item_logabs[rows, j_hi],
+                            -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)) / 2.0
             dm = (view.item_tang_re[rows, j_lo]
                   + view.item_tang_re[rows, j_hi]) / 2.0
             ths.append(th)
@@ -886,7 +915,12 @@ class Mu2MidZM(ZeroManager):
             la_star = view_star.item_logabs[r_star]
             tang_star = view_star.item_tang_re[r_star]
 
-            value_bp = float((la_star[j_lo_l] + la_star[j_hi_l]) / 2.0)
+            # μ₂_mid value at the breakpoint — same clamp as _assemble.
+            value_bp = float(
+                (float(np.clip(la_star[j_lo_l], -_LOGABS_CLAMP_L,
+                               _LOGABS_CLAMP_L))
+                 + float(np.clip(la_star[j_hi_l], -_LOGABS_CLAMP_L,
+                                 _LOGABS_CLAMP_L))) / 2.0)
             gap = abs(float(la_star[ca] - la_star[cb])) if ca >= 0 else float('nan')
 
             def _deriv(j1: int, j2: int) -> float:
@@ -960,3 +994,107 @@ class Mu2MidZM(ZeroManager):
                     gap=0.0,
                 ))
         return bps
+
+
+# ---------------------------------------------------------------------------
+# Piecewise-smooth μ₂_mid path evaluator
+# ---------------------------------------------------------------------------
+#
+# Shared by crossings.py (§2 — evaluating g = ln|β_j| − μ₂_mid at arbitrary
+# probe θ during crossing refinement, which no longer inserts mesh rows) and
+# winding.py (§6.4 — the loop-winding path).  Lives here (not in winding.py)
+# because winding imports crossings; crossings may not import winding.
+
+class _Mu2MidPath:
+    """Piecewise-smooth ``μ₂_mid(t)`` and ``μ₂_mid'(t)``.
+
+    Built from a :class:`Mu2MidZM`'s flat ``mu2_mid_*`` arrays and
+    ``mu2_mid_breakpoints``.  Between adjacent mesh rows the value is cubic
+    Hermite from the two rows' (value, derivative).  At a breakpoint row the
+    derivative jumps, so the cubic to its RIGHT uses ``deriv_right`` and the
+    cubic to its LEFT uses ``deriv_left`` (from :class:`Mu2MidBreakpoint`);
+    non-breakpoint rows use the smooth stored derivative on both sides.  MR
+    rows (``deriv == inf``) and rows with unusable tangents fall back to
+    linear interpolation (honest and bounded, §2.3 / §6.2).
+    """
+
+    def __init__(self, zm: Mu2MidZM):
+        self.zm = zm
+        self.th = np.asarray(zm.mu2_mid_theta1, dtype=float)
+        self.val = np.asarray(zm.mu2_mid_values, dtype=float)
+        # default (smooth) per-row derivative
+        smooth = np.asarray(zm.mu2_mid_derivs, dtype=float)
+        self.deriv_right = smooth.copy()
+        self.deriv_left = smooth.copy()
+        # override at breakpoint rows — ALL rows at the breakpoint θ, not
+        # just the argmin one: a segment-boundary MR row appears TWICE in
+        # the flat array (end of one segment, start of the next), and
+        # overriding only the first would leave the duplicate on the smooth
+        # derivative, silently dropping deriv_right past the MR.
+        for bp in zm.mu2_mid_breakpoints:
+            for k in np.where(np.isclose(self.th, bp.theta1, atol=1e-8))[0]:
+                self.deriv_right[k] = bp.deriv_right
+                self.deriv_left[k] = bp.deriv_left
+
+    def value_deriv(self, t: float) -> tuple[float, float]:
+        """``(μ₂_mid(t), μ₂_mid'(t))`` via per-row cubic Hermite (linear near MR)."""
+        th = self.th
+        n = len(th)
+        if n == 0:
+            return 0.0, 0.0
+        # locate interval
+        if t <= th[0]:
+            i = 0
+            s = 0.0
+        elif t >= th[-1]:
+            i = n - 2
+            s = 1.0
+        else:
+            i = int(np.searchsorted(th, t, side='right') - 1)
+            i = max(0, min(i, n - 2))
+            s = (t - th[i]) / (th[i + 1] - th[i])
+
+        h = th[i + 1] - th[i]
+        if h <= 0:
+            # zero-width (duplicate segment-boundary row) → return the value
+            return float(self.val[i]), 0.0
+
+        v0 = float(self.val[i])
+        v1 = float(self.val[i + 1])
+        d0 = float(self.deriv_right[i])
+        d1 = float(self.deriv_left[i + 1])
+
+        # MR / divergent tangent → linear (bounded, §6.2)
+        if not (math.isfinite(d0) and math.isfinite(d1)):
+            val = v0 + s * (v1 - v0)
+            deriv = (v1 - v0) / h
+            return val, deriv
+
+        # cubic Hermite of μ₂_mid on [i, i+1]: value + analytic derivative
+        h2 = h * h
+        h3 = h2 * h
+        a = (2.0 * (v0 - v1)) / h3 + (d0 + d1) / h2
+        b = (3.0 * (v1 - v0)) / h2 - (2.0 * d0 + d1) / h
+        # f(s·h) = a·s³h³ + b·s²h² + d0·s·h + v0
+        val = a * (s * h) ** 3 + b * (s * h) ** 2 + d0 * (s * h) + v0
+        # f'(t) = 3a·(t-t0)² + 2b·(t-t0) + d0
+        deriv = 3.0 * a * (s * h) ** 2 + 2.0 * b * (s * h) + d0
+
+        # μ₂_mid is defined as the mean of logabs_clamped values, so it is
+        # bounded to ±_LOGABS_CLAMP_L (a 0/∞ boundary root's ln|β| saturates at
+        # the band edge — see _LOGABS_CLAMP_L).  The endpoint *values* honour
+        # this (they come from logabs_clamped), but the endpoint *derivatives*
+        # d0/d1 are the raw analytic tangent Re(V)=d(ln|β|)/dθ₁
+        # (compute_tangent applies NO cap), which is huge near a boundary root
+        # collapsing to 0/∞.  Feeding huge unclamped derivatives into a cubic
+        # whose values are clamped lets the interpolant overshoot μ₂_mid far
+        # outside the band (to ±10²–10³), so β₂ = exp(μ₂_mid) overflows in the
+        # winding loop and the quad of Im[f'/f] returns nan.  Clamp the path to
+        # the same band the data lives in; where the cubic tried to escape, the
+        # clamped function is saturated (derivative 0), consistent with the
+        # clamped-value model and bounded (no overflow, no divergent quad).
+        if val > _LOGABS_CLAMP_L:
+            return float(_LOGABS_CLAMP_L), 0.0
+        if val < -_LOGABS_CLAMP_L:
+            return float(-_LOGABS_CLAMP_L), 0.0
+        return float(val), float(deriv)
