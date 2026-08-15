@@ -177,11 +177,23 @@ def _find_mu2_for_w2_zero(
         w_mid, zeros, has_continuum = _winding_at(mu2_mid)
 
         if has_continuum:
-            w_left, _, _ = _winding_at(mu2_mid - continuum_perturb)
-            w_right, _, _ = _winding_at(mu2_mid + continuum_perturb)
+            # Resolve the winding limits at mu2_mid ± eps.  The degenerate band
+            # is O(continuum_tol), so continuum_perturb typically escapes it;
+            # the ladder handles a wider band (mirrors _resolve_continuum Step 1).
+            w_left = w_right = None
+            for scale in (1.0, 2.0, 4.0, 8.0):
+                eps = continuum_perturb * scale
+                w_left, _, has_cont_left = _winding_at(mu2_mid - eps)
+                w_right, _, has_cont_right = _winding_at(mu2_mid + eps)
+                if (not has_cont_left) and (not has_cont_right):
+                    break
+            else:
+                raise RuntimeError(
+                    f"continuum at mu2={mu2_mid:.8g} (E_ref={E_ref}, mu1={mu1}) "
+                    f"could not be resolved: all perturbation scales still degenerate."
+                )
 
             if w_left * w_right < 0:
-
                 # At the continuum mu2 there are no discrete zeros
                 # (every point in the band satisfies |β2| ≈ exp(mu2)).
                 # Return zeros=[] so the outer bisection knows to compute
@@ -190,14 +202,22 @@ def _find_mu2_for_w2_zero(
                     "mu2": mu2_mid, "zeros": [], "is_continuum": True,
                     "winding": (w_left, w_right), "_zm": zm,
                 }
+            # Non-boundary (w_left, w_right same sign): w2 is monotonic in mu2,
+            # so the w2=0 zero is OUTSIDE the band.  Keep the bracket endpoint
+            # at the degenerate mu2_mid but pair it with w_left — deliberately
+            # NOT w_right.  w_right can sit exactly ON the w2=0 plateau (a =0
+            # limit here means "w2=0", which is the inner bisection's own
+            # target, NOT a "not-a-GBZ-point" signal — that distinction belongs
+            # to the μ₁-level continuum logic).  Setting the bracket winding to
+            # a 0 from w_right would break the sign invariant (w_low<0<w_high)
+            # and send the bisection off to a spurious μ₂.
+            if w_low * w_left > 0:
+                low = mu2_mid
+                w_low = w_left
             else:
-                if w_low * w_left > 0:
-                    low = mu2_mid
-                    w_low = w_left
-                else:
-                    high = mu2_mid
-                    w_high = w_left
-                continue
+                high = mu2_mid
+                w_high = w_left
+            continue
 
         if abs(w_mid) < xtol or (high - low) < xtol:
             # --- Post-refinement + Newton correction ---
@@ -214,8 +234,17 @@ def _find_mu2_for_w2_zero(
             low = mu2_mid
             w_low = w_mid
 
-    # Max iterations reached
-    raise ValueError("Max iterations reached in mu2 bisection.")
+    # Max iterations exhausted — the μ₂ bisection failed to converge.  Raise
+    # with the best-known point's state (no silent mid-bracket "success").
+    mu2_final = 0.5 * (low + high)
+    w_final, zeros_final, has_cont_final = _winding_at(mu2_final)
+    n_zeros = len(zeros_final) if zeros_final is not None else 0
+    raise RuntimeError(
+        f"mu2 bisection failed to converge after {max_iter} iterations: "
+        f"E_ref={E_ref}, mu1={mu1}, mu2={mu2_final:.12g}, "
+        f"len(subsets)={n_zeros}, is_continuum={has_cont_final}, "
+        f"winding={w_final}"
+    )
 
 
 def _resolve_continuum(
@@ -429,6 +458,8 @@ def bisect_amoeba_ronkin_min(
         raise ValueError(f"bisect_amoeba_ronkin_min: reach maximum expansion. E_ref:{E_ref}, low:{low}, high:{high}")
 
     mu1_low, mu1_high = low, high
+    inner_mid = None
+    w1_mid = None
 
     for _ in range(max_iter):
         mu1_mid = 0.5 * (mu1_low + mu1_high)
@@ -478,16 +509,23 @@ def bisect_amoeba_ronkin_min(
                 }
 
             if resolved["w1_resolved"]:
-                # w2 opposite but w1 not — use w1 sign for bracket update.
-                # w1_left is at mu1_mid − ε, between mu1_low and mu1_mid.
-                # Compare with w1_low to determine the zero's location.
-                w1_proxy = resolved["w1_left"]
-                if w1_low * w1_proxy < 0:
-                    mu1_high = mu1_mid
-                    w1_high = w1_proxy
+                # w2 opposite but w1 not — same sign or a zero limit: the w1
+                # zero is OUTSIDE (or at the edge of) the band.  w1_left == 0
+                # is a zero-plateau signal at mu1_mid−ε, NOT a GBZ point;
+                # returning that =0 edge lets the bisection converge there and
+                # the discrete path handle it.  w1_left/w1_right were computed
+                # at mu1_mid ∓ ε (ε = continuum_perturb, _resolve_continuum
+                # Step 2).  Set the bracket endpoint to the band edge nearest
+                # the zero — INCLUDING the =0 edge — paired with ITS winding,
+                # not the degenerate mu1_mid with a proxy bolted on.
+                w1_left = resolved["w1_left"]
+                w1_right = resolved["w1_right"]
+                if w1_left >= 0:
+                    mu1_high = mu1_mid - continuum_perturb
+                    w1_high = w1_left
                 else:
-                    mu1_low = mu1_mid
-                    w1_low = w1_proxy
+                    mu1_low = mu1_mid + continuum_perturb
+                    w1_low = w1_right
                 continue
 
             # _resolve_continuum could not pin down the w1 sign at this
@@ -537,5 +575,13 @@ def bisect_amoeba_ronkin_min(
             mu1_low = mu1_mid
             w1_low = w1_mid
 
-    mu1_mid = 0.5 * (mu1_low + mu1_high)
-    raise ValueError(f"bisect_amoeba_ronkin_min: Bisection failed. E_ref{E_ref}")
+    # Max iterations exhausted — the outer μ₁ bisection failed to converge.
+    # Raise with the best-known state (do not return a mid-bracket "success").
+    mu1_final = 0.5 * (mu1_low + mu1_high)
+    zeros_final = (inner_mid.get("zeros") or []) if inner_mid is not None else []
+    raise RuntimeError(
+        f"outer mu1 bisection failed to converge after {max_iter} iterations: "
+        f"E_ref={E_ref}, mu1={mu1_final:.12g}, len(subsets)={len(zeros_final)}, "
+        f"is_continuum={inner_mid['is_continuum'] if inner_mid is not None else None}, "
+        f"winding={w1_mid}"
+    )

@@ -91,7 +91,7 @@ def _resolve_continuum_winding(
     continuum_tol: float,
     crossing_tol: float,
     max_newton: int,
-) -> tuple[Optional[float], Optional[float]]:
+) -> tuple[Optional[float], Optional[float], Optional[float]]:
     """Compute the left / right winding limits at a continuum-degenerate mu1.
 
     Tries perturbation scales (1, 2, 4, 8) × *continuum_perturb* to escape
@@ -99,8 +99,10 @@ def _resolve_continuum_winding(
     continuum gate short-circuits; the precise 0D subsets are not needed
     here — only the winding sign matters for the bisection).
 
-    Returns ``(w_left, w_right)`` — each is ``float`` or ``None`` (if all
-    scales still degenerate on that side).
+    Returns ``(w_left, w_right, eps)`` where *eps* is the first scale at
+    which BOTH sides escaped the degenerate band — the caller needs it to
+    place the continuation point at ``mu1 ± eps``.  Returns ``(None, None,
+    None)`` when all scales are still degenerate on some side.
     """
     eval_kwargs = dict(
         continuum_tol=continuum_tol,
@@ -116,8 +118,8 @@ def _resolve_continuum_winding(
             poly, E_ref, mu1 + eps, zm_run_kwargs, **eval_kwargs,
         )
         if (w_left is not None) and (w_right is not None):
-            return w_left, w_right
-    return None, None
+            return w_left, w_right, eps
+    return None, None, None
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +170,13 @@ def solve_SGBZ_for_E(
         max_newton=max_newton,
     )
 
-    # --- winding_at: evaluate average major-axis winding in sweep mode ---
+    # --- winding_at: evaluate W(E_ref, mu1) + 0D subsets at *mu1_val* ---
+    # Partially-applied _evaluate_winding on the fixed (poly, E_ref,
+    # zm_run_kwargs, eval_kwargs): returns the full (winding, subsets, zm)
+    # triple.  The subsets are used by the callers
+    # below (gbz_low/gbz_high/gbz_mid/gbz_final), so this is the general
+    # evaluation, not a winding-only cheap probe (that lives in
+    # _resolve_continuum_winding, which discards the subsets).
     def winding_at(mu1_val: float):
         return _evaluate_winding(
             poly, E_ref, mu1_val, zm_run_kwargs, **eval_kwargs,
@@ -185,7 +193,7 @@ def solve_SGBZ_for_E(
         zm: Mu2MidZM | None,
         mu1_bracket: tuple[float, float | None],
     ):
-        w_l, w_r = _resolve_continuum_winding(
+        w_l, w_r, eps = _resolve_continuum_winding(
             poly, E_ref, mu1_val, zm_run_kwargs,
             continuum_perturb=continuum_perturb, **eval_kwargs,
         )
@@ -194,6 +202,12 @@ def solve_SGBZ_for_E(
                 f"Cannot resolve continuum at mu1={mu1_val:.8g}: "
                 f"all perturbation scales still degenerate."
             )
+        # Boundary: the winding limits STRICTLY straddle zero (opposite
+        # signs).  A limit exactly zero is NOT a boundary — it is a
+        # zero-plateau signal (the winding vanishes right at the band edge),
+        # and a zero plateau is not a GBZ point; that case falls through to
+        # the same-sign branch, which returns the =0 edge so the bisection
+        # converges there and the discrete path + plateau check handle it.
         if w_l * w_r < 0:
             line_subsets = (extract_continuum_linesubsets(zm, poly)
                             if zm is not None else [])
@@ -214,7 +228,17 @@ def solve_SGBZ_for_E(
                 "_w_limits": (w_l, w_r),
                 "_exit_reason": "continuum_boundary",
             }
-        return False, w_l, None  # proxy = w_l (amoeba convention)
+        # Non-boundary (same sign or a zero limit): W is monotonic increasing
+        # in mu1, so the winding-zero is OUTSIDE (or at the edge of) the
+        # degenerate band.  w_l == 0 means the zero sits at mu1−ε (left edge,
+        # a zero plateau); w_r == 0 (with w_l < 0) means it sits at mu1+ε.
+        # Return the band edge nearest the zero — INCLUDING the =0 edge —
+        # paired with its own winding, so the bisection converges there and
+        # the discrete path + plateau check reclassify it.  Do NOT bolt a
+        # proxy winding onto the degenerate mu1_val.
+        if w_l >= 0:
+            return False, (mu1_val - eps, w_l), None   # zero at/left of band
+        return False, (mu1_val + eps, w_r), None       # zero right of band
 
     # --- Step 1: bracket expansion ---
     # Initialize bracket variables before defining handle_continuum closure.
@@ -229,11 +253,11 @@ def solve_SGBZ_for_E(
     while True:
         w_low, gbz_low, zm_low = winding_at(mu1_low)
         if w_low is None:
-            is_boundary, proxy_w, result = handle_continuum(
+            is_boundary, proxy, result = handle_continuum(
                 mu1_low, zm_low, (mu1_low, mu1_ext_right))
             if is_boundary:
                 return result
-            w_low = proxy_w  # use resolved proxy value
+            mu1_low, w_low = proxy  # corrected (mu1, w) at the band edge
 
         if w_low < zero_tol:
             break
@@ -258,11 +282,11 @@ def solve_SGBZ_for_E(
         while True:
             w_high, gbz_high, zm_high = winding_at(mu1_ext_right)
             if w_high is None:
-                is_boundary, proxy_w, result = handle_continuum(
+                is_boundary, proxy, result = handle_continuum(
                     mu1_ext_right, zm_high, (mu1_low, mu1_ext_right))
                 if is_boundary:
                     return result
-                w_high = proxy_w
+                mu1_ext_right, w_high = proxy
 
             if w_high > -zero_tol:
                 break
@@ -282,11 +306,11 @@ def solve_SGBZ_for_E(
     else:
         w_high, _, zm_high = winding_at(mu1_ext_right)
         if w_high is None:
-            is_boundary, proxy_w, result = handle_continuum(
+            is_boundary, proxy, result = handle_continuum(
                 mu1_ext_right, zm_high, (mu1_low, mu1_ext_right))
             if is_boundary:
                 return result
-            w_high = proxy_w
+            mu1_ext_right, w_high = proxy
 
     mu1_high = mu1_ext_right
 
@@ -302,21 +326,26 @@ def solve_SGBZ_for_E(
         w_mid, gbz_mid, zm_mid = winding_at(mu1_mid)
 
         if w_mid is None:
-            is_boundary, proxy_w, result = handle_continuum(
+            is_boundary, proxy, result = handle_continuum(
                 mu1_mid, zm_mid, (mu1_low, mu1_high))
             if is_boundary:
                 return result
-            # At a non-boundary continuum, W is undefined here.  Use the proxy
-            # for bracket update but do NOT converge on a proxy value — the
-            # bisection target is the genuine W-zero, not the left/right limit
-            # of a continuum point.
-            f_mid = proxy_w
+            # At a non-boundary continuum, W is undefined at mu1_mid.  The
+            # proxy is the (mu1, w) pair at the band edge nearest the zero;
+            # use THAT mu1 as the bracket endpoint — do NOT converge on the
+            # proxy value (the bisection target is the genuine W-zero, not a
+            # continuum edge).
+            mu1_adj, f_mid = proxy
         else:
+            mu1_adj = mu1_mid
             f_mid = w_mid
             # Convergence check only applies at genuine winding values.
             # At a continuum (w_mid is None) we continue bisection.
-            if abs(f_mid) <= zero_tol or (mu1_high - mu1_low) < xtol:
-                exit_reason = "w_zero" if abs(f_mid) <= zero_tol else "bracket_xtol"
+            # 2025-08-15: x_tol is no longer an exit reason. Bisection is finished only when:
+            #   1. f_mid is zero, corresponding to the discrete case
+            #   2. continuum is detected.
+            if abs(f_mid) <= zero_tol:
+                exit_reason = "w_zero"
                 return {
                     "mu1": mu1_mid,
                     "subsets": gbz_mid,
@@ -331,25 +360,26 @@ def solve_SGBZ_for_E(
         # returned _winding_bracket should reflect the final bracket; f_mid
         # may be a continuum proxy, whose sign is all the bisection uses).
         if w_low * f_mid < 0:
-            mu1_high = mu1_mid
+            mu1_high = mu1_adj
             w_high = f_mid
         else:
-            mu1_low = mu1_mid
+            mu1_low = mu1_adj
             w_low = f_mid
 
-    # Max iterations exhausted — last midpoint as fallback
+    # Max iterations exhausted — bisection failed to converge.  Raise instead
+    # of returning a mid-bracket point: the old fallback dressed a
+    # non-convergence up as a "success" (a ±1-winding GBZ or an empty set)
+    # and could silently misclassify the energy.  Report the failure with the
+    # best-known point's full state.
     mu1_final = 0.5 * (mu1_low + mu1_high)
     w_final, gbz_final, _ = winding_at(mu1_final)
     is_continuum = (w_final is None)
-    return {
-        "mu1": mu1_final,
-        "subsets": gbz_final,
-        "winding": w_final,
-        "is_continuum": is_continuum,
-        "_mu1_bracket": (mu1_low, mu1_high),
-        "_winding_bracket": (w_low, w_high),
-        "_exit_reason": "max_iter",
-    }
+    n_subsets = len(gbz_final) if gbz_final is not None else 0
+    raise RuntimeError(
+        f"bracket bisection failed to converge after {max_iter} iterations: "
+        f"E_ref={E_ref}, mu1={mu1_final:.12g}, len(subsets)={n_subsets}, "
+        f"is_continuum={is_continuum}, winding={w_final}"
+    )
 
 
 # ---------------------------------------------------------------------------
