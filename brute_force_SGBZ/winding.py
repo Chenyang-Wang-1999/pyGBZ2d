@@ -23,9 +23,11 @@ Design (``log/2026-08-13-SGBZ算法梳理.md`` §3/§6.4):
     approximation, and the integration honours the analytic derivative.
   * Crossings come in two kinds.  **Ordinary** (charge ±1, SOFT): the winding
     across it is fixed by its charge, so it only partitions ``θ₂`` into
-    intervals *within* a region.  **MR / tangent / unknown** (charge 0, HARD):
-    charge unknown, so it DELIMITES regions; across a hard boundary the winding
-    is recomputed independently.
+    intervals *within* a region.  **MR / tangent / unknown** (HARD): the
+    charge is UNKNOWN (the charge dict stores ``None``, never a numeric
+    value), so it DELIMITES regions; across a hard boundary the winding is
+    recomputed independently, and any accidental arithmetic on its charge
+    fails with ``TypeError``.
   * Therefore: partition the circle into regions delimited by hard
     boundaries; within each region, ordinary boundaries split it into
     intervals.  Pick ONE seed interval per region (the safest — farthest from
@@ -46,7 +48,7 @@ from gbz_types import CharPoly, PointSubset
 from continuation import ZeroManager
 
 from .crossings import detect_crossings_simple, _ensure_mu2mid, _MAX_NEWTON_ITER
-from .mu2mid import Mu2MidZM, _Mu2MidPath
+from .mu2mid import Mu2MidZM
 
 
 # ---------------------------------------------------------------------------
@@ -120,9 +122,8 @@ def get_winding_number(
 # ---------------------------------------------------------------------------
 # Piecewise-smooth μ₂_mid loop path
 # ---------------------------------------------------------------------------
-# _Mu2MidPath now lives in mu2mid.py (shared with crossings.py, which needs it
-# to evaluate the built μ₂_mid curve at arbitrary probe θ without mutating the
-# mesh — the 2026-08-14 zero-mutation crossing refinement).
+# The independent Mu2Mid object lives in mu2mid.py and is built by
+# Mu2MidZM.analyze(); winding evaluates it directly.
 
 
 def _loop_winding_quad(
@@ -141,10 +142,13 @@ def _loop_winding_quad(
     MR-boundary row exactly, so the cross-segment seam contributes nothing
     extra (the breakpoint split already isolates it).
     """
-    path = _Mu2MidPath(zm)
+    if zm.mu2_mid is None:
+        raise RuntimeError("compute_average_winding requires Mu2MidZM.analyze() "
+                           "to have built the mu2_mid path")
+    path = zm.mu2_mid
     twopi = 2 * math.pi
-    bp_thetas = [float(b.theta1) for b in zm.mu2_mid_breakpoints
-                 if 0.0 < b.theta1 < twopi]
+    bp_thetas = [float(t) for t in path.breakpoints
+                 if 0.0 < t < twopi]
 
     def loop_fun(t: float):
         mu2v, dmu2 = path.value_deriv(t)
@@ -179,14 +183,18 @@ def _loop_min_f(
     have ``|f|≈0`` where ``|∂f/∂β₂|`` is large).  Maximising ``min |f|``
     picks a θ₂ where the whole loop is genuinely far from any zero.
     """
+    if zm.mu2_mid is None:
+        raise RuntimeError("_loop_min_f requires Mu2MidZM.analyze()")
     worst = math.inf
     for s_idx, seg in enumerate(zm.segments):
         th = seg.theta1_arr
+        if len(th) == 0:
+            continue
         mu2 = zm.seg_mu2_values[s_idx]
         beta1 = np.exp(zm.mu1 + 1j * th)
         beta2 = np.exp(mu2 + 1j * theta2)
         for i in range(len(th)):
-            v = abs(poly.eval_val((zm.E_ref, beta1[i], beta2[i])))
+            v = abs(poly.eval_val((zm.E_ref, complex(beta1[i]), complex(beta2[i]))))
             if v < worst:
                 worst = v
                 if worst == 0.0:
@@ -243,9 +251,16 @@ def compute_average_winding(
     Topology (§3): crossings come in two kinds:
       * ordinary (charge ±1, SOFT): the winding across it is fixed by its
         charge, so it only partitions θ₂ into intervals *within* a region.
-      * mr / tangent / unknown (charge 0, HARD): charge unknown, so it
-        DELIMITES regions.  Across a hard boundary the winding is recomputed
-        independently.
+      * mr / tangent / unknown (HARD): the charge is UNKNOWN — the charge
+        dict stores ``None`` — so it DELIMITES regions.  Across a hard
+        boundary the winding is recomputed independently; any accidental
+        arithmetic on its charge raises ``TypeError``.
+
+    Charge conservation: when EVERY boundary is soft, the charges must sum
+    to zero (one full θ₂ circle returns the winding to itself); a non-zero
+    sum means the crossing detector missed or duplicated a zero and raises
+    ``RuntimeError``.  Any hard boundary disables this check because its
+    charge is unknown.
 
     Therefore: partition the circle into REGIONS delimited by hard
     boundaries; within each region, ordinary boundaries split it into
@@ -258,21 +273,36 @@ def compute_average_winding(
     contribute 0 to the arc-weighted mean; sequential charge propagation
     handles a +1/−1 pair at one θ₂ correctly.
     """
-    m = _ensure_mu2mid(zm, poly)
+    m = _ensure_mu2mid(zm)
     E_ref = m.E_ref
     mu1 = m.mu1
     twopi = 2 * math.pi
 
-    # Boundary list (θ₂, is_hard, dc): the winding change as θ₂ increases
-    # PAST this boundary.  Each zero of f is a SINGLE boundary at its θ₂ with
-    # its own charge (§3.1): dc = charge = sign(g') = the zero-curve's
-    # direction through μ₂_mid, which equals the loop-winding jump at that θ₂
-    # (verified by direct evaluation on both sides).  No pairing — the two
-    # boundary tracks at the same θ₁ are two independent zeros (two θ₂).
-    boundaries: list[tuple[float, bool, int]] = []
+    # Boundary list (θ₂, is_hard, dc).  For an ORDINARY boundary
+    # dc = charge = sign(g') is the loop-winding jump as θ₂ increases PAST
+    # it (verified by direct evaluation on both sides).  For a HARD boundary
+    # (mr/tangent/unknown) the physical charge is unknown: the dict stores
+    # None — never a numeric placeholder — so dc is None and any accidental
+    # arithmetic on it raises TypeError.  Hard boundaries delimit regions and
+    # are never used for propagation.  No pairing — the two boundary tracks
+    # at the same θ₁ are two independent zeros (two θ₂).
+    boundaries: list[tuple[float, bool, int | None]] = []
     for ch in charges:
         hard = ch['kind'] in ('mr', 'tangent', 'unknown')
         boundaries.append((ch['theta2'] % twopi, hard, ch['charge']))
+
+    # Charge conservation applies ONLY when every boundary is SOFT
+    # (ordinary, charge ±1): one full θ₂ circle must return the winding to
+    # itself, so the soft charges must sum to zero.  A HARD boundary has
+    # UNKNOWN charge (stored as None), so its presence disables the check.
+    if not any(b[1] for b in boundaries):
+        charge_sum = sum(b[2] for b in boundaries)
+        if charge_sum != 0:
+            raise RuntimeError(
+                f"crossing charges do not sum to zero (sum={charge_sum}, "
+                f"n_boundaries={len(boundaries)}) at E_ref={E_ref}, "
+                f"mu1={mu1}: crossing detection is incomplete"
+            )
 
     # ≤ 1 boundary: the full θ₂ circle is one region with constant winding.
     if len(boundaries) <= 1:
@@ -366,7 +396,7 @@ def detect_crossings_and_winding(
 
     Returns ``(subsets, W_avg)``.
     """
-    m = _ensure_mu2mid(zm, poly, **(zm_run_kwargs or {}))
+    m = _ensure_mu2mid(zm, **(zm_run_kwargs or {}))
     subsets, charges = detect_crossings_simple(
         m, poly,
         crossing_tol=crossing_tol,

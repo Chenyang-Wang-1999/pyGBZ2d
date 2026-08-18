@@ -65,11 +65,13 @@ linear tangent extrapolation).
 
 ### 2.3 Handling $0$ and $\infty$
 
-Roots at $\beta_2 = 0$ or $\beta_2 = \infty$ have undefined $\ln\beta_2$ and are excluded
-from $\|\mathbf{V}\|_2$ computation.  Their tangent components are set to $V_j = 0$ and
-their values are kept unchanged during prediction.
+Roots at $\beta_2 = 0$ or $\beta_2 = \infty$ have undefined $\ln\beta_2$, so their tangent
+components are set to $V_j = \mathrm{nan}$ (undefined — not zero) and their values are kept
+unchanged during prediction.  $\|\mathbf{V}\|_2$ ignores the nan components; the inf
+components produced by multiple roots are deliberately kept so that an MR drives
+$\Delta\theta_1 \to 0$ and triggers the step-collapse detector.
 
-Thresholds: $|\beta_2| < 10^{-14}$ (near 0), $|\beta_2| > 10^{14}$ (near $\infty$).
+Thresholds: $|\beta_2| < 10^{-6}$ (near 0), $|\beta_2| > 10^{6}$ (near $\infty$).
 
 ### 2.4 Multiple root detection
 
@@ -175,6 +177,25 @@ Each `SegmentData` stores:
 After the full $[0, 2\pi)$ loop, `ZeroManager.boundary_perm` stores the permutation
 from the right boundary ($\theta_1 = 2\pi$) to the left boundary ($\theta_1 = 0$).
 
+### 2.8 Unified Hermite interpolation
+
+The discrete root mesh is turned into a continuous curve by two-point cubic
+Hermite interpolation.  All construction sites share `continuation/interpolation.py`:
+
+- `cubic_hermite_poly(h, v0, dv0, v1, dv1)` — the pure cubic builder
+  ($f(0)=v0,\ f'(0)=dv0,\ f(h)=v1,\ f'(h)=dv1$); no input validation.
+- `hermite_interp_poly(...)` — checks whether `dv0` and `dv1` are finite:
+  both finite → the cubic above (`len(poly) == 4`); either divergent/undefined
+  → the linear polynomial `[slope, v0]` with `slope = (v1 - v0) / h`
+  (`len(poly) == 2`).
+
+Both follow the numpy `poly` convention (highest power first), so evaluation is
+`np.polyval`, differentiation `np.polyder`, and curve intersection
+`np.roots(np.polysub(p1, p2))`; `len(poly)` distinguishes cubic from linear.
+Consumers: `arclength.predict_roots_hermite` (root-track prediction),
+`Mu2MidZM` sort-change refinement and μ₂_mid path evaluation, and SGBZ crossing
+bracketing.
+
 ## 3. API
 
 ### 3.1 Top-level entry point
@@ -215,10 +236,10 @@ seg.tracked_roots    # np.ndarray (N, K) — track-ordered β₂ roots
 seg.abs_argsort      # np.ndarray (N, K) — per-row |β₂| argsort
 seg.left_mr          # int — MR index at left boundary (-1 = none)
 seg.right_mr         # int — MR index at right boundary (-1 = none)
-seg.tangents         # np.ndarray (N, K) — per-row analytic V_j; None for test-built segs
+seg.tangents         # np.ndarray (N, K) — per-row analytic V_j, always built by run();
 ```
 
-`ZeroManager.insert_solution(theta1, seg_idx=None, i=None)` is a **mutating** operation:
+`ZeroManager.insert_solution(theta1, seg_idx=None, i=None, *, interp='hermite')` is a **mutating** operation; `interp='linear'` uses the two-point linear matching anchor (used by SGBZ pairwise crossing insertion) and is otherwise identical:
 it solves the β₂ roots at an interior θ₁, reorders them onto the segment's track frame via
 Hungarian matching against `interpolate_roots` (the prediction anchor), and splices the new
 row into `SegmentData.theta1_arr`, `tracked_roots`, `abs_argsort`, and `tangents` *in place*
@@ -231,6 +252,7 @@ the hook `Mu2MidZM` overrides to densify the mesh at μ₂-refinement sites.
 ```python
 from continuation import (
     compute_tangent, predict_roots, estimate_error, arclength_step,
+    cubic_hermite_poly, hermite_interp_poly,
     multiple_root_point_trigger, MultipleRootIntervalTrigger,
     detect_cluster, solve_multiple_roots_in_interval,
     integrate_segment,
@@ -242,6 +264,8 @@ from continuation import (
 |----------|---------|---------|
 | `compute_tangent(poly, E_ref, beta1, roots)` | `(V, norm_V)` | Tangent vector and its norm |
 | `predict_roots(roots, V, dtheta1)` | `predicted` | First-order tangent extrapolation |
+| `cubic_hermite_poly(h, v0, dv0, v1, dv1)` | `np.ndarray` (len 4) | Pure cubic Hermite poly (numpy poly order) |
+| `hermite_interp_poly(h, v0, dv0, v1, dv1)` | `np.ndarray` (len 4 or 2) | Cubic Hermite, or linear fallback when an endpoint derivative is not finite |
 | `estimate_error(predicted, actual)` | `error_norm` | Chordal-distance error norm |
 | `arclength_step(poly, E_ref, mu1, theta1, roots, h, ctrl=StepControl())` | `StepResult` | One adaptive step |
 | `multiple_root_point_trigger(dtheta, *, min_dtheta=1e-10)` | `bool` | Step-size collapse check |
@@ -302,6 +326,10 @@ continuation/
 │                        #     predict_roots, predict_roots_hermite (matching
 │                        #     anchor for ZM / MR solvers), estimate_error,
 │                        #   arclength_step
+├── interpolation.py     # Unified Hermite polynomial builders:
+│                        #   cubic_hermite_poly (pure cubic, no checks),
+│                        #   hermite_interp_poly (automatic linear fallback when
+│                        #     an endpoint derivative is not finite)
 ├── multiple_roots.py    # MR detection & refinement (~448 lines):
 │                        #   MultipleRootInfo (with cluster_stds),
 │                        #   snap_clusters_to_mean, multiple_root_point_trigger,

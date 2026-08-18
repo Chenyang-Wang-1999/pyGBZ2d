@@ -112,6 +112,23 @@ class TestZeroManagerBasic:
         for i in range(n):
             assert set(seg.abs_argsort[i]) == set(range(zm.K))
 
+    def test_run_twice_raises(self, poly_D):
+        """run() appends, not resets — a second run must fail loudly."""
+        zm = ZeroManager(poly_D, 0j, 0.0)
+        zm.run(h0=0.1)
+
+        n_segments = zm.n_segments
+        n_mrs = zm.n_multiple_roots
+        boundary_perm = zm.boundary_perm.copy()
+
+        with pytest.raises(RuntimeError, match="already been called"):
+            zm.run(h0=0.1)
+
+        # The rejected second call must not have touched the built state.
+        assert zm.n_segments == n_segments
+        assert zm.n_multiple_roots == n_mrs
+        assert np.array_equal(zm.boundary_perm, boundary_perm)
+
 
 # ===========================================================================
 # Multiple root detection

@@ -39,6 +39,8 @@ brute-force-non-hermitian/
 ├── data/                       # Pickled computation results (demos / replication)
 ├── log/                        # Change logs
 │   ├── ......
+├── paper/                      # Folder for official PRB paper for this project
+│   ├── ......
 ├── doc/                        # Documentation
 │   ├── SGBZ.md                 # SGBZ theory, architecture, API
 │   ├── amoeba.md               # Amoeba theory, algorithm, API

@@ -17,10 +17,7 @@ from __future__ import annotations
 
 import math
 import cmath
-import warnings
 from typing import Optional
-
-import numpy as np
 
 from gbz_types import (
     CharPoly, GBZResult, PointSubset,
@@ -79,37 +76,25 @@ def _evaluate_probe(
     another inside ``detect_crossings_and_winding``).
 
     Returns a dict with ``success``, ``is_continuum``, ``winding``, ``gbz_count``.
-    ``success=False`` if the ZeroManager raised (the probe is skipped then).
+    Errors propagate directly — a failing probe must not be silently skipped.
     """
-    point: dict = {"success": False}
-    try:
-        m = Mu2MidZM(poly, E_ref, mu1)
-        m.run(**zm_run_kwargs)
-        m.build_mu2_mid(tie_tol=continuum_tol)
-        if m.has_continuum:
-            point.update({
-                "success": True, "is_continuum": True,
-                "winding": float('nan'), "gbz_count": 0,
-            })
-            return point
-        subsets, W = detect_crossings_and_winding(
-            m, poly,
-            crossing_tol=crossing_tol,
-            max_newton=max_newton,
-        )
-        point.update({
-            "success": True, "is_continuum": False,
-            "winding": float(W), "gbz_count": len(subsets),
-        })
-    except Exception as e:
-        # A failing probe is not fatal — the caller treats it as non-plateau.
-        # Surface it anyway (CLAUDE.md: unexpected results must be reported,
-        # not silently absorbed); a flood of these is itself a signal.
-        warnings.warn(
-            f"plateau probe at mu1={mu1:.8g} failed: {e}", RuntimeWarning)
-        point.update({"success": False, "is_continuum": False,
-                      "winding": float('nan'), "gbz_count": -1})
-    return point
+    m = Mu2MidZM(poly, E_ref, mu1)
+    m.run(**zm_run_kwargs)
+    m.analyze(tie_tol=continuum_tol, crossing_tol=crossing_tol)
+    if m.has_continuum:
+        return {
+            "success": True, "is_continuum": True,
+            "winding": float('nan'), "gbz_count": 0,
+        }
+    subsets, W = detect_crossings_and_winding(
+        m, poly,
+        crossing_tol=crossing_tol,
+        max_newton=max_newton,
+    )
+    return {
+        "success": True, "is_continuum": False,
+        "winding": float(W), "gbz_count": len(subsets),
+    }
 
 
 def _is_zero_plateau_probe(point: dict, zero_tol: float) -> bool:

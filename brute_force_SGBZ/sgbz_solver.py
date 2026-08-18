@@ -34,6 +34,13 @@ from .crossings import _CROSSING_TOL, _MAX_NEWTON_ITER
 from .mu2mid import Mu2MidZM
 
 
+# Max bracket-expansion steps per side (aligned with amoeba's
+# max_range_expansions=10).  The expansion loop only guards against runaway
+# cases (unsolvable models, non-monotonic winding); a normal winding crosses
+# zero within 1-2 steps of the default guess.
+_MAX_BRACKET_EXPANSIONS = 10
+
+
 # ---------------------------------------------------------------------------
 # W(E_ref, mu1) evaluation + continuum resolution
 # ---------------------------------------------------------------------------
@@ -51,7 +58,7 @@ def _evaluate_winding(
     """Evaluate W(E_ref, mu1) and the 0D subsets at *mu1*.
 
     Builds a fresh ``Mu2MidZM`` at *mu1* (mu1 is the bisection variable, so
-    each probe needs its own ZM) and runs :meth:`build_mu2_mid` — the build
+    each probe needs its own ZM) and runs :meth:`analyze` — the analysis
     both detects the continuum inline (§1/§6.3: ``has_continuum``) and
     provides the piecewise-smooth path the winding integral needs, so the
     root-solving cost is amortised (§6.3).  When a continuum is detected W is
@@ -68,7 +75,7 @@ def _evaluate_winding(
     """
     zm = Mu2MidZM(poly, E_ref, mu1)
     zm.run(**zm_run_kwargs)
-    zm.build_mu2_mid(tie_tol=continuum_tol)
+    zm.analyze(tie_tol=continuum_tol, crossing_tol=crossing_tol)
 
     if zm.has_continuum:
         return None, None, zm
@@ -142,12 +149,15 @@ def solve_SGBZ_for_E(
 ) -> dict:
     """Locate the winding-zero mu1 and return solve diagnostics.
 
-    Uses bracket expansion + plain bisection (midpoint).  When a
-    continuum-degenerate mu1 is encountered, ``_resolve_continuum_winding``
-    resolves the left/right winding limits; if they straddle zero that mu1
-    is the SGBZ boundary (``is_continuum=True``) and the 1D LineSubsets are
-    materialized (``extract_continuum_linesubsets``) from the built ZM; the
-    returned ``subsets`` carries them (the caller signals "in spectrum").
+    Uses bracket expansion + plain bisection (midpoint).  Each side of the
+    bracket expansion is capped at ``_MAX_BRACKET_EXPANSIONS`` steps (raise
+    ``RuntimeError`` instead of looping forever on unsolvable / anomalous
+    winding).  When a continuum-degenerate mu1 is encountered,
+    ``_resolve_continuum_winding`` resolves the left/right winding limits;
+    if they straddle zero that mu1 is the SGBZ boundary
+    (``is_continuum=True``) and the 1D LineSubsets are materialized
+    (``extract_continuum_linesubsets``) from the built ZM; the returned
+    ``subsets`` carries them (the caller signals "in spectrum").
 
     Plain bisection is chosen over false-position methods because the
     winding has flat plateaus (±1) with a narrow transition zone;
@@ -250,7 +260,7 @@ def solve_SGBZ_for_E(
     w_high = None
     mu1_ext_right = None
 
-    while True:
+    for _ in range(_MAX_BRACKET_EXPANSIONS):
         w_low, gbz_low, zm_low = winding_at(mu1_low)
         if w_low is None:
             is_boundary, proxy, result = handle_continuum(
@@ -261,9 +271,13 @@ def solve_SGBZ_for_E(
 
         if w_low < zero_tol:
             break
-        else:
-            mu1_ext_right = mu1_low
-            mu1_low -= 1
+        mu1_ext_right = mu1_low
+        mu1_low -= 1
+    else:
+        raise RuntimeError(
+            f"left bracket expansion exceeded {_MAX_BRACKET_EXPANSIONS} steps: "
+            f"E_ref={E_ref}, mu1={mu1_low}, winding={w_low}"
+        )
 
     if w_low > -zero_tol:
         return {
@@ -276,41 +290,48 @@ def solve_SGBZ_for_E(
             "_exit_reason": "left_endpoint_zero",
         }
 
-    # Step 1.2: right bracket endpoint
+    # Step 1.2: right bracket endpoint (unified for both entry paths: a
+    # fresh guess and a mu1_ext_right already established during left-end
+    # expansion).  A continuum proxy correction goes through the SAME
+    # > -zero_tol check as a plain winding evaluation, so a corrected
+    # same-sign / zero endpoint keeps expanding (or exits as
+    # right_endpoint_zero) instead of silently entering bisection with a
+    # non-straddling bracket.
     if mu1_ext_right is None:
         mu1_ext_right = mu1_guess[1]
-        while True:
-            w_high, gbz_high, zm_high = winding_at(mu1_ext_right)
-            if w_high is None:
-                is_boundary, proxy, result = handle_continuum(
-                    mu1_ext_right, zm_high, (mu1_low, mu1_ext_right))
-                if is_boundary:
-                    return result
-                mu1_ext_right, w_high = proxy
 
-            if w_high > -zero_tol:
-                break
-            else:
-                mu1_ext_right += 1
-
-        if w_high < zero_tol:
-            return {
-                "mu1": mu1_ext_right,
-                "subsets": gbz_high,
-                "winding": w_high,
-                "is_continuum": False,
-                "_mu1_bracket": (mu1_ext_right, mu1_ext_right),
-                "_winding_bracket": (w_high, w_high),
-                "_exit_reason": "right_endpoint_zero",
-            }
-    else:
-        w_high, _, zm_high = winding_at(mu1_ext_right)
+    for _ in range(_MAX_BRACKET_EXPANSIONS):
+        w_high, gbz_high, zm_high = winding_at(mu1_ext_right)
         if w_high is None:
             is_boundary, proxy, result = handle_continuum(
                 mu1_ext_right, zm_high, (mu1_low, mu1_ext_right))
             if is_boundary:
                 return result
             mu1_ext_right, w_high = proxy
+            # Re-evaluate the corrected band-edge point on the next
+            # iteration: the proxy is already the nearest candidate, so the
+            # generic "+1" step below must not skip past it.
+            continue
+
+        if w_high > -zero_tol:
+            break
+        mu1_ext_right += 1
+    else:
+        raise RuntimeError(
+            f"right bracket expansion exceeded {_MAX_BRACKET_EXPANSIONS} steps: "
+            f"E_ref={E_ref}, mu1={mu1_ext_right}, winding={w_high}"
+        )
+
+    if abs(w_high) <= zero_tol:
+        return {
+            "mu1": mu1_ext_right,
+            "subsets": gbz_high,
+            "winding": w_high,
+            "is_continuum": False,
+            "_mu1_bracket": (mu1_ext_right, mu1_ext_right),
+            "_winding_bracket": (w_high, w_high),
+            "_exit_reason": "right_endpoint_zero",
+        }
 
     mu1_high = mu1_ext_right
 

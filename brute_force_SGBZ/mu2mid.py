@@ -1,231 +1,222 @@
 '''
 author:        wangchenyang <cy-wang21@mails.tsinghua.edu.cn>
-date:          2026-08-13
+date:          2026-08-16
 Copyright © Department of Physics, Tsinghua University. All rights reserved
 
-μ₂_mid — the piecewise-smooth mid-boundary modulus as a first-class object.
+SGBZ ItemView + simplified μ₂_mid path.
 
-``μ₂_mid(θ₁) = (ln|β_{j_lo}| + ln|β_{j_hi}|) / 2`` where ``j_lo``/``j_hi`` are
-the item indices occupying sorted positions ``M-1``/``M`` (0-based).  It is
-piecewise smooth; the breakpoints are the θ₁ where ``j_lo``/``j_hi`` change,
-plus the multiple-root (MR) rows where the sort order is undefined.
+``ItemView`` keeps its original semantics: a per-segment representative-item
+view whose clusters are exactly "columns that stay equal-modulus over the
+whole segment".  ``j_lo == j_hi`` therefore means one continuum item occupies
+both boundary positions M-1 and M -- a 1D LineSubset.  Isolated tie rows
+(single-θ crossings) are NOT injected into ItemView; they remain different
+items and only swap sort positions.
 
-This module is the production port of the prototype in
-``demos/demo_zm_gbz.py`` (reviewed 2026-08-13, see
-``log/2026-08-13-mu2mid-build.md``).  It implements the unified detector of
-``log/2026-08-13-SGBZ算法梳理.md`` §1/§2:
+``Mu2Mid`` is the loop-winding path, deliberately independent of
+``ZeroManager``.  It stores piecewise-smooth intervals with endpoint values
+and derivatives; each interval is interpolated with
+``continuation.interpolation.hermite_interp_poly`` so the derivative is
+smooth inside an interval.  Values are bounded to ±14 AT BUILD TIME: every
+interval's Hermite polynomial is split at its ±14 crossings, and subintervals
+outside the band become constant ``v=±14, dv=0`` pieces.  No post-hoc clip
+exists anywhere downstream.
 
-  * **ItemView** — a per-segment representative-item view that collapses
-    continuum (whole-segment same-modulus) column clusters into one item with
-    a multiplicity, so ``sort_to_item`` is stable where ``abs_argsort`` is not.
-    The no-continuum case is the special case ``n_items = K, mult = 1``.
-  * **continuum inline** — after building, ``has_continuum`` is read directly
-    off the ItemView (``j_lo == j_hi`` over a fraction of the segment), so the
-    bisection gate is the build itself (§1/§6.3), with no separate two-point
-    detector and its false-negative risk.
-  * **cubic-Hermite bracketing** — sort-change crossings are refined by a
-    bracketing iteration (not Newton), which stays finite and monotone near
-    tangencies / MR branch points (§2.3).
-
-Usage::
-
-    zm = Mu2MidZM(poly, E_ref, mu1)
-    zm.run()
-    zm.build_mu2_mid()
-    if zm.has_continuum: ...   # 1D subset (LineSubset)
-    else: ...                  # 0D subsets via crossings.py
+``Mu2MidZM.analyze()`` runs the pairwise intersection pipeline
+(:mod:`brute_force_SGBZ.pairwise`) and then builds this path.
 '''
 
 from __future__ import annotations
 
-import math
+from dataclasses import dataclass
 from typing import NamedTuple
 
 import numpy as np
 
 from continuation import ZeroManager
+from continuation.interpolation import hermite_interp_poly
+
+from .pairwise import (
+    EventGroup,
+    MIN_DIRECTION_DERIV,
+    collect_pair_events,
+    finalize_event_groups,
+    group_events,
+    insert_event_groups,
+)
 
 
 # ---------------------------------------------------------------------------
 # Tunables
 # ---------------------------------------------------------------------------
 
-# Wall distance as a fraction of the local grid spacing.
-_WALL_FRAC = 0.1
-# Near-tie threshold (rows this close in modulus get walled so sort-change
-# detection only runs on clean finite-tangent endpoints).
-_TIE_TOL_DEFAULT = 1e-8
-# cubic-Hermite bracketing convergence tolerance.
-_MU2MID_XTOL_DEFAULT = 1e-12
-_MU2MID_MAX_ITER = 50
-
 # A genuine continuum is constant-modulus to ~1e-9; a transversal crossing
 # leaves the level after one sample.  1e-6 separates them.
 CONTINUUM_TOL = 1e-6
-# Legacy vote fraction (0.9), retained for API compatibility: exported and
-# used by demos/diagnostics as an amoeba-style continuum voting fraction.
-# The SGBZ inline continuum gate does NOT use this — it uses
-# _INLINE_CONTINUUM_FRAC below.
+# Vote fraction for the per-column same-modulus test.
 CONTINUUM_FRAC = 0.9
-# Fraction of a segment's rows that must show j_lo == j_hi for the inline
-# continuum gate to fire.  Kept LOW on purpose: whole-segment same-modulus
-# clustering already guarantees a clustered pair is genuinely same-modulus
-# everywhere, so the gate only needs to exclude a single spurious row — and
-# a missed continuum would make the bisection mis-apply the 0D winding and
-# run off the true boundary (§1: no false negatives).
-_INLINE_CONTINUUM_FRAC = 0.1
 
-# Clamp band for ln|β₂| — used ONLY when building μ₂_mid.  The rest of the
-# pipeline (ItemView clustering, near-tie / sort-change comparisons,
-# cubic-Hermite bracketing, track-vs-μ₂_mid crossing detection) reads the
-# RAW ``ln|β₂| = np.log(np.abs(roots))``; a 0/∞ padding root there is ±∞,
-# which is harmless by construction: an ∞/−∞ g never changes sign, so the
-# padding track contributes no crossing, and NaN/±∞ modulus differences
-# (e.g. two 0-roots) simply fail the same-modulus cluster test.
-#
-# μ₂_mid itself must stay finite because it feeds the winding loop
-# (β₂ = exp(μ₂_mid + iθ₂)) and the track-vs-μ₂_mid comparison: a 0/∞
-# boundary root's ln|β| = ±∞ would make the boundary-pair mean blow up.
-# Clamp to ±14 — |β| ∈ [e⁻¹⁴, e¹⁴] ≈ [1.2e-6, 1.2e6], aligned with
-# arclength.ZERO_THRESHOLD / INF_THRESHOLD (1e-6 / 1e6) — so a 0/∞ boundary
-# root's ln|β| becomes the band edge and μ₂_mid is the mean of the band
-# edge and the other (finite) root's ln|β|: a finite, honest "the boundary
-# ran to the band edge" value.  The clamp is NOT a solver: a model whose
-# true SGBZ modulus is 0 or ∞ (M = 0 or N = 0) is unsolvable by this code —
-# see the warning in doc/SGBZ.md.
+# Clamp band for ln|β₂| -- applied when building the μ₂_mid path values.
 _LOGABS_CLAMP_L = 14.0
+
+# Default pairwise crossing tolerance.
+_CROSSING_TOL = 1e-10
 
 
 def logabs_clamped(roots: np.ndarray) -> np.ndarray:
-    """``np.log(np.abs(roots))`` with ±∞ clamped to ``±_LOGABS_CLAMP_L``.
-
-    μ₂_mid CONSTRUCTION ONLY (see ``_LOGABS_CLAMP_L``): clamp the boundary
-    pair's two ln|β₂| values before averaging.  Everywhere else the pipeline
-    reads the raw ``np.log(np.abs(roots))``.
-    """
+    """``np.log(np.abs(roots))`` with ±∞ clamped to ``±_LOGABS_CLAMP_L``."""
     return np.clip(np.log(np.abs(roots)), -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
 
 
 # ---------------------------------------------------------------------------
-# Cubic Hermite helpers (shared with crossings.py)
+# ItemView
 # ---------------------------------------------------------------------------
-
-def _cubic_hermite_coeffs(h, v0, dv0, v1, dv1):
-    """cubic Hermite: f(0)=v0, f'(0)=dv0, f(h)=v1, f'(h)=dv1.
-
-    Returns ``[a, b, c, d]`` for ``a·t³ + b·t² + c·t + d`` (descending
-    powers, ready for ``np.roots``).
-    """
-    h2 = h * h
-    h3 = h2 * h
-    a = (2.0 * (v0 - v1)) / h3 + (dv0 + dv1) / h2
-    b = (3.0 * (v1 - v0)) / h2 - (2.0 * dv0 + dv1) / h
-    return np.array([a, b, dv0, v0])
-
-
-def _cubic_roots_in_interval(coeffs, h):
-    """ALL real roots of the cubic *coeffs* in ``[0, h)``.
-
-    Left-closed, right-open: the right endpoint is owned by the adjacent
-    interval, avoiding duplicate detections across sub-interval and segment
-    boundaries.
-    """
-    def _valid(t):
-        return 0.0 <= t < h
-
-    scale = max(1.0, float(np.max(np.abs(coeffs))))
-    a, b, c, d = coeffs
-
-    # degenerate to quadratic / linear
-    if abs(a) < 1e-15 * scale:
-        if abs(b) < 1e-15 * scale:
-            if abs(c) < 1e-15 * scale:
-                return []
-            t = -d / c
-            return [float(t)] if _valid(t) else []
-        disc = c * c - 4.0 * b * d
-        if disc < 0:
-            return []
-        sqrt_disc = np.sqrt(disc)
-        roots = []
-        for t in ((-c + sqrt_disc) / (2 * b), (-c - sqrt_disc) / (2 * b)):
-            if _valid(t):
-                roots.append(float(t))
-        return sorted(roots)
-
-    # cubic: np.roots, keep all real roots in [0, h)
-    raw = np.roots(coeffs)
-    result = []
-    for r in raw:
-        if abs(r.imag) > 1e-10 * max(1.0, abs(r.real)):
-            continue
-        t = float(r.real)
-        if _valid(t):
-            result.append(t)
-    return sorted(result)
-
-
-def _dv_column(tang_row, col, va, vb, h, use_linear):
-    """d(ln|β₂_col|)/dθ₁ at a mesh row, or linear fallback.
-
-    The analytic tangent ``Re(V_col) = d(ln|β₂_col|)/dθ₁``; when the row
-    touches an MR (tangent diverges) or tangents are absent, fall back to the
-    secant slope ``(vb - va) / h`` — honest and bounded (§2.3).
-    """
-    if use_linear or tang_row is None:
-        return (vb - va) / h
-    d = float(tang_row[col].real)
-    return (vb - va) / h if not np.isfinite(d) else d
-
-
-# ---------------------------------------------------------------------------
-# Data objects
-# ---------------------------------------------------------------------------
-
-class Mu2MidBreakpoint(NamedTuple):
-    """One breakpoint of the piecewise-smooth μ₂_mid curve.
-
-    μ₂_mid is continuous at a breakpoint (``value`` shared) but its derivative
-    may jump (``deriv_left ≠ deriv_right``).  ``pair_kind`` names the sort pair
-    that triggers the break; ``is_pmgbz`` is True iff ``pair_kind == 'M-1_M'``
-    (the PMGBZ boundary crossing ``|β_M| = |β_{M+1}|``).  ``gap`` is the
-    refined residual ``|ln|β_a| − ln|β_b||`` at the breakpoint (≈0 for a true
-    crossing).
-    """
-    theta1: float
-    value: float
-    deriv_left: float
-    deriv_right: float
-    pair_kind: str            # 'M-2_M-1' | 'M-1_M' | 'M_M+1' | 'multi'
-    columns: tuple            # (col_a, col_b) of the crossing pair
-    is_pmgbz: bool
-    gap: float                # refined residual (≈0 at a true crossing)
-
 
 class ItemView(NamedTuple):
     """Per-segment representative-item view of the K β₂ tracks.
 
-    Continuum clusters (whole-segment same-modulus columns) collapse to one
-    item with multiplicity = cluster size; non-cluster columns are singleton
-    items (mult 1).  ``sort_to_item[i, p]`` maps sorted position ``p`` to the
-    item index occupying it (items sorted by modulus, repeated ``mult`` times),
-    so it is stable where ``abs_argsort`` is not (cluster snapping makes
-    ``abs_argsort`` jump arbitrarily between equal-modulus columns).
-
-    ``j_lo = sort_to_item[:, M-1]``, ``j_hi = sort_to_item[:, M]``; ``j_lo ==
-    j_hi`` ⟺ the M-1/M boundary pair is one continuum item (1D subset).  The
-    no-continuum case is the special case ``n_items = K, mult = 1,
-    sort_to_item == abs_argsort``.
+    Cluster semantics: a cluster is a set of columns whose moduli stay equal
+    over the WHOLE segment (continuum).  Isolated crossings are never
+    clustered here.
     """
-    rep_cols: np.ndarray      # (n_items,) representative column per item
-    mults: np.ndarray         # (n_items,) multiplicity
-    item_logabs: np.ndarray   # (N, n_items) representative ln|β₂| (RAW — ±∞
-                              # for 0/∞ padding roots; only _assemble clamps
-                              # when building μ₂_mid)
-    item_tang_re: np.ndarray  # (N, n_items) representative Re(V)
-    sort_to_item: np.ndarray  # (N, K) sort position → item index
-    j_lo: np.ndarray          # (N,) item index at sort pos M-1
-    j_hi: np.ndarray          # (N,) item index at sort pos M
+    rep_cols: np.ndarray
+    mults: np.ndarray
+    item_logabs: np.ndarray
+    item_tang_re: np.ndarray
+    sort_to_item: np.ndarray
+    j_lo: np.ndarray
+    j_hi: np.ndarray
+
+
+class Mu2MidBreakpoint(NamedTuple):
+    """Legacy-compatible breakpoint record (event / MR / clamp boundary)."""
+    theta1: float
+    value: float
+    deriv_left: float
+    deriv_right: float
+    pair_kind: str
+    columns: tuple
+    is_pmgbz: bool
+    gap: float
+
+
+# ---------------------------------------------------------------------------
+# Simplified μ₂_mid path
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Mu2MidPiece:
+    """One smooth interval of the μ₂_mid path.
+
+    *poly* is in numpy poly order and evaluated at ``x = theta1 - theta0``;
+    *dpoly* is its cached derivative.
+    """
+    theta0: float
+    theta1: float
+    v0: float
+    dv0: float
+    v1: float
+    dv1: float
+    poly: np.ndarray
+    dpoly: np.ndarray | None = None
+
+
+def _make_piece(t0, t1, v0, dv0, v1, dv1) -> Mu2MidPiece:
+    h = t1 - t0
+    poly = hermite_interp_poly(h, v0, dv0, v1, dv1)
+    return Mu2MidPiece(
+        theta0=t0, theta1=t1, v0=v0, dv0=dv0, v1=v1, dv1=dv1,
+        poly=poly, dpoly=np.polyder(poly),
+    )
+
+
+def _make_constant_piece(t0, t1, value) -> Mu2MidPiece:
+    return Mu2MidPiece(
+        theta0=t0, theta1=t1, v0=value, dv0=0.0, v1=value, dv1=0.0,
+        poly=np.array([0.0, value]), dpoly=np.array([0.0]),
+    )
+
+
+class Mu2Mid:
+    """Independent piecewise-smooth μ₂_mid path for loop-winding.
+
+    NOT a ZeroManager subclass and holds no reference to one.
+    """
+
+    def __init__(self, pieces: list[Mu2MidPiece]):
+        self.pieces = pieces
+        self._ends = np.array([p.theta1 for p in pieces], dtype=float)
+
+    @property
+    def theta1(self) -> np.ndarray:
+        return np.array(
+            [self.pieces[0].theta0] + [p.theta1 for p in self.pieces],
+            dtype=float,
+        )
+
+    @property
+    def values(self) -> np.ndarray:
+        return np.array(
+            [self.pieces[0].v0] + [p.v1 for p in self.pieces],
+            dtype=float,
+        )
+
+    @property
+    def derivs(self) -> np.ndarray:
+        return np.array(
+            [self.pieces[0].dv0] + [p.dv1 for p in self.pieces],
+            dtype=float,
+        )
+
+    @property
+    def breakpoints(self) -> np.ndarray:
+        """True derivative-discontinuity points (quad split points).
+
+        Ordinary C1 knots are NOT returned: a quad segment may span several
+        smooth pieces as long as value and derivative join continuously.
+        """
+        bps: list[float] = []
+        for p, q in zip(self.pieces[:-1], self.pieces[1:]):
+            same_value = np.isclose(p.v1, q.v0, rtol=1e-12, atol=1e-12)
+            same_deriv = np.isclose(p.dv1, q.dv0, rtol=1e-12, atol=1e-12)
+            if not (same_value and same_deriv):
+                bps.append(float(q.theta0))
+        return np.array(bps, dtype=float)
+
+    def value_deriv(self, theta1: float) -> tuple[float, float]:
+        if not self.pieces:
+            return 0.0, 0.0
+        t = float(theta1)
+        if t <= self.pieces[0].theta0:
+            p = self.pieces[0]
+            return float(p.v0), 0.0
+        if t >= self.pieces[-1].theta1:
+            p = self.pieces[-1]
+            return float(p.v1), 0.0
+        idx = int(np.searchsorted(self._ends, t, side='right'))
+        idx = max(0, min(idx, len(self.pieces) - 1))
+        p = self.pieces[idx]
+        x = t - p.theta0
+        dpoly = p.dpoly if p.dpoly is not None else np.polyder(p.poly)
+        return float(np.polyval(p.poly, x)), float(np.polyval(dpoly, x))
+
+    def value(self, theta1: float) -> float:
+        return self.value_deriv(theta1)[0]
+
+    def values_at(self, theta1: np.ndarray) -> np.ndarray:
+        """Vectorized μ₂_mid evaluation on a 1-D θ array."""
+        t = np.asarray(theta1, dtype=float)
+        if not self.pieces:
+            return np.zeros_like(t)
+        idx = np.searchsorted(self._ends, t, side='right')
+        idx = np.clip(idx, 0, len(self.pieces) - 1)
+        out = np.empty_like(t)
+        for j, p in enumerate(self.pieces):
+            mask = idx == j
+            if not np.any(mask):
+                continue
+            x = t[mask] - p.theta0
+            out[mask] = np.polyval(p.poly, x)
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -233,152 +224,101 @@ class ItemView(NamedTuple):
 # ---------------------------------------------------------------------------
 
 class Mu2MidZM(ZeroManager):
-    """``ZeroManager`` + piecewise-smooth μ₂_mid construction.
-
-    Usage: ``zm = Mu2MidZM(poly, E_ref, mu1); zm.run(); zm.build_mu2_mid()``.
-    After ``build_mu2_mid`` the ``mu2_mid_*`` arrays, ``mu2_mid_breakpoints``,
-    ``has_continuum`` and ``_item_views`` are available for crossing detection
-    (§2) and winding (§6.4).  The build inserts walls and refined sort-change
-    rows into the mesh (the intended side effect — breakpoint rows get exact
-    roots + finite tangents).
-    """
+    """``ZeroManager`` + ItemView analysis + pairwise crossings + μ₂_mid path."""
 
     def __init__(self, poly, E_ref, mu1):
         super().__init__(poly, E_ref, mu1)
-        self._mu2_mid_built = False
+        self._analyzed = False
         self.has_continuum = False
+        self._continuum_clusters: list = []
+        self._item_views: list[ItemView] = []
+        self._pair_events: list = []
+        self._event_groups: list[EventGroup] = []
+        self.mu2_mid: Mu2Mid | None = None
 
     # ------------------------------------------------------------------
-    # Public build entry point
+    # Public entry point
     # ------------------------------------------------------------------
+
+    def analyze(
+        self,
+        continuum_clusters: list | None = None,
+        *,
+        tie_tol: float = CONTINUUM_TOL,
+        crossing_tol: float = _CROSSING_TOL,
+        min_direction_deriv: float = MIN_DIRECTION_DERIV,
+        verbose: bool = False,
+    ) -> None:
+        """Run pairwise crossing analysis and build the μ₂_mid path.
+
+        ``continuum_clusters``: per-segment column-tuples (the ItemView
+        clustering source).  ``None`` runs the internal whole-segment vote.
+        """
+        if self._analyzed:
+            return
+        self._analyzed = True
+
+        if continuum_clusters is None:
+            continuum_clusters = self._detect_continuum_clusters_internal(tie_tol)
+        self._continuum_clusters = continuum_clusters
+        self._item_views = self._build_item_views(continuum_clusters)
+
+        # 1. representative-item pairwise intersections (zero dedup).
+        events = collect_pair_events(
+            self,
+            crossing_tol=crossing_tol,
+            min_direction_deriv=min_direction_deriv,
+        )
+        if verbose:
+            print(f"[analyze] pairwise events: {len(events)}")
+
+        # 2. merge close θ* (< crossing_tol) into one EventGroup per mesh row.
+        groups = group_events(self, events, merge_tol=crossing_tol)
+        insert_event_groups(self, groups)
+        if verbose:
+            print(f"[analyze] event groups: {len(groups)}")
+
+        # 3. rebuild ItemView on the refined mesh, then finalize groups.
+        self._continuum_clusters = self._detect_continuum_clusters_internal(tie_tol)
+        self._item_views = self._build_item_views(self._continuum_clusters)
+        finalize_event_groups(self, groups)
+
+        self._pair_events = events
+        self._event_groups = groups
+
+        # 4. inline continuum detection (j_lo == j_hi ⟺ LineSubset).
+        self.has_continuum = any(
+            bool(np.any(view.j_lo == view.j_hi)) for view in self._item_views
+        )
+
+        # 5. loop-winding path.
+        self.mu2_mid = build_mu2_mid(self, groups)
+        self._sync_compat_arrays()
 
     def build_mu2_mid(
         self,
         continuum_clusters: list | None = None,
         *,
-        tie_tol: float = _TIE_TOL_DEFAULT,
-        wall_frac: float = _WALL_FRAC,
-        xtol: float = _MU2MID_XTOL_DEFAULT,
-        max_iter: int = _MU2MID_MAX_ITER,
+        tie_tol: float = CONTINUUM_TOL,
+        crossing_tol: float = _CROSSING_TOL,
+        min_direction_deriv: float = MIN_DIRECTION_DERIV,
         verbose: bool = False,
     ) -> None:
-        """Build the piecewise-smooth μ₂_mid representation.
-
-        ``continuum_clusters``: per-segment list of column-tuples (the output
-        of the continuum clusters).  ``None``
-        (default) runs the cheap internal whole-segment same-modulus detection,
-        which covers all three sort-adjacent pairs (M-2,M-1)/(M-1,M)/(M,M+1) —
-        not just the boundary pair — because their continua also destabilise
-        ``abs_argsort`` (§1).  Either source builds the ItemView with
-        representatives; the simplified (``None``) and full versions are unified.
-
-        Stages: 0 walls → 1 sort-change detection (outside walls) → 2
-        cubic-Hermite bracketing refinement of each sort-change → 3 assemble
-        flat arrays + breakpoints.  Inline continuum detection sets
-        ``has_continuum``.
-        """
-        if continuum_clusters is None:
-            continuum_clusters = self._detect_continuum_clusters_internal(tie_tol)
-        self._continuum_clusters = continuum_clusters
-
-        # Per-segment ItemView (no-continuum → column view; continuum → rep view)
-        self._item_views = self._build_item_views(continuum_clusters)
-
-        # ---- inline continuum detection (§1/§6.3) ----
-        # j_lo == j_hi over a fraction of a segment ⟹ the M-1/M boundary pair
-        # is one continuum item (mult ≥ 2) ⟹ 1D subset (|β_M|=|β_{M+1}| holds
-        # identically).  Whole-segment frac criterion ⇒ no false negatives.
-        self.has_continuum = self._detect_continuum_inline()
-
-        # ---- Stage 0: walls ----
-        walled_rows = self._find_near_tie_rows(tie_tol)
-        if verbose:
-            print(f"[mu2_mid] near-tie/MR rows: {len(walled_rows)}")
-        self._build_walls(walled_rows, wall_frac)
-
-        # walls inserted → rebuild views + re-identify wall rows
-        self._item_views = self._build_item_views(continuum_clusters)
-        walled_rows = self._find_near_tie_rows(tie_tol)
-
-        # ---- Stage 1: sort-change detection (outside walls) ----
-        events = self._detect_sort_changes(walled_rows)
-        if verbose:
-            print(f"[mu2_mid] sort-change events: {len(events)}")
-
-        # ---- Stage 2: cubic-Hermite bracketing refinement ----
-        refined = []  # (theta1, a, b, pair_kind, converged)
-        for t_mid, a, b, t_lo, t_hi, pk, _s_idx, _i_idx in events:
-            res = self._cubic_hermite_iterate(
-                t_lo, t_hi, a, b, xtol, max_iter,
-            )
-            if res is None:
-                if verbose:
-                    print(f"[mu2_mid] no root in [{t_lo:.4e}, {t_hi:.4e}] "
-                          f"pair {pk} cols ({a},{b})")
-                continue
-            theta_star, converged = res
-            if not converged and verbose:
-                print(f"[mu2_mid] bracket not converged at θ≈{theta_star:.6e} "
-                      f"pair {pk}")
-            refined.append((theta_star, a, b, pk, converged))
-
-        self._refined_points = refined
-
-        # ---- Stage 3: assemble (wall + refinement inserts are now in mesh) ----
-        self._item_views = self._build_item_views(continuum_clusters)
-        self._assemble()
-
-        self._mu2_mid_built = True
+        """Legacy-compatible alias for :meth:`analyze`."""
+        self.analyze(
+            continuum_clusters=continuum_clusters,
+            tie_tol=tie_tol,
+            crossing_tol=crossing_tol,
+            min_direction_deriv=min_direction_deriv,
+            verbose=verbose,
+        )
 
     # ------------------------------------------------------------------
-    # Mesh mutation hook — keep μ₂_mid in sync after a post-build insert
-    # ------------------------------------------------------------------
-
-    def insert_solution(self, theta1, seg_idx=None, i=None):
-        """Insert a root row AND refresh the μ₂_mid representation.
-
-        ``ZeroManager.insert_solution`` only updates ``SegmentData``
-        (``theta1_arr`` / ``tracked_roots`` / ``tangents`` / ``abs_argsort``).
-        The μ₂_mid representation — ``_item_views``, the per-segment
-        ``seg_mu2_values`` / ``seg_mu2_derivs``, the flat ``mu2_mid_*``
-        arrays, and ``mu2_mid_breakpoints`` — is *derived* in ``_assemble``
-        and would otherwise go stale.
-
-        Mesh-mutation contract (2026-08-14): the mesh is mutated ONLY during
-        ``build_mu2_mid`` (walls in Stage 0, sort-change refinement in
-        Stage 2).  The crossing phase after the build evaluates probes via
-        the non-mutating :meth:`ZeroManager.solve_at` and never inserts, so
-        the ``_mu2_mid_built`` refresh below is **defensive only** — it fires
-        if some future code path inserts post-build.  During
-        ``build_mu2_mid`` itself (``_mu2_mid_built`` still False) the refresh
-        is skipped: those inserts mutate the mesh *before* Stage 3
-        ``_assemble`` rebuilds μ₂_mid from the final mesh anyway, and syncing
-        here would rebuild arrays that do not yet exist.  The cost of a
-        post-build refresh is one ``_assemble`` (pure numpy bookkeeping on
-        the ~10²–10³ row mesh, µs) — negligible next to the ``_solve``
-        polynomial root-find that ``insert_solution`` already pays.
-        """
-        insert_at, changed = super().insert_solution(theta1, seg_idx, i)
-        if changed and self._mu2_mid_built:
-            self._item_views = self._build_item_views(self._continuum_clusters)
-            self._assemble()
-        return insert_at, changed
-
-    # ------------------------------------------------------------------
-    # ItemView construction
+    # ItemView construction (unchanged semantics)
     # ------------------------------------------------------------------
 
     def _detect_continuum_clusters_internal(self, tie_tol: float) -> list:
-        """Per-segment whole-segment same-modulus clusters (cheap, no voting).
-
-        Covers **all** same-modulus column pairs (including the three
-        sort-adjacent pairs (M-2,M-1)/(M-1,M)/(M,M+1)), not just the boundary
-        pair — their continua also make ``abs_argsort`` jump.  Criterion: a
-        pair (j,k) with ``max over rows |ln|β_j|−ln|β_k|| < tie_tol`` is
-        same-modulus; transitive closure (BFS) merges them.  Whole-segment
-        same-modulus = continuum (real-analyticity); an accidental isolated
-        touch fails the whole-segment max and is auto-excluded.
-        """
+        """Per-segment same-modulus clusters of zero-curve COLUMNS."""
         clusters_per_seg: list[list] = []
         for seg in self.segments:
             K = self.K
@@ -386,16 +326,13 @@ class Mu2MidZM(ZeroManager):
             if N == 0:
                 clusters_per_seg.append([])
                 continue
-            # RAW ln|β₂| (see _LOGABS_CLAMP_L): two 0/∞ padding roots give a
-            # NaN modulus difference (or ±∞ against a finite root), which
-            # fails the same-modulus test — degenerate padding pairs are
-            # naturally excluded from clustering.  M = 0 / N = 0 models
-            # (true boundary at 0/∞) are unsolvable — see doc/SGBZ.md.
-            logabs = np.log(np.abs(seg.tracked_roots))  # (N, K)
+            logabs = np.log(np.abs(seg.tracked_roots))
             same = np.zeros((K, K), dtype=bool)
             for j in range(K):
                 for k in range(j + 1, K):
-                    if np.max(np.abs(logabs[:, j] - logabs[:, k])) < tie_tol:
+                    frac_in_band = np.mean(
+                        np.abs(logabs[:, j] - logabs[:, k]) < tie_tol)
+                    if frac_in_band > CONTINUUM_FRAC:
                         same[j, k] = same[k, j] = True
             visited = [False] * K
             clusters: list[tuple] = []
@@ -434,14 +371,8 @@ class Mu2MidZM(ZeroManager):
                     np.array([], dtype=int), np.array([], dtype=int),
                 ))
                 continue
-            # RAW ln|β₂| — item_logabs feeds clustering / near-tie / sort
-            # comparisons and μ₂_mid assembly; only the μ₂_mid mean clamps
-            # (in _assemble).  Padding roots keep ±∞ here.
-            logabs = np.log(np.abs(seg.tracked_roots))  # (N, K)
-            if seg.tangents is not None:
-                tang_re = seg.tangents.real  # (N, K)
-            else:
-                tang_re = np.full((N, K), np.nan)
+            logabs = np.log(np.abs(seg.tracked_roots))
+            tang_re = seg.tangents.real
 
             clusters = (continuum_clusters[s_idx]
                         if continuum_clusters and s_idx < len(continuum_clusters)
@@ -450,7 +381,6 @@ class Mu2MidZM(ZeroManager):
             for c in clusters:
                 cluster_cols.update(c)
 
-            # items: cluster representative + non-cluster singletons
             rep_cols: list[int] = []
             mults: list[int] = []
             for c in clusters:
@@ -463,12 +393,11 @@ class Mu2MidZM(ZeroManager):
             rep_cols_arr = np.array(rep_cols, dtype=int)
             mults_arr = np.array(mults, dtype=int)
 
-            item_logabs = logabs[:, rep_cols_arr]       # (N, n_items)
-            item_tang_re = tang_re[:, rep_cols_arr]     # (N, n_items)
+            item_logabs = logabs[:, rep_cols_arr]
+            item_tang_re = tang_re[:, rep_cols_arr]
 
-            # per row: items by ascending modulus, each repeated mult times
             sort_to_item = np.empty((N, K), dtype=int)
-            order = np.argsort(item_logabs, axis=1)     # (N, n_items)
+            order = np.argsort(item_logabs, axis=1)
             for i in range(N):
                 sort_to_item[i] = np.repeat(order[i], mults_arr[order[i]])
 
@@ -481,620 +410,213 @@ class Mu2MidZM(ZeroManager):
             ))
         return views
 
-    def _detect_continuum_inline(self) -> bool:
-        """True iff any segment has a 1D continuum (j_lo == j_hi, mult ≥ 2).
-
-        A boundary pair collapsing to one item over a fraction of the segment
-        means ``|β_M| = |β_{M+1}|`` holds identically there — a 1D subset, where
-        the average winding is undefined (§1/§6.3).
-
-        Whole-segment same-modulus clustering (``_detect_continuum_clusters_internal``
-        uses ``max over rows < tie_tol``) guarantees that a clustered pair is
-        genuinely same-modulus everywhere, so a ``j_lo == j_hi`` (mult ≥ 2) row is
-        a real continuum region, never a transversal 0D PMGBZ point (those are
-        same-modulus at one θ only and fail the whole-segment max).  The frac
-        threshold (``_INLINE_CONTINUUM_FRAC``) is therefore only a guard against
-        a single spurious row; it is kept low because a missed continuum would
-        make the bisection mis-apply the 0D winding and run off the true
-        boundary (§1: no false negatives).
-        """
-        for view in self._item_views:
-            if len(view.j_lo) == 0:
-                continue
-            one_item = view.j_lo == view.j_hi
-            if not np.any(one_item):
-                continue
-            one_item_idx = view.j_lo[one_item]
-            if np.any(view.mults[one_item_idx] >= 2):
-                if float(np.mean(one_item)) > _INLINE_CONTINUUM_FRAC:
-                    return True
-        return False
-
     # ------------------------------------------------------------------
-    # Stage 0: walls
+    # Compatibility accessors (demos / older callers)
     # ------------------------------------------------------------------
 
-    def _find_near_tie_rows(self, tie_tol: float) -> set:
-        """Rows that need walls: MR rows + rows near-tie in any of the three
-        sort-adjacent pairs (M-2,M-1)/(M-1,M)/(M,M+1).
+    def _sync_compat_arrays(self) -> None:
+        path = self.mu2_mid
+        if path is None:
+            return
+        self.mu2_mid_theta1 = path.theta1
+        self.mu2_mid_values = path.values
+        self.mu2_mid_derivs = path.derivs
+        self.mu2_mid_breakpoints: list[Mu2MidBreakpoint] = []
 
-        Same-item pairs (continuum, ``j_lo == j_hi``) are skipped — that is
-        continuous-modulus equality, not a sort-change to detect.
-        """
-        walled: set[tuple[int, int]] = set()
-        M = self.M
-        K = self.K
+        jls, jhs = [], []
+        seg_vals, seg_ders = [], []
         for s_idx, view in enumerate(self._item_views):
             seg = self.segments[s_idx]
             N = len(seg.theta1_arr)
             if N == 0:
-                continue
-            for i in range(N):
-                is_mr_row = (
-                    (i == 0 and seg.left_mr >= 0)
-                    or (i == N - 1 and seg.right_mr >= 0)
-                )
-                near_tie = False
-                for p in (M - 2, M - 1, M):
-                    if p < 0 or p + 1 >= K:
-                        continue
-                    ia = int(view.sort_to_item[i, p])
-                    ib = int(view.sort_to_item[i, p + 1])
-                    if ia == ib:
-                        continue  # continuum, skip
-                    if abs(float(view.item_logabs[i, ia])
-                           - float(view.item_logabs[i, ib])) < tie_tol:
-                        near_tie = True
-                        break
-                if is_mr_row or near_tie:
-                    walled.add((s_idx, i))
-        return walled
-
-    def _build_walls(self, walled_rows: set, wall_frac: float) -> None:
-        """Insert a point at ``wall_frac·grid`` on each side of every wall row.
-
-        Snapshot all wall rows' θ (mesh unchanged), then insert in descending θ
-        order — descending keeps already-processed large θ free of later small-θ
-        insertions, and ``insert_solution`` re-locates internally so row-index
-        drift is harmless.  Boundary rows (segment endpoints) get a single side.
-        """
-        if not walled_rows:
-            return
-        snaps: list[tuple[float, float | None, float | None]] = []
-        for s_idx, i in sorted(walled_rows):
-            seg = self.segments[s_idx]
-            th = seg.theta1_arr
-            theta_row = float(th[i])
-            tl = float(th[i - 1]) if i > 0 else None
-            tr = float(th[i + 1]) if i < len(th) - 1 else None
-            snaps.append((theta_row, tl, tr))
-        wall_thetas: list[float] = []
-        for theta_row, tl, tr in snaps:
-            if tl is not None:
-                wall_thetas.append(theta_row - wall_frac * (theta_row - tl))
-            if tr is not None:
-                wall_thetas.append(theta_row + wall_frac * (tr - theta_row))
-        wall_thetas.sort(reverse=True)
-        for wt in wall_thetas:
-            try:
-                self.insert_solution(wt)
-            except (ValueError, RuntimeError):
-                # out-of-range or degenerate interval — skip this wall point
-                pass
-
-    # ------------------------------------------------------------------
-    # Stage 1: sort-change detection (outside walls)
-    # ------------------------------------------------------------------
-
-    def _detect_sort_changes(self, walled_rows: set) -> list:
-        """Scan adjacent rows for j_lo/j_hi (item index) changes → events.
-
-        Each event = ``(t_mid, a, b, t_lo, t_hi, pair_kind, seg_idx, row_idx)``
-        where ``a, b`` are representative columns (``tracked_roots`` indices)
-        for the cubic-Hermite step.  ``pair_kind`` from the changing item's last
-        sort position in the left row (counting multiplicity): ``= M-2/M-1/M``
-        ⟹ ``M-2_M-1 / M-1_M / M_M+1``; ``mult=1`` degenerates to ``min(inv_l)``.
-        Dedup by ``(a, b, round(t_mid, 8))``.
-        """
-        M = self.M
-        events: dict[tuple, tuple] = {}
-        for s_idx, view in enumerate(self._item_views):
-            seg = self.segments[s_idx]
-            th = seg.theta1_arr
-            N = len(th)
-            if N < 2:
-                continue
-            sort_to_item = view.sort_to_item  # (N, K)
-            rep_cols = view.rep_cols
-
-            for i in range(N - 1):
-                if (s_idx, i) in walled_rows or (s_idx, i + 1) in walled_rows:
-                    continue
-                changed = np.where(sort_to_item[i] != sort_to_item[i + 1])[0]
-                for p in changed:
-                    if p not in (M - 2, M - 1, M):
-                        continue
-                    ia = int(sort_to_item[i, p])
-                    ib = int(sort_to_item[i + 1, p])
-                    if ia == ib:
-                        continue
-                    # boundary = min(last sort pos of ia, last sort pos of ib)
-                    pos_a = np.where(sort_to_item[i] == ia)[0]
-                    pos_b = np.where(sort_to_item[i] == ib)[0]
-                    if len(pos_a) == 0 or len(pos_b) == 0:
-                        continue
-                    boundary = min(int(pos_a[-1]), int(pos_b[-1]))
-                    if boundary == M - 2:
-                        pk = 'M-2_M-1'
-                    elif boundary == M - 1:
-                        pk = 'M-1_M'
-                    elif boundary == M:
-                        pk = 'M_M+1'
-                    else:
-                        continue
-                    ra, rb = int(rep_cols[ia]), int(rep_cols[ib])
-                    a, b = (ra, rb) if ra < rb else (rb, ra)
-                    t_mid = float((th[i] + th[i + 1]) / 2)
-                    key = (a, b, round(t_mid, 8))
-                    if key not in events:
-                        events[key] = (t_mid, a, b, float(th[i]),
-                                       float(th[i + 1]), pk, s_idx, i)
-        return list(events.values())
-
-    # ------------------------------------------------------------------
-    # Stage 2: cubic-Hermite bracketing iteration
-    # ------------------------------------------------------------------
-
-    def _cubic_hermite_iterate(
-        self,
-        theta_lo: float,
-        theta_hi: float,
-        a: int,
-        b: int,
-        xtol: float,
-        max_iter: int,
-    ) -> tuple[float, bool] | None:
-        """Refine ``f = ln|β_a| − ln|β_b| = 0`` in bracket ``[theta_lo, theta_hi]``.
-
-        Cubic-Hermite bracketing (not Newton): build the cubic from the two
-        endpoints' (value, ``f' = Re(V_a) − Re(V_b)``) → ``np.roots`` predicts
-        ``θ_pred`` → ``insert_solution`` takes the true ``f_pred`` and true
-        derivative → **derivative sign (direction) + ``f_pred`` sign** fixes
-        which side of the root ``θ_pred`` is on → tighten bracket → rebuild
-        cubic.  Converges when the bracket width ``< xtol``.
-
-        The derivative-sign criterion is what makes this robust where Newton and
-        sign-change checks fail (§2.3): Newton's ``f/f'`` diverges near a
-        branch point; sign-change fails when ``f_pred`` agrees with both ends
-        (cubic error).  The derivative sign depends only on the direction, so
-        the bracket still contains the root after every step.
-
-        Returns ``(theta_star, converged)``; ``None`` if the interval has no
-        transversal root (cubic false positive or tangent ``f'≈0``).
-
-        Invariant: the bracket endpoints are always adjacent mesh rows.
-        """
-        for _ in range(max_iter):
-            if theta_hi - theta_lo < xtol:
-                return (theta_lo + theta_hi) / 2, True
-
-            si, i = self.locate(theta_lo)
-            seg = self.segments[si]
-            th = seg.theta1_arr
-            if i + 1 >= len(th) or abs(th[i] - theta_lo) > 1e-15 \
-               or abs(th[i + 1] - theta_hi) > 1e-15:
-                return None
-
-            h = theta_hi - theta_lo
-            # RAW ln|β₂| (see _LOGABS_CLAMP_L): a ±∞ difference (one of the
-            # pair is a 0/∞ padding root) hits the same-sign return below —
-            # the degenerate pair is abandoned, never refined.
-            logabs = np.log(np.abs(seg.tracked_roots))
-            v0 = float(logabs[i, a] - logabs[i, b])
-            v1 = float(logabs[i + 1, a] - logabs[i + 1, b])
-
-            # initial bracket must contain a root: transversal sort-change ⇒
-            # opposite signs.  same sign ⇒ not a real crossing → abandon.
-            if v0 * v1 > 0:
-                return None
-
-            if abs(v0) < xtol:
-                return theta_lo, True
-            if abs(v1) < xtol:
-                return theta_hi, True
-
-            N = len(th)
-            touches_mr = (
-                (i == 0 and seg.left_mr >= 0)
-                or (i == N - 2 and seg.right_mr >= 0)
-            )
-            use_linear = touches_mr or seg.tangents is None
-            tang_i = seg.tangents[i] if seg.tangents is not None else None
-            tang_ip1 = seg.tangents[i + 1] if seg.tangents is not None else None
-            va0, vb0 = float(logabs[i, a]), float(logabs[i, b])
-            va1, vb1 = float(logabs[i + 1, a]), float(logabs[i + 1, b])
-            dv0 = (_dv_column(tang_i, a, va0, va1, h, use_linear)
-                   - _dv_column(tang_i, b, vb0, vb1, h, use_linear))
-            dv1 = (_dv_column(tang_ip1, a, va0, va1, h, use_linear)
-                   - _dv_column(tang_ip1, b, vb0, vb1, h, use_linear))
-
-            coeffs = _cubic_hermite_coeffs(h, v0, dv0, v1, dv1)
-            s_roots = _cubic_roots_in_interval(coeffs, h)
-            if not s_roots:
-                return None
-
-            # pick the transversal (cubic f' ≠ 0) root nearest the midpoint;
-            # a cubic f'≈0 root is a tangent touch, which a sort-change
-            # (transversal crossing) should not produce — skip it.
-            s_pred = None
-            for s in s_roots:
-                dv_cubic = (3.0 * coeffs[0] * s * s
-                            + 2.0 * coeffs[1] * s + coeffs[2])
-                if abs(dv_cubic) < 1e-15:
-                    continue
-                if s_pred is None or abs(s - h / 2) < abs(s_pred - h / 2):
-                    s_pred = s
-            if s_pred is None:
-                return None
-
-            theta_pred = theta_lo + s_pred
-            if abs(theta_pred - theta_lo) < 1e-15 \
-               or abs(theta_pred - theta_hi) < 1e-15:
-                return None
-
-            try:
-                insert_at, _ = self.insert_solution(theta_pred, si, i)
-            except (ValueError, RuntimeError):
-                return None
-
-            # true f_pred and true direction sign (from the inserted row's
-            # tangent — more accurate than the cubic approximation).
-            seg = self.segments[si]
-            logabs = np.log(np.abs(seg.tracked_roots))
-            f_pred = float(logabs[insert_at, a] - logabs[insert_at, b])
-            if seg.tangents is not None:
-                f_prime = float(seg.tangents[insert_at, a].real
-                                - seg.tangents[insert_at, b].real)
-            else:
-                f_prime = (3.0 * coeffs[0] * s_pred * s_pred
-                           + 2.0 * coeffs[1] * s_pred + coeffs[2])
-
-            if not np.isfinite(f_prime) or abs(f_prime) < 1e-15:
-                return None  # direction undefined (branch point) — abandon
-
-            # tighten bracket: derivative sign + f_pred sign fixes the side.
-            increasing = f_prime > 0
-            if (f_pred > 0) == increasing:
-                theta_hi = theta_pred
-            else:
-                theta_lo = theta_pred
-
-        return (theta_lo + theta_hi) / 2, True
-
-    # ------------------------------------------------------------------
-    # Stage 3: assemble
-    # ------------------------------------------------------------------
-
-    def _assemble(self) -> None:
-        """Flatten the mesh into μ₂_mid arrays (values, derivs, j_lo, j_hi).
-
-        Value/deriv use the ItemView's representative ``item_logabs`` /
-        ``item_tang_re`` at the ``j_lo``/``j_hi`` item indices.  The per-segment
-        arrays are also stored (``seg_mu2_values`` / ``seg_mu2_derivs``) so the
-        post-build crossing detector treats μ₂_mid as a first-class curve —
-        comparing each zero-curve (track) against *this* built curve rather than
-        re-deriving a boundary-pair mean per interval (which is numerically a
-        track-vs-track comparison, not track-vs-μ₂_mid, and goes inconsistent
-        at the seam where the boundary pair swaps).
-        """
-        ths, vals, drvs, jls, jhs = [], [], [], [], []
-        seg_row: list[tuple[int, int]] = []
-        self.seg_mu2_values: list[np.ndarray] = []
-        self.seg_mu2_derivs: list[np.ndarray] = []
-        for s_idx, view in enumerate(self._item_views):
-            seg = self.segments[s_idx]
-            th = seg.theta1_arr
-            N = len(th)
-            if N == 0:
-                self.seg_mu2_values.append(np.array([]))
-                self.seg_mu2_derivs.append(np.array([]))
+                seg_vals.append(np.array([]))
+                seg_ders.append(np.array([]))
                 continue
             rows = np.arange(N)
-            j_lo = view.j_lo
-            j_hi = view.j_hi
-            # μ₂_mid is the ONE place the 0/∞ clamp applies (see
-            # _LOGABS_CLAMP_L): each boundary ln|β₂| is clamped to the band
-            # edge, then the pair is averaged.  The derivatives stay raw —
-            # the path evaluator clamps the interpolated value only.
-            mu = (np.clip(view.item_logabs[rows, j_lo],
+            mu = (
+                np.clip(view.item_logabs[rows, view.j_lo],
+                        -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
+                + np.clip(view.item_logabs[rows, view.j_hi],
                           -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
-                  + np.clip(view.item_logabs[rows, j_hi],
-                            -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)) / 2.0
-            dm = (view.item_tang_re[rows, j_lo]
-                  + view.item_tang_re[rows, j_hi]) / 2.0
-            ths.append(th)
-            vals.append(mu)
-            drvs.append(dm)
-            jls.append(j_lo)
-            jhs.append(j_hi)
-            seg_row.extend([(s_idx, int(r)) for r in range(N)])
-            self.seg_mu2_values.append(mu)
-            self.seg_mu2_derivs.append(dm)
-
-        self.mu2_mid_theta1 = np.concatenate(ths) if ths else np.array([])
-        self.mu2_mid_values = np.concatenate(vals) if vals else np.array([])
-        self.mu2_mid_derivs = np.concatenate(drvs) if drvs else np.array([])
-        self.mu2_mid_jlo = np.concatenate(jls) if jls else np.array([], dtype=int)
-        self.mu2_mid_jhi = np.concatenate(jhs) if jhs else np.array([], dtype=int)
-        self._seg_row = seg_row
-
-        self._find_breakpoints()
-
-    def _is_mr_row(self, s_idx: int, row: int) -> bool:
-        """Whether this row is a segment's MR boundary (cluster snapping makes
-        ``abs_argsort`` unstable there — sort-change detection is skipped and
-        MR breakpoints are taken from ``multiple_roots`` directly)."""
-        seg = self.segments[s_idx]
-        N = len(seg.theta1_arr)
-        if row == 0 and seg.left_mr >= 0:
-            return True
-        if row == N - 1 and seg.right_mr >= 0:
-            return True
-        return False
-
-    def _find_breakpoints(self) -> None:
-        """Sort-change breakpoints = adjacent rows where (j_lo, j_hi) change.
-
-        ``abs_argsort`` only **identifies** (which item changed, the crossing
-        pair, ``pair_kind``); the **precise** value/gap/derivatives come from
-        the column indices + the θ* row's tangent (§2.4):
-
-          * ``theta1``/``value``/``gap`` taken at θ* (the smaller-gap row, i.e.
-            the refinement point);
-          * ``deriv_left`` = ``(V_{j_lo_l} + V_{j_hi_l})/2`` at θ* with the
-            LEFT segment's item indices; ``deriv_right`` with the RIGHT's.
-            A swap (same {a,b} set) ⇒ strictly continuous; an internal break
-            (set changes) ⇒ real jump.
-
-        MR rows are skipped here (handled by :meth:`_find_mr_breakpoints`).
-        """
-        M = self.M
-        th = self.mu2_mid_theta1
-        jl = self.mu2_mid_jlo
-        jh = self.mu2_mid_jhi
-        bps: list[Mu2MidBreakpoint] = []
-        for k in range(len(th) - 1):
-            if jl[k] == jl[k + 1] and jh[k] == jh[k + 1]:
-                continue
-            s_idx_l, r_l = self._seg_row[k]
-            s_idx_r, r_r = self._seg_row[k + 1]
-            if self._is_mr_row(s_idx_l, r_l) or self._is_mr_row(s_idx_r, r_r):
-                continue
-            view_l = self._item_views[s_idx_l]
-            view_r = self._item_views[s_idx_r]
-            set_l = {int(jl[k]), int(jh[k])}
-            set_r = {int(jl[k + 1]), int(jh[k + 1])}
-            symdiff = set_l ^ set_r
-            if not symdiff:
-                ca, cb = int(jl[k]), int(jh[k])
-            elif len(symdiff) == 2:
-                ca, cb = sorted(symdiff)
-            else:
-                ca, cb = -1, -1
-            pk = 'multi'
-            if ca >= 0:
-                s2i_l = view_l.sort_to_item[r_l]
-                pos_a = np.where(s2i_l == ca)[0]
-                pos_b = np.where(s2i_l == cb)[0]
-                if len(pos_a) > 0 and len(pos_b) > 0:
-                    boundary = min(int(pos_a[-1]), int(pos_b[-1]))
-                    if boundary == M - 2:
-                        pk = 'M-2_M-1'
-                    elif boundary == M - 1:
-                        pk = 'M-1_M'
-                    elif boundary == M:
-                        pk = 'M_M+1'
-
-            j_lo_l, j_hi_l = int(jl[k]), int(jh[k])
-            j_lo_r, j_hi_r = int(jl[k + 1]), int(jh[k + 1])
-
-            # θ* row = the smaller-gap (more refined) side
-            if ca >= 0:
-                la_l = float(view_l.item_logabs[r_l, ca]
-                             - view_l.item_logabs[r_l, cb])
-                la_r = float(view_r.item_logabs[r_r, ca]
-                             - view_r.item_logabs[r_r, cb])
-                if abs(la_l) <= abs(la_r):
-                    s_star, r_star, view_star = s_idx_l, r_l, view_l
-                else:
-                    s_star, r_star, view_star = s_idx_r, r_r, view_r
-            else:
-                s_star, r_star, view_star = s_idx_l, r_l, view_l
-            seg_star = self.segments[s_star]
-            theta_bp = float(seg_star.theta1_arr[r_star])
-            la_star = view_star.item_logabs[r_star]
-            tang_star = view_star.item_tang_re[r_star]
-
-            # μ₂_mid value at the breakpoint — same clamp as _assemble.
-            value_bp = float(
-                (float(np.clip(la_star[j_lo_l], -_LOGABS_CLAMP_L,
-                               _LOGABS_CLAMP_L))
-                 + float(np.clip(la_star[j_hi_l], -_LOGABS_CLAMP_L,
-                                 _LOGABS_CLAMP_L))) / 2.0)
-            gap = abs(float(la_star[ca] - la_star[cb])) if ca >= 0 else float('nan')
-
-            def _deriv(j1: int, j2: int) -> float:
-                v = (float(tang_star[j1]) + float(tang_star[j2])) / 2.0
-                return v if np.isfinite(v) else float('inf')
-
-            deriv_left = _deriv(j_lo_l, j_hi_l)
-            deriv_right = _deriv(j_lo_r, j_hi_r)
-
-            rep_cols = view_star.rep_cols
-            cols_bp = (int(rep_cols[ca]), int(rep_cols[cb])) if ca >= 0 else (-1, -1)
-
-            bps.append(Mu2MidBreakpoint(
-                theta1=theta_bp,
-                value=value_bp,
-                deriv_left=deriv_left,
-                deriv_right=deriv_right,
-                pair_kind=pk,
-                columns=cols_bp,
-                is_pmgbz=(pk == 'M-1_M'),
-                gap=gap,
-            ))
-        self.mu2_mid_breakpoints = bps
-
-        self.mu2_mid_breakpoints.extend(self._find_mr_breakpoints())
-        self.mu2_mid_breakpoints.sort(key=lambda b: b.theta1)
-
-    def _find_mr_breakpoints(self) -> list:
-        """MR breakpoints from ``multiple_roots`` directly.
-
-        MR rows have cluster snapping (exact equal modulus) so ``abs_argsort``
-        is fully unstable; sort-change detection is unreliable there.  An MR
-        whose cluster covers sorted position M-1 or M touches the μ₂_mid
-        boundary pair → a breakpoint.  The derivative is singular at the MR
-        branch point (``dβ/dθ`` diverges ⇒ ``V → ∞``), so
-        ``deriv_left = deriv_right = inf``; downstream interpolation
-        special-cases MR.
-        """
-        M = self.M
-        th = self.mu2_mid_theta1
-        bps: list[Mu2MidBreakpoint] = []
-        for mr in self.multiple_roots:
-            idx = int(np.argmin(np.abs(th - mr.theta1)))
-            if not np.isclose(th[idx], mr.theta1, atol=1e-6):
-                continue
-            value = float(self.mu2_mid_values[idx])
-            deriv = float(self.mu2_mid_derivs[idx])
-            if not np.isfinite(deriv):
-                deriv = float('inf')
-
-            for cluster in mr.cluster_indices:
-                covers = set(int(c) for c in cluster)
-                if (M - 1) not in covers and M not in covers:
-                    continue
-                if {M - 1, M} <= covers:
-                    pk = 'M-1_M'; is_pmgbz = True
-                elif {M - 2, M - 1} <= covers:
-                    pk = 'M-2_M-1'; is_pmgbz = False
-                elif {M, M + 1} <= covers:
-                    pk = 'M_M+1'; is_pmgbz = False
-                else:
-                    pk = 'multi'; is_pmgbz = False
-                bps.append(Mu2MidBreakpoint(
-                    theta1=float(mr.theta1),
-                    value=value,
-                    deriv_left=deriv,
-                    deriv_right=deriv,
-                    pair_kind=pk,
-                    columns=(-1, -1),
-                    is_pmgbz=is_pmgbz,
-                    gap=0.0,
-                ))
-        return bps
+            ) / 2.0
+            dm = (view.item_tang_re[rows, view.j_lo]
+                  + view.item_tang_re[rows, view.j_hi]) / 2.0
+            seg_vals.append(mu)
+            seg_ders.append(dm)
+            jls.append(view.j_lo)
+            jhs.append(view.j_hi)
+        self.mu2_mid_jlo = (np.concatenate(jls) if jls
+                            else np.array([], dtype=int))
+        self.mu2_mid_jhi = (np.concatenate(jhs) if jhs
+                            else np.array([], dtype=int))
+        self.seg_mu2_values = seg_vals
+        self.seg_mu2_derivs = seg_ders
 
 
 # ---------------------------------------------------------------------------
-# Piecewise-smooth μ₂_mid path evaluator
+# μ₂_mid path construction
 # ---------------------------------------------------------------------------
-#
-# Shared by crossings.py (§2 — evaluating g = ln|β_j| − μ₂_mid at arbitrary
-# probe θ during crossing refinement, which no longer inserts mesh rows) and
-# winding.py (§6.4 — the loop-winding path).  Lives here (not in winding.py)
-# because winding imports crossings; crossings may not import winding.
 
-class _Mu2MidPath:
-    """Piecewise-smooth ``μ₂_mid(t)`` and ``μ₂_mid'(t)``.
+def _boundary_mean(
+    view: ItemView,
+    row: int,
+    item_lo: int,
+    item_hi: int,
+) -> float:
+    a = np.clip(float(view.item_logabs[row, item_lo]),
+                -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
+    b = np.clip(float(view.item_logabs[row, item_hi]),
+                -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
+    return float((a + b) / 2.0)
 
-    Built from a :class:`Mu2MidZM`'s flat ``mu2_mid_*`` arrays and
-    ``mu2_mid_breakpoints``.  Between adjacent mesh rows the value is cubic
-    Hermite from the two rows' (value, derivative).  At a breakpoint row the
-    derivative jumps, so the cubic to its RIGHT uses ``deriv_right`` and the
-    cubic to its LEFT uses ``deriv_left`` (from :class:`Mu2MidBreakpoint`);
-    non-breakpoint rows use the smooth stored derivative on both sides.  MR
-    rows (``deriv == inf``) and rows with unusable tangents fall back to
-    linear interpolation (honest and bounded, §2.3 / §6.2).
-    """
 
-    def __init__(self, zm: Mu2MidZM):
-        self.zm = zm
-        self.th = np.asarray(zm.mu2_mid_theta1, dtype=float)
-        self.val = np.asarray(zm.mu2_mid_values, dtype=float)
-        # default (smooth) per-row derivative
-        smooth = np.asarray(zm.mu2_mid_derivs, dtype=float)
-        self.deriv_right = smooth.copy()
-        self.deriv_left = smooth.copy()
-        # override at breakpoint rows — ALL rows at the breakpoint θ, not
-        # just the argmin one: a segment-boundary MR row appears TWICE in
-        # the flat array (end of one segment, start of the next), and
-        # overriding only the first would leave the duplicate on the smooth
-        # derivative, silently dropping deriv_right past the MR.
-        for bp in zm.mu2_mid_breakpoints:
-            for k in np.where(np.isclose(self.th, bp.theta1, atol=1e-8))[0]:
-                self.deriv_right[k] = bp.deriv_right
-                self.deriv_left[k] = bp.deriv_left
+def _boundary_deriv(
+    view: ItemView,
+    row: int,
+    item_lo: int,
+    item_hi: int,
+) -> float:
+    def contrib(item: int) -> float:
+        raw = float(view.item_logabs[row, item])
+        if raw <= -_LOGABS_CLAMP_L or raw >= _LOGABS_CLAMP_L:
+            return 0.0  # clipped value is saturated → derivative zero
+        d = float(view.item_tang_re[row, item])
+        return d if np.isfinite(d) else float('inf')
 
-    def value_deriv(self, t: float) -> tuple[float, float]:
-        """``(μ₂_mid(t), μ₂_mid'(t))`` via per-row cubic Hermite (linear near MR)."""
-        th = self.th
-        n = len(th)
-        if n == 0:
-            return 0.0, 0.0
-        # locate interval
-        if t <= th[0]:
-            i = 0
-            s = 0.0
-        elif t >= th[-1]:
-            i = n - 2
-            s = 1.0
+    return float((contrib(item_lo) + contrib(item_hi)) / 2.0)
+
+
+def _event_rows_by_segment(groups: list[EventGroup]) -> dict:
+    out: dict[int, dict[int, EventGroup]] = {}
+    for g in groups:
+        if g.row >= 0:
+            out.setdefault(g.seg_idx, {})[g.row] = g
+    return out
+
+
+def _knots_for_segment(
+    zm: Mu2MidZM,
+    s_idx: int,
+    row_groups: dict[int, EventGroup],
+) -> list[tuple[float, float, float, float]]:
+    """(theta, value, deriv_left, deriv_right) for every mesh row."""
+    seg = zm.segments[s_idx]
+    view = zm._item_views[s_idx]
+    th = seg.theta1_arr
+    n = len(th)
+    knots: list[tuple[float, float, float, float]] = []
+
+    for i in range(n):
+        if i in row_groups:
+            g = row_groups[i]
+            lo = g.boundary_pair_left
+            hi = g.boundary_pair_right
+            if lo is None and hi is None:
+                # fall back to the ItemView row (should not happen for
+                # interior events; only defensively for a seam event).
+                lo = hi = (int(view.j_lo[i]), int(view.j_hi[i]))
+            if lo is not None:
+                v_left = _boundary_mean(view, i, lo[0], lo[1])
+                d_left = _boundary_deriv(view, i, lo[0], lo[1])
+            else:
+                v_left = 0.0
+                d_left = float('inf')
+            if hi is not None:
+                v_right = _boundary_mean(view, i, hi[0], hi[1])
+                d_right = _boundary_deriv(view, i, hi[0], hi[1])
+            else:
+                v_right = 0.0
+                d_right = float('inf')
+            if lo is None:
+                v_left = v_right
+                d_left = d_right
+            if hi is None:
+                v_right = v_left
+                d_right = d_left
+            value = float((v_left + v_right) / 2.0)
         else:
-            i = int(np.searchsorted(th, t, side='right') - 1)
-            i = max(0, min(i, n - 2))
-            s = (t - th[i]) / (th[i + 1] - th[i])
+            lo = int(view.j_lo[i])
+            hi = int(view.j_hi[i])
+            value = _boundary_mean(view, i, lo, hi)
+            d_left = d_right = _boundary_deriv(view, i, lo, hi)
 
-        h = th[i + 1] - th[i]
-        if h <= 0:
-            # zero-width (duplicate segment-boundary row) → return the value
-            return float(self.val[i]), 0.0
+        knots.append((float(th[i]), value, d_left, d_right))
+    return knots
 
-        v0 = float(self.val[i])
-        v1 = float(self.val[i + 1])
-        d0 = float(self.deriv_right[i])
-        d1 = float(self.deriv_left[i + 1])
 
-        # MR / divergent tangent → linear (bounded, §6.2)
-        if not (math.isfinite(d0) and math.isfinite(d1)):
-            val = v0 + s * (v1 - v0)
-            deriv = (v1 - v0) / h
-            return val, deriv
+def _split_piece_at_clamp(
+    t0: float, t1: float, v0: float, dv0: float, v1: float, dv1: float,
+) -> list[Mu2MidPiece]:
+    """Split one Hermite interval at its ±14 crossings."""
+    h = t1 - t0
+    poly = hermite_interp_poly(h, v0, dv0, v1, dv1)
+    deriv = np.polyder(poly)
 
-        # cubic Hermite of μ₂_mid on [i, i+1]: value + analytic derivative
-        h2 = h * h
-        h3 = h2 * h
-        a = (2.0 * (v0 - v1)) / h3 + (d0 + d1) / h2
-        b = (3.0 * (v1 - v0)) / h2 - (2.0 * d0 + d1) / h
-        # f(s·h) = a·s³h³ + b·s²h² + d0·s·h + v0
-        val = a * (s * h) ** 3 + b * (s * h) ** 2 + d0 * (s * h) + v0
-        # f'(t) = 3a·(t-t0)² + 2b·(t-t0) + d0
-        deriv = 3.0 * a * (s * h) ** 2 + 2.0 * b * (s * h) + d0
+    xs = [0.0, h]
+    for bound in (-_LOGABS_CLAMP_L, _LOGABS_CLAMP_L):
+        q = np.array(poly, dtype=complex)
+        q[-1] -= bound
+        for r in np.roots(q):
+            if abs(r.imag) > 1e-12 * max(1.0, abs(r.real)):
+                continue
+            x = float(r.real)
+            if 0.0 < x < h and min(abs(x - y) for y in xs) > 1e-14:
+                xs.append(x)
+    xs.sort()
 
-        # μ₂_mid is defined as the mean of logabs_clamped values, so it is
-        # bounded to ±_LOGABS_CLAMP_L (a 0/∞ boundary root's ln|β| saturates at
-        # the band edge — see _LOGABS_CLAMP_L).  The endpoint *values* honour
-        # this (they come from logabs_clamped), but the endpoint *derivatives*
-        # d0/d1 are the raw analytic tangent Re(V)=d(ln|β|)/dθ₁
-        # (compute_tangent applies NO cap), which is huge near a boundary root
-        # collapsing to 0/∞.  Feeding huge unclamped derivatives into a cubic
-        # whose values are clamped lets the interpolant overshoot μ₂_mid far
-        # outside the band (to ±10²–10³), so β₂ = exp(μ₂_mid) overflows in the
-        # winding loop and the quad of Im[f'/f] returns nan.  Clamp the path to
-        # the same band the data lives in; where the cubic tried to escape, the
-        # clamped function is saturated (derivative 0), consistent with the
-        # clamped-value model and bounded (no overflow, no divergent quad).
-        if val > _LOGABS_CLAMP_L:
-            return float(_LOGABS_CLAMP_L), 0.0
-        if val < -_LOGABS_CLAMP_L:
-            return float(-_LOGABS_CLAMP_L), 0.0
-        return float(val), float(deriv)
+    pieces: list[Mu2MidPiece] = []
+    for a, b in zip(xs[:-1], xs[1:]):
+        if b - a <= 0.0:
+            continue
+        mid = (a + b) / 2.0
+        val_mid = float(np.polyval(poly, mid))
+        if -_LOGABS_CLAMP_L <= val_mid <= _LOGABS_CLAMP_L:
+            va = float(np.polyval(poly, a))
+            vb = float(np.polyval(poly, b))
+            da = float(np.polyval(deriv, a))
+            db = float(np.polyval(deriv, b))
+            pieces.append(_make_piece(t0 + a, t0 + b, va, da, vb, db))
+        else:
+            bound = (_LOGABS_CLAMP_L if val_mid > _LOGABS_CLAMP_L
+                     else -_LOGABS_CLAMP_L)
+            pieces.append(_make_constant_piece(t0 + a, t0 + b, bound))
+    return pieces
+
+
+def build_mu2_mid(
+    zm: Mu2MidZM,
+    groups: list[EventGroup] | None = None,
+) -> Mu2Mid:
+    """Build the independent, piecewise-smooth μ₂_mid path.
+
+    Requires ``zm._item_views`` to be rebuilt on the final (event-refined)
+    mesh.  *groups* supplies event-row boundary-pair metadata; pass the same
+    groups used by :meth:`Mu2MidZM.analyze`.
+    """
+    groups = groups or []
+    row_groups = _event_rows_by_segment(groups)
+
+    raw: list[tuple[float, float, float, float]] = []
+    for s_idx in range(len(zm.segments)):
+        raw.extend(_knots_for_segment(zm, s_idx, row_groups.get(s_idx, {})))
+
+    if not raw:
+        return Mu2Mid([])
+
+    # Sort by θ and merge exact duplicates (shared MR rows, seam copies).
+    raw.sort(key=lambda x: x[0])
+    knots: list[tuple[float, float, float, float]] = []
+    for t, v, dl, dr in raw:
+        if knots and abs(t - knots[-1][0]) < 1e-14:
+            t0, v0, dl0, dr0 = knots[-1]
+            knots[-1] = (t0, (v0 + v) / 2.0, dl0, dr)
+        else:
+            knots.append((t, v, dl, dr))
+
+    pieces: list[Mu2MidPiece] = []
+    for k in range(len(knots) - 1):
+        t0, v0, _, d0 = knots[k]
+        t1, v1, d1, _ = knots[k + 1]
+        pieces.extend(_split_piece_at_clamp(t0, t1, v0, d0, v1, d1))
+
+    return Mu2Mid(pieces)

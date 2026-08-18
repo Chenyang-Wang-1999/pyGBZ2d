@@ -98,11 +98,11 @@ print(f"mu1 = {result['mu1']:.6f}, mu2 = {result['mu2']:.6f}")
 
 | Function | Description |
 |----------|-------------|
-| `get_hungarian_sorted_roots(char_poly, E_ref, mu1)` | Continuous $\beta_2$ root tracks via Hungarian matching |
-| `get_a2_average_winding(char_poly, E_ref, mu1, mu2)` | $\partial R / \partial \mu_2$ — average winding in a2 direction |
-| `get_a1_average_winding(char_poly, E_ref, mu1, mu2)` | $\partial R / \partial \mu_1$ — average winding in a1 direction |
-| `bisect_a2_winding(char_poly, E_ref, mu1, mu2_low, mu2_high)` | Bisect $\mu_2$ to find where a2 winding crosses target |
-| `bisect_amoeba_ronkin_min(char_poly, E_ref, ...)` | Find $(\mu_1, \mu_2)$ where both a1=a2=0 simultaneously |
+| `collect_GBZ_subsets(coeffs, degs, E_ref, ...)` | Main entry point — check amoeba condition for reference energy |
+| `bisect_amoeba_ronkin_min(char_poly, E_ref, ...)` | Find $(\mu_1, \mu_2)$ where both average windings vanish |
+| `AmoebaZeroManager(poly, E_ref, mu1)` | Adaptive $\beta_2$ root tracks via `continuation.ZeroManager` |
+| `extract_amoeba_subsets(zm, poly, E, mu1, mu2)` | Extract GBZ subsets from track crossings of $\ln|\beta_2| = \mu_2$ |
+| `amoeba_windings(zm, poly, E, mu1, mu2)` | Average windings (a1/a2) and refined zero list |
 
 ## Documentation
 
@@ -130,24 +130,6 @@ python demos/demo_solver.py
 $$\sigma_{\text{Amoeba}} \supset \bigcup_j \sigma_{\text{SGBZ}, j}$$
 
 The amoeba spectrum is a superset of the union of SGBZ spectra. For uniform bands the two are equal.
-
-## Known Issues
-
-### Hungarian matching swap on coarse θ₁ grids in `brute_force_amoeba`
-
-**Symptom**: `get_hungarian_sorted_roots` may produce spurious ln|β₂| sign changes (false crossings of |β₂|=1) on the default coarse grid (N_points=301). This causes `collect_GBZ_subsets` to misclassify a small number of energy points as inside the GBZ spectrum when they are not. The issue is most visible when comparing results from different polynomial representations of the same physical system (e.g., original unit cell vs. supercell).
-
-**Root cause**: When two β₂ roots approach within ~1% of each other in the complex plane between adjacent θ₁ slices, the pure chordal-distance Hungarian matching can swap their identities. The "wrong" matching (crossing in |β₂|) has lower total chordal cost than the "correct" matching (preserving |β₂| ordering), so `linear_sum_assignment` selects it. Finer grids (N≥1001) resolve this by reducing the angular step Δθ₁, making root positions diverge less between slices.
-
-**Affected models**: Supercell / multiband polynomials are more susceptible because the larger total degree compresses root trajectories into the same angular range, increasing the likelihood of near-degeneracies.
-
-**Planned fixes**:
-
-1. Augment the Hungarian cost matrix with a first-order Taylor prediction term using dβ₂/dθ₁ from implicit differentiation of `f(E, β₁, β₂)=0`. The prediction penalizes matches that violate analytic continuity, steering the matcher toward the physically correct assignment. See `brute_force_amoeba/tracks.py:get_hungarian_sorted_roots`.
-
-2. Pseudo arc-length continuation: Instead of matching roots independently at each θ₁ slice, follow each root track along θ₁ by solving an augmented system `[f(E, β₁, β₂), |Δβ₂|² + |Δθ₁|² - ds²]` that parametrizes the root curve by arc length. This naturally handles near-degeneracies because the continuation step is controlled by the local curvature of the root trajectory rather than the θ₁ grid spacing.
-
-**Workaround**: Increase `N_points` from 301 to 1001 in `collect_GBZ_subsets` options, or manually compare results from multiple polynomial representations.
 
 ## References
 

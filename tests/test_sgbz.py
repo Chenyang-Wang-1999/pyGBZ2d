@@ -12,6 +12,8 @@ import pytest
 from cmath import exp
 
 import brute_force_SGBZ as bfs
+from brute_force_SGBZ import sgbz_solver, crossings, winding as sgbz_winding
+from brute_force_SGBZ import pairwise as sgbz_pairwise
 from gbz_types import PointSubset, LineSubset, GBZResult, CharPoly
 from continuation import ZeroManager
 
@@ -339,6 +341,111 @@ class TestContinuumMaterialization:
         assert lines[0].theta1_start == pytest.approx(lines[1].theta1_start)
         assert lines[0].theta1_end == pytest.approx(lines[1].theta1_end)
 
+    def test_extract_requires_continuum_detected(self, poly_A):
+        """Materialization without a detected continuum must raise, not return []."""
+        from brute_force_SGBZ import continuum_lines
+
+        coeffs, degs = poly_A
+        poly = CharPoly(coeffs, degs)
+        zm = bfs.Mu2MidZM(poly, 1.0 + 0j, 0.1)
+        zm.run()
+        zm.build_mu2_mid()
+        assert not zm.has_continuum
+
+        with pytest.raises(RuntimeError, match="has_continuum=True"):
+            continuum_lines.extract_continuum_linesubsets(zm, poly)
+
+    def test_extract_raises_when_no_boundary_runs(
+        self, poly_A, params_A, monkeypatch,
+    ):
+        """has_continuum=True with zero boundary runs is an invariant violation."""
+        from brute_force_SGBZ import continuum_lines
+
+        coeffs, degs = poly_A
+        poly = CharPoly(coeffs, degs)
+        zm = bfs.Mu2MidZM(poly, 1.0 + 0j, params_A["gamma_1"])
+        zm.run()
+        zm.build_mu2_mid()
+        assert zm.has_continuum
+
+        monkeypatch.setattr(continuum_lines, "_find_boundary_runs", lambda m: [])
+        with pytest.raises(RuntimeError, match="invariant broken"):
+            continuum_lines.extract_continuum_linesubsets(zm, poly)
+
+
+# ---- pairwise EventGroup analysis (2026-08-16 refactor) ----
+
+class TestPairwiseAnalysis:
+    """Pairwise ItemView intersections, EventGroups and side-change charges."""
+
+    def test_mu01_has_single_seam_event_group(self, poly_A):
+        poly = CharPoly(*poly_A)
+        zm = bfs.Mu2MidZM(poly, 1.0 + 0j, 0.1)
+        zm.run()
+        zm.analyze()
+        assert len(zm._pair_events) == 1
+        ev = zm._pair_events[0]
+        assert ev.kind == 'cross'
+        assert ev.converged
+        assert ev.pair_kind == 'M-1_M'
+        assert len(zm._event_groups) == 1
+        g = zm._event_groups[0]
+        assert set(g.point_columns) == {0, 1}
+        assert g.column_q[0] == 1
+        assert g.column_q[1] == -1
+
+    def test_minimum_direction_deriv_protection(self):
+        assert sgbz_pairwise._protected_direction(0.0, 1e-12) is None
+        assert sgbz_pairwise._protected_direction(float('nan'), 1e-12) is None
+        assert sgbz_pairwise._protected_direction(1e-11, 1e-12) == 1
+        assert sgbz_pairwise._protected_direction(-1e-11, 1e-12) == -1
+
+    def test_close_events_merge_without_dedup(self):
+        class FakeSeg:
+            theta1_arr = np.array([0.0, 0.1, 0.2])
+
+        class FakeZM:
+            segments = [FakeSeg]
+
+        ev1 = sgbz_pairwise.PairEvent(
+            seg_idx=0, i=0, ia=0, ib=1, cols_a=(0,), cols_b=(1,),
+            rep_a=0, rep_b=1, kind='cross', pair_kind='M-1_M',
+            theta_star=0.1, direction=1)
+        ev2 = sgbz_pairwise.PairEvent(
+            seg_idx=0, i=1, ia=1, ib=2, cols_a=(1,), cols_b=(2,),
+            rep_a=1, rep_b=2, kind='cross', pair_kind='M-1_M',
+            theta_star=0.1 + 0.5e-10, direction=-1)
+        groups = sgbz_pairwise.group_events(FakeZM, [ev1, ev2], merge_tol=1e-10)
+        assert len(groups) == 1
+        assert len(groups[0].events) == 2
+        # the merged group snapped to the straddled mesh data point 0.1
+        assert groups[0].theta == pytest.approx(0.1)
+        assert groups[0].column_components == ((0, 1, 2),)
+
+    def test_isolated_tie_row_does_not_set_jlo_equal_jhi(self, poly_A):
+        """ItemView clusters are whole-segment continua, not isolated ties."""
+        poly = CharPoly(*poly_A)
+        zm = bfs.Mu2MidZM(poly, 1.0 + 0j, 0.1)
+        zm.run()
+        zm.analyze()
+        assert not zm.has_continuum
+        # the seam event row is a tie, yet it is NOT injected into ItemView:
+        # every row still has two distinct items at M-1 and M.
+        for view in zm._item_views:
+            assert not np.any(view.j_lo == view.j_hi)
+
+    def test_mu2_mid_is_bounded_and_piecewise(self, poly_A):
+        poly = CharPoly(*poly_A)
+        zm = bfs.Mu2MidZM(poly, 1.0 + 0j, 0.1)
+        zm.run()
+        zm.analyze()
+        path = zm.mu2_mid
+        assert isinstance(path, bfs.Mu2Mid)
+        assert len(path.pieces) > 0
+        vals = np.array([path.value(t) for t in np.linspace(0, 2 * np.pi, 401)])
+        assert vals.min() >= -14.0
+        assert vals.max() <= 14.0
+
 
 # ---- 0/∞ root truncation ----
 
@@ -384,3 +491,170 @@ def test_all_exports():
     ]
     for name in expected:
         assert hasattr(bfs, name), f"Missing export: {name}"
+
+
+# ---- 2026-08-15 review fixes (B.1–B.5 + charge=None) ----
+
+class TestReviewFixes:
+    """Regression tests for the 2026-08-15 solver/winding review fixes."""
+
+    # ---- B.1: the old cubic-Hermite bracket iteration is gone; analyze() replaces it ----
+
+    def test_analyze_replaces_old_cubic_hermite_iteration(self, poly_A):
+        poly = CharPoly(*poly_A)
+        zm = bfs.Mu2MidZM(poly, 1.0 + 0j, 0.1)
+        zm.run()
+        zm.analyze()
+        assert not hasattr(zm, '_cubic_hermite_iterate')
+        # the known mu1=0.1 boundary crossing is still found through
+        # pairwise EventGroups, with the seam crossing materialized at θ=0.
+        assert len(zm._event_groups) == 1
+        assert set(zm._event_groups[0].point_columns) == {0, 1}
+
+    # ---- B.3: bracket expansion caps (left side) ----
+
+    def test_left_bracket_expansion_raises_after_cap(self, poly_A, monkeypatch):
+        poly = CharPoly(*poly_A)
+        calls = {"n": 0}
+
+        def fake_eval(poly_, E_ref, mu1, zm_run_kwargs, *,
+                      continuum_tol, crossing_tol, max_newton):
+            calls["n"] += 1
+            return 1.0, [], None   # W never crosses zero
+
+        monkeypatch.setattr(sgbz_solver, "_evaluate_winding", fake_eval)
+        monkeypatch.setattr(sgbz_solver, "_MAX_BRACKET_EXPANSIONS", 3)
+
+        with pytest.raises(RuntimeError, match="left bracket expansion"):
+            sgbz_solver.solve_SGBZ_for_E(poly, 1.0 + 0j, mu1_guess=(0.0, 1.0))
+        assert calls["n"] == 3
+
+    # ---- B.2: right bracket keeps expanding after a same-sign continuum proxy ----
+
+    def test_right_bracket_keeps_expanding_after_same_sign_continuum_proxy(
+            self, poly_A, monkeypatch):
+        poly = CharPoly(*poly_A)
+        seen = []
+
+        def fake_eval(poly_, E_ref, mu1, zm_run_kwargs, *,
+                      continuum_tol, crossing_tol, max_newton):
+            seen.append(float(mu1))
+            if mu1 < 0.0:
+                return -1.0, [], None
+            return None, None, None   # continuum on the right side
+
+        def fake_resolve(*args, **kwargs):
+            # same-sign non-boundary: proxy = (mu1 + 0.1, -1.0)
+            return -1.0, -1.0, 0.1
+
+        monkeypatch.setattr(sgbz_solver, "_evaluate_winding", fake_eval)
+        monkeypatch.setattr(
+            sgbz_solver, "_resolve_continuum_winding", fake_resolve)
+        monkeypatch.setattr(sgbz_solver, "_MAX_BRACKET_EXPANSIONS", 3)
+
+        with pytest.raises(RuntimeError, match="right bracket expansion"):
+            sgbz_solver.solve_SGBZ_for_E(poly, 1.0 + 0j, mu1_guess=(-1.0, 0.0))
+        # The corrected band-edge proxy is re-evaluated (not skipped past by
+        # the generic +1 step): -1 establishes the left bracket, then the
+        # right loop visits 0.0, 0.1, 0.2 before the cap fires.
+        assert seen == [-1.0, 0.0, 0.1, 0.2]
+
+    # ---- B.2: a zero right endpoint found via a continuum proxy exits cleanly ----
+
+    def test_right_endpoint_zero_from_continuum_proxy(self, poly_A, monkeypatch):
+        poly = CharPoly(*poly_A)
+
+        def fake_eval(poly_, E_ref, mu1, zm_run_kwargs, *,
+                      continuum_tol, crossing_tol, max_newton):
+            if mu1 == -1.0:
+                return -1.0, [], None
+            if mu1 == 0.0:
+                return None, None, None   # continuum at the right guess
+            if mu1 == 0.1:
+                return 0.0, [], None      # proxy correction lands on W = 0
+            raise AssertionError(f"unexpected mu1={mu1!r}")
+
+        def fake_resolve(*args, **kwargs):
+            # non-boundary: w_l = -1, w_r = 0 at mu1 + eps = 0.1
+            return -1.0, 0.0, 0.1
+
+        monkeypatch.setattr(sgbz_solver, "_evaluate_winding", fake_eval)
+        monkeypatch.setattr(
+            sgbz_solver, "_resolve_continuum_winding", fake_resolve)
+
+        res = sgbz_solver.solve_SGBZ_for_E(
+            poly, 1.0 + 0j, mu1_guess=(-1.0, 0.0))
+        assert res["_exit_reason"] == "right_endpoint_zero"
+        assert res["mu1"] == pytest.approx(0.1)
+        assert res["subsets"] == []
+
+    # ---- B.4: _ensure_mu2mid analyzes with CONTINUUM_TOL ----
+
+    def test_ensure_mu2mid_uses_continuum_tol(self, poly_A, monkeypatch):
+        poly = CharPoly(*poly_A)
+        zm = ZeroManager(poly, 1.0 + 0j, 0.1)
+        zm.run()
+
+        seen = {}
+        orig_analyze = crossings.Mu2MidZM.analyze
+
+        def spy_analyze(self_, *args, **kwargs):
+            seen["tie_tol"] = kwargs.get("tie_tol")
+            return orig_analyze(self_, *args, **kwargs)
+
+        monkeypatch.setattr(crossings.Mu2MidZM, "analyze", spy_analyze)
+        subsets, charges = bfs.detect_crossings_simple(zm, poly)
+
+        assert seen["tie_tol"] == bfs.CONTINUUM_TOL
+        assert len(subsets) == 2   # the known mu1=0.1 crossing is still found
+
+    # ---- hard-boundary charge is None (unknown), not a numeric placeholder ----
+
+    def test_hard_charge_is_none_sentinel(self):
+        ch_mr = crossings._classify_charge(0.0, 1.0 + 0j, 1.0, near_mr=True)
+        assert ch_mr["kind"] == "mr"
+        assert ch_mr["charge"] is None
+
+        ch_tangent = crossings._classify_charge(
+            0.0, 1.0 + 0j, float("nan"), near_mr=False)
+        assert ch_tangent["kind"] == "tangent"
+        assert ch_tangent["charge"] is None
+
+    # ---- B.5: soft-only charge conservation ----
+
+    def test_compute_average_winding_rejects_nonconserved_charges(self, poly_A):
+        poly = CharPoly(*poly_A)
+        zm = bfs.Mu2MidZM(poly, 1.0 + 0j, 0.1)
+        zm.run()
+        zm.build_mu2_mid()
+
+        bad = [
+            dict(theta1=0.0, theta2=0.5, charge=1, kind="ordinary"),
+            dict(theta1=1.0, theta2=1.5, charge=1, kind="ordinary"),
+        ]
+        with pytest.raises(RuntimeError, match="do not sum to zero"):
+            bfs.compute_average_winding(zm, poly, bad)
+
+    def test_compute_average_winding_skips_none_hard_charge(
+            self, poly_A, monkeypatch):
+        """A hard boundary (charge=None) disables the conservation check and
+        must never enter arithmetic: the winding path stays TypeError-free."""
+        poly = CharPoly(*poly_A)
+        zm = bfs.Mu2MidZM(poly, 1.0 + 0j, 0.1)
+        zm.run()
+        zm.build_mu2_mid()
+
+        quad_calls = []
+
+        def fake_quad(m, poly_, E_ref, mu1, theta2):
+            quad_calls.append(theta2)
+            return 1.0
+
+        monkeypatch.setattr(sgbz_winding, "_loop_winding_quad", fake_quad)
+        charges = [
+            dict(theta1=0.0, theta2=0.5, charge=None, kind="mr"),
+            dict(theta1=1.0, theta2=2.5, charge=1, kind="ordinary"),
+        ]
+        W = bfs.compute_average_winding(zm, poly, charges)
+        assert np.isfinite(W)
+        assert len(quad_calls) >= 1

@@ -11,6 +11,9 @@ Low-level step:
     compute_tangent, predict_roots, estimate_error, arclength_step,
     StepResult, StepControl
 
+Polynomial interpolation:
+    cubic_hermite_poly, hermite_interp_poly
+
 Multiple-root detection & refinement:
     multiple_root_point_trigger, MultipleRootIntervalTrigger,
     detect_cluster, solve_multiple_roots_in_interval,
@@ -30,6 +33,11 @@ from .arclength import (
     arclength_step,
     StepResult,
     StepControl,
+)
+
+from .interpolation import (
+    cubic_hermite_poly,
+    hermite_interp_poly,
 )
 
 from .zero_manager import (
@@ -54,6 +62,8 @@ __all__ = [
     "predict_roots",
     "estimate_error",
     "arclength_step",
+    "cubic_hermite_poly",
+    "hermite_interp_poly",
     "multiple_root_point_trigger",
     "MultipleRootIntervalTrigger",
     "detect_cluster",

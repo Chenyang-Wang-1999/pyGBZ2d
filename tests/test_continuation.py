@@ -280,6 +280,22 @@ class TestComputeTangentSynthetic:
         for i in range(len(norms) - 1):
             assert norms[i] < norms[i + 1]
 
+    def test_padding_roots_get_nan_and_norm_ignores_nan(self, poly_A):
+        """0/∞ padding roots have UNDEFINED tangents (nan, not 0); norm_V
+        stays finite by ignoring the nan components only."""
+        mu1 = 0.0
+        beta1 = exp(mu1 + 1j * 0.3)
+        roots = np.asarray(poly_A.solve_roots_1d((0, 1), (0j, beta1), (2,)))
+        padded = np.append(roots, [0.0, np.inf])
+
+        V, norm_V = compute_tangent(poly_A, 0j, beta1, padded)
+        assert np.isnan(V[-2])
+        assert np.isnan(V[-1])
+
+        # norm over the padded array equals norm over the finite roots.
+        _, norm_finite = compute_tangent(poly_A, 0j, beta1, roots)
+        assert norm_V == pytest.approx(norm_finite)
+
 
 # ===========================================================================
 # predict_roots
@@ -566,7 +582,8 @@ class TestComputeTangentHN:
         for from_idx, to_idx in enumerate(matches):
             b2 = roots[from_idx]; b2_fwd = roots_fwd[to_idx]
             if abs(b2) < ZERO_THRESHOLD or abs(b2) > INF_THRESHOLD:
-                assert abs(V[from_idx]) < 1e-10
+                # Undefined tangent for a 0/∞ padding root: nan, not 0.
+                assert np.isnan(V[from_idx])
                 continue
             ln_b2 = np.log(b2); ln_b2_fwd = np.log(b2_fwd)
             diff = ln_b2_fwd - ln_b2

@@ -342,6 +342,8 @@ def plot_SGBZ(which="a1"):
     ind_amoeba = [i for i in range(len(res)) if res[i].is_gbz]
     ind_not_amoeba = [i for i in range(len(res)) if not res[i].is_gbz and res[i].success]
 
+    print("Failed:", ind_failed)
+
     # Plot
     plt.figure()
     plt.plot(E_list[ind_amoeba].real, E_list[ind_amoeba].imag, '.', label="SGBZ")
@@ -389,22 +391,38 @@ def plot_SGBZ_mu(which="a1"):
     plt.colorbar(sca)
 
 
-def plot_index_E(which=""):
+def plot_index_E(which="", kind="amoeba"):
     """子集数-E 图：每个 GBZResult 的 index (n_0D, n_1D) 在能量复平面上着色。
 
     每种不同的 index（如 (1,0)、(0,2)、(0,0)）映射为一种颜色；(0,0) 表示
     E 在 GBZ 外（或计算失败）。index 是 ``GBZResult.index`` = (PointSubset
     数, LineSubset 数)。
+
+    Parameters
+    ----------
+    which : str
+        数据文件后缀。amoeba 对应 ``Haldane-gain-loss-amoeba<which>.pkl``
+        （如 ``""`` 或 ``"-xy"``）；SGBZ 对应
+        ``Haldane-gain-loss-<which>-SGBZ.pkl``（如 ``"a1"``、``"a2"``、
+        ``"x"``、``"y"``）。
+    kind : str
+        ``"amoeba"`` 或 ``"SGBZ"``（大小写不敏感），选择数据命名约定。
     """
-    with open("data/Haldane-gain-loss-amoeba%s.pkl" % which, "rb") as fp:
+    kind = kind.lower()
+    if kind == "amoeba":
+        fname = "data/Haldane-gain-loss-amoeba%s.pkl" % which
+    elif kind == "sgbz":
+        fname = "data/Haldane-gain-loss-%s-SGBZ.pkl" % which
+    else:
+        raise ValueError(f"unknown kind={kind!r}; use 'amoeba' or 'SGBZ'")
+
+    with open(fname, "rb") as fp:
         data = pickle.load(fp)
     E_real, E_imag, results = data["E_real"], data["E_imag"], data["results"]
     E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
     E_list = (E_real_mesh + 1j * E_imag_mesh).flatten()
 
     def get_index(res):
-        if isinstance(res, dict):          # 兼容旧版 dict 结果
-            return tuple(res.get("index", (0, 0)))
         return tuple(res.index)
 
     index_keys = [get_index(res) for res in results]
@@ -422,7 +440,7 @@ def plot_index_E(which=""):
     cbar.ax.set_yticklabels([f"({a},{b})" for a, b in unique])
     plt.xlabel("Re E")
     plt.ylabel("Im E")
-    plt.title("GBZ subsets index $(n_{0D}, n_{1D})$ vs $E$")
+    plt.title(f"{kind.upper()} GBZ subsets index $(n_{{0D}}, n_{{1D}})$ vs $E$")
 
 
 def debug_y_SGBZ():
@@ -450,12 +468,15 @@ if __name__ == "__main__":
     # plot_amoebic_spectrum()
     # plot_amoeba_mu()
     # plot_amoebic_spectrum("-xy")
-    plot_SGBZ("a1")
-    plot_SGBZ("a2")
-    plot_SGBZ("x")
-    plot_SGBZ("y")
-    # plot_index_E("a1")
-    # plot_index_E("")
-    # plot_index_E("-xy")
-    # plt.show()
+    # plot_SGBZ("a1")
+    # plot_SGBZ("a2")
+    # plot_SGBZ("x")
+    # plot_SGBZ("y")
+    plot_index_E("a1", kind="SGBZ")
+    plot_index_E("a2", kind="SGBZ")
+    plot_index_E("x", kind="SGBZ")
+    plot_index_E("y", kind="SGBZ")
+    plot_index_E("")
+    plot_index_E("-xy")
+    plt.show()
     # debug_y_SGBZ()

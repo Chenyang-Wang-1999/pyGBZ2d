@@ -79,8 +79,8 @@ class AmoebaZeroManager(ZeroManager):
 
     def run(self, **kwargs) -> None:
         super().run(**kwargs)
-        # Cache ln|β₂| per segment.  Re-run() resets segments, so recompute
-        # the cache unconditionally — do not append to a stale list.
+        # ZeroManager.run is single-shot (a second call raises), so this
+        # cache is built exactly once over the final segment list.
         self.seg_logabs = [
             np.log(np.abs(seg.tracked_roots)) for seg in self.segments
         ]

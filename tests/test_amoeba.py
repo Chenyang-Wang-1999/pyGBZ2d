@@ -150,6 +150,7 @@ def _build_two_segment_zm(mu2, cont_on_seg1=True, cluster_tracks=(0, 1),
         theta1_arr=th0, tracked_roots=tr0,
         abs_argsort=np.tile(np.arange(K), (11, 1)),
         left_mr=seg0_left_mr, right_mr=1 if boundary_mr else 0,
+        tangents=np.zeros_like(tr0),
     )
 
     th1 = np.linspace(pi, 2 * pi, 11)
@@ -170,6 +171,7 @@ def _build_two_segment_zm(mu2, cont_on_seg1=True, cluster_tracks=(0, 1),
         theta1_arr=th1, tracked_roots=tr1,
         abs_argsort=np.tile(np.arange(K), (11, 1)),
         left_mr=1 if boundary_mr else 0, right_mr=seg1_right_mr,
+        tangents=np.zeros_like(tr1),
     )
 
     # Continuum mask: track whose |β₂| stays at exp(μ₂) for the whole segment.

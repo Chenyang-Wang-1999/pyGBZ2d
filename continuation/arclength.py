@@ -30,6 +30,8 @@ from gbz_types import (
     to_sphere_r3,
 )
 
+from .interpolation import hermite_interp_poly
+
 # ---------------------------------------------------------------------------
 # Step-size control constants (mirror scipy's RK45)
 # ---------------------------------------------------------------------------
@@ -100,9 +102,17 @@ def compute_tangent(
 ) -> tuple[np.ndarray, float]:
     """Compute tangent vector V_j = d(ln β₂ⱼ)/dθ₁ for each root.
 
-    Roots at 0 or ∞ get V_j = 0.  When ∂f/∂β₂ ≈ 0 the implicit-function
-    derivative diverges naturally; no artificial cap is applied — the
-    caller's min_dtheta / min_step guards catch the divergence.
+    The 0/∞ padding roots get ``V_j = nan`` — their tangent is UNDEFINED,
+    not zero (a zero tangent would mean "the root does not move").  At a
+    multiple root ``∂f/∂β₂ = 0`` the implicit-function derivative diverges,
+    so ``V_j = inf``.  Both sentinels propagate to downstream consumers,
+    whose ``np.isfinite`` guards fall back to linear interpolation / hold
+    fixed; no artificial cap is applied.
+
+    ``norm_V`` keeps the ``inf`` contributions (an MR therefore drives
+    ``dθ₁ = h/norm_V → 0`` and triggers the step-collapse MR detection) but
+    IGNORES ``nan`` contributions so undefined padding tangents do not poison
+    the step controller.
     """
     n_roots = len(roots)
     V = np.zeros(n_roots, dtype=complex)
@@ -110,6 +120,7 @@ def compute_tangent(
     for j in range(n_roots):
         beta2 = roots[j]
         if _is_singular_root(beta2):
+            V[j] = np.nan + 0j
             continue
 
         partials = poly.eval_partials((E_ref, beta1, beta2))
@@ -131,7 +142,8 @@ def compute_tangent(
 
         V[j] = V_j
 
-    norm_V = np.sqrt(1.0 + np.sum(np.abs(V) ** 2))
+    non_nan = ~np.isnan(V)
+    norm_V = np.sqrt(1.0 + np.sum(np.abs(V[non_nan]) ** 2))
     return V, norm_V
 
 
@@ -198,10 +210,6 @@ def predict_roots_hermite(
 
         s = (theta_target - theta0) / (theta1 - theta0)
         dt = theta1 - theta0
-        h00 = 2 * s ** 3 - 3 * s ** 2 + 1
-        h10 = s ** 3 - 2 * s ** 2 + s
-        h01 = -2 * s ** 3 + 3 * s ** 2
-        h11 = s ** 3 - s ** 2
 
         predicted = np.empty_like(roots0)
         for j in range(len(roots0)):
@@ -210,11 +218,15 @@ def predict_roots_hermite(
             if _is_singular_root(p0) or _is_singular_root(p1):
                 predicted[j] = p0
                 continue
+            # Endpoint derivatives in θ (dβ₂/dθ = V·β₂).  The shared builder
+            # returns a cubic Hermite poly when both are finite, otherwise
+            # the linear poly [slope, p0]; np.polyval handles both.
             m0 = V0[j] * p0
             m1 = V1[j] * p1
-            cand = h00 * p0 + h10 * dt * m0 + h01 * p1 + h11 * dt * m1
+            poly = hermite_interp_poly(dt, p0, m0, p1, m1)
+            cand = np.polyval(poly, theta_target - theta0)
             if not np.isfinite(cand) or _is_singular_root(cand):
-                # Hermite diverged → two-point linear interpolation.
+                # Hermite result diverged → two-point linear interpolation.
                 cand = p0 + s * (p1 - p0)
                 if not np.isfinite(cand) or _is_singular_root(cand):
                     cand = p0
