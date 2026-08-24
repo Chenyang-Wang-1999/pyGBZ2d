@@ -21,6 +21,7 @@ import warnings
 
 
 from gbz_types import (
+    TWO_PI,
     CharPoly,
     hungarian_match_indices,
     sort_by_root_abs,
@@ -243,7 +244,7 @@ def integrate_segment(
 
 def _normalize_theta(theta: float) -> float:
     """Normalize to [0, 2π)."""
-    return float(theta % (2 * pi))
+    return float(theta % (TWO_PI))
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +327,22 @@ class _PendingSeg:
 
 # Small θ₁ step used to jump past a multiple root after refinement.
 _MR_JUMP = 1e-6
+# Safety factors for the minimum restart distance past an MR.  Near a
+# branch point the tangent diverges, |V| ≈ 1/(2Δ) for restart distance Δ.
+# Two independent collapse modes set the floor on Δ:
+#   * FIRST step (h = h0): dθ₁ ≈ 2·h0·Δ must clear min_dtheta
+#     → Δ ≥ 10·min_dtheta/h0;
+#   * ACCEPTED step: the error controller rejects the near-branching step
+#     until dθ_acc ≈ κ·Δ (κ ≈ 0.05 from rtol = 1e-3 curvature error); the
+#     shrunk-but-not-yet-accepted steps must also clear min_dtheta
+#     → Δ ≥ 100·min_dtheta (empirically calibrated on the
+#     β₂² − (β₁ − i) ping-pong repro).
+# A restart closer than either floor re-detects the SAME MR and ping-pongs.
+_MR_RESTART_FACTOR_H0 = 10.0
+_MR_RESTART_FACTOR_ABS = 100.0
+# Two refined MR θ₁ closer than this are the same physical MR — refinement
+# made no forward progress (restart landed before the MR again).
+_MR_STUCK_TOL = 1e-12
 # θ₁ within this of 2π (≡ 0) is treated as the θ₁ = 0 boundary.
 _BOUNDARY_THETA_TOL = 1e-6
 # Warn if the iterative MR solver's θ₁ drifts more than this from the trigger.
@@ -430,6 +447,16 @@ class ZeroManager:
         self._has_run = True
         self._cluster_tol = cluster_tol
 
+        # Effective restart distance past an MR: never smaller than the
+        # branch-point-safe floors (see _MR_RESTART_FACTOR_H0 / _ABS), or the
+        # steps right after the restart collapse below min_dtheta and the
+        # point trigger re-detects the SAME MR in an infinite ping-pong.
+        mr_jump_eff = max(
+            mr_jump,
+            _MR_RESTART_FACTOR_H0 * min_dtheta / h0,
+            _MR_RESTART_FACTOR_ABS * min_dtheta,
+        )
+
         # ---- Init at θ₁ = 0 ----
         theta = 0.0
         roots = self._solve(theta)  # modulus-sorted
@@ -467,12 +494,14 @@ class ZeroManager:
                     theta1=0.0,
                     cluster_indices=cluster,
                     roots=roots,
-                    cluster_stds=cluster_stds,
+                    cluster_stds=tuple(cluster_stds),
                 )
             )
 
-            # Reinitialize the solver to avoid MR
-            theta += mr_jump
+            # Reinitialize the solver to avoid MR (mr_jump_eff, not the bare
+            # mr_jump: the boundary MR at θ=0 is a branch point like any
+            # other — a too-close restart re-triggers the point trigger).
+            theta += mr_jump_eff
             # The boundary MR at θ = 0 is a degenerate cluster (snapped above),
             # so the tangent there is undefined — compute_tangent zeros the
             # divergent tracks and the prediction degrades to holding the
@@ -497,7 +526,7 @@ class ZeroManager:
         for _ in range(_MAX_SEGMENTS):
             seg = integrate_segment(
                 self.poly, self.E_ref, self.mu1,
-                theta, roots, 2 * pi,
+                theta, roots, TWO_PI,
                 h0=h0, ctrl=ctrl, min_dtheta=min_dtheta,
             )
             if verbose:
@@ -549,7 +578,7 @@ class ZeroManager:
                     self.left_boundary_roots[perm]
                 ])
                 self._append_segment(
-                    np.concatenate([new_seg_theta1[:-1], [2 * pi]]),
+                    np.concatenate([new_seg_theta1[:-1], [TWO_PI]]),
                     new_seg_tracked_roots,
                     left_mr,
                     0 if self.has_boundary_mr else -1,
@@ -560,11 +589,26 @@ class ZeroManager:
                   or seg.stop_reason == StopReason.multiple_root_encountered
             ):
                 theta1_mr, roots_mr, cluster, cluster_stds, theta_temp, roots_temp = self._refine_mr(
-                    seg, new_seg_theta1, new_seg_tracked_roots, mr_jump, verbose
+                    seg, new_seg_theta1, new_seg_tracked_roots,
+                    mr_jump, mr_jump_eff, verbose,
                 )
                 if cluster:
                     if verbose:
                         print("Find multiple roots. Cluster = ", cluster)
+                    # Forward-progress guard: the refined MR must lie strictly
+                    # past the MR that closed the previous segment.  A θ₁ at or
+                    # behind it means the restart landed before the MR again
+                    # (ping-pong) — fail loudly instead of looping forever.
+                    if (left_mr >= 0 and theta1_mr
+                            <= self.multiple_roots[left_mr].theta1 + _MR_STUCK_TOL):
+                        raise RuntimeError(
+                            f"Multiple-root refinement made no forward "
+                            f"progress: refined θ₁={theta1_mr!r} is not past "
+                            f"the previous MR (θ₁="
+                            f"{self.multiple_roots[left_mr].theta1!r}). The "
+                            f"MR restart distance may be too small for the "
+                            f"current (h0, min_dtheta) pair."
+                        )
                     # Trim the segment up to the MR and close it there.
                     seg_used = new_seg_theta1 < theta1_mr
                     new_seg_theta1 = np.concatenate([
@@ -576,9 +620,16 @@ class ZeroManager:
                         roots_mr
                     ])
 
-                    if abs(theta1_mr - 2 * pi) < _BOUNDARY_THETA_TOL:
+                    if abs(theta1_mr - TWO_PI) < _BOUNDARY_THETA_TOL:
                         if verbose:
                             print("Boundary multiple root detected. right_mr = 0")
+                        # Pin the closing row's θ to exactly 2π (the boundary
+                        # MR sits within _BOUNDARY_THETA_TOL = 1e-6 of it):
+                        # leaving the refined θ_mr in the array opens a sliver
+                        # gap (θ_mr, 2π) that locate() would refuse to cover.
+                        new_seg_theta1 = np.concatenate([
+                            new_seg_theta1[:-1], [TWO_PI]
+                        ])
                         self._append_segment(
                             new_seg_theta1, new_seg_tracked_roots, left_mr, 0
                         )
@@ -608,7 +659,7 @@ class ZeroManager:
                                 theta1=theta1_mr,
                                 cluster_indices=cluster,
                                 roots=roots_mr,
-                                cluster_stds=cluster_stds,
+                                cluster_stds=tuple(cluster_stds),
                             )
                         )
                         self._append_segment(
@@ -683,8 +734,8 @@ class ZeroManager:
         (left-closed / right-open; the final mesh point is clamped to the
         last interval).
 
-        θ₁ is normalized to ``[0, 2π)`` first (``_normalize_theta``); a value
-        within ``_BOUNDARY_THETA_TOL`` of 2π snaps to 0 → segment 0, ``i = 0``
+        θ₁ is normalized to ``[0, 2π)`` first (``_normalize_theta``), so a
+        request at exactly 2π wraps to 0 → segment 0, ``i = 0``
         (≡ ``left_boundary_roots``, consistent with the closing-row
         convention).  Raises ``ValueError`` if no segment covers *theta1*
         — surfaces a half-built topology loudly rather than silently.
@@ -881,7 +932,7 @@ class ZeroManager:
         i: Optional[int] = None,
         *,
         interp: str = 'hermite',
-    ) -> int:
+    ) -> tuple[int, bool]:
         """Solve β₂ roots at an interior *theta1* and insert the new row.
 
         :meth:`solve_at` (solve + track-frame matching + tangent) followed by
@@ -1028,7 +1079,7 @@ class ZeroManager:
         uses.  Singular tracks degrade to lerp / hold-fixed inside
         :func:`predict_roots_hermite`.
         """
-        below = theta1_arr < 2 * pi
+        below = theta1_arr < TWO_PI
         idx = int(np.flatnonzero(below)[-1]) if below.any() else -1
 
         if idx >= 0 and idx < len(theta1_arr) - 1:
@@ -1046,7 +1097,7 @@ class ZeroManager:
                 exp(self.mu1 + 1j * theta_b), roots_b,
             )[0]
             return predict_roots_hermite(
-                2 * pi, theta_a, roots_a, Va, theta_b, roots_b, Vb,
+                TWO_PI, theta_a, roots_a, Va, theta_b, roots_b, Vb,
             )
 
         # No bracketing pair: single-end extrapolate from the row nearest 2π.
@@ -1056,7 +1107,7 @@ class ZeroManager:
         Vs = compute_tangent(
             self.poly, self.E_ref, exp(self.mu1 + 1j * theta_s), roots_s,
         )[0]
-        return predict_roots_hermite(2 * pi, theta_s, roots_s, Vs)
+        return predict_roots_hermite(TWO_PI, theta_s, roots_s, Vs)
 
     # ------------------------------------------------------------------
     # run() helpers
@@ -1147,6 +1198,7 @@ class ZeroManager:
         new_seg_theta1: np.ndarray,
         new_seg_tracked_roots: np.ndarray,
         mr_jump: float,
+        mr_jump_eff: float,
         verbose: bool,
     ) -> tuple[float, np.ndarray, list, list[float], float, np.ndarray]:
         """Locate the multiple root near *seg*'s stop point and the restart
@@ -1209,7 +1261,19 @@ class ZeroManager:
             # Mirror the MR-adjacent point across the MR to land on the far
             # side, then single-end tangent-extrapolate the anchor to it
             # (consistent with the arclength integrator).
-            theta_temp = min(2 * theta1_mr - ref.theta, theta1_mr + mr_jump)
+            #
+            # The bare mirror 2θ_mr − θ_ref is only valid while θ_ref sits
+            # BEFORE the MR; once refinement places θ_mr just behind the last
+            # accepted row the mirror lands back BEFORE the MR and the restart
+            # re-detects the same MR forever.  The lower clamp θ_mr +
+            # mr_jump_eff (≥ the branch-point-safe distance, see run()) keeps
+            # the restart strictly past the MR; the upper `min` against
+            # θ_mr + mr_jump preserves the original behaviour of not jumping
+            # farther than mr_jump when the mirror is distant.
+            theta_temp = max(
+                min(2 * theta1_mr - ref.theta, theta1_mr + mr_jump),
+                theta1_mr + mr_jump_eff,
+            )
             roots_temp = self._to_track_order(
                 self._solve(theta_temp), theta_temp, theta_ref, roots_ref,
                 ref_V=ref.V,

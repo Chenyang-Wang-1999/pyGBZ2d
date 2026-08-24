@@ -118,7 +118,8 @@ import numpy as np
 import networkx as nx
 from scipy.spatial import KDTree
 
-from gbz_types import LineSubset, PointSubset, GBZResult, to_sphere_r3, chordal_cost_matrix
+from gbz_types import (LineSubset, PointSubset, GBZResult, to_sphere_r3,
+                       chordal_cost_matrix, TWO_PI)
 
 
 # ---------------------------------------------------------------------------
@@ -376,8 +377,8 @@ TORUS_r = 1.0
 
 def _torus_point(theta1, theta2):
     """Map (theta1, theta2) → 3D torus coordinates (vectorised)."""
-    t1 = np.asarray(theta1, dtype=float) % (2 * np.pi)
-    t2 = np.asarray(theta2, dtype=float) % (2 * np.pi)
+    t1 = np.asarray(theta1, dtype=float) % (TWO_PI)
+    t2 = np.asarray(theta2, dtype=float) % (TWO_PI)
     x = (TORUS_R + TORUS_r * np.cos(t2)) * np.cos(t1)
     y = (TORUS_R + TORUS_r * np.cos(t2)) * np.sin(t1)
     z = TORUS_r * np.sin(t2)
@@ -599,7 +600,7 @@ def main():
             # Unwrap for smooth curves.
             th2_uw = np.unwrap(th2)
             color = colors[comp_idx % len(colors)]
-            ax.plot(th, th2_uw % (2 * np.pi), '.-', color=color,
+            ax.plot(th, th2_uw % (TWO_PI), '.-', color=color,
                     markersize=2, linewidth=1.5)
 
             # Mark merged nodes (nodes coming from multiple LineSubsets).
@@ -614,8 +615,8 @@ def main():
                      f"{info['n_nodes']} nodes, {info['merge_count']} merges)")
         ax.set_xlabel('theta1')
         ax.set_ylabel('theta2')
-        ax.set_xlim(0, 2 * np.pi)
-        ax.set_ylim(0, 2 * np.pi)
+        ax.set_xlim(0, TWO_PI)
+        ax.set_ylim(0, TWO_PI)
 
     # Hide unused subplot if odd number.
     for ax in axes.flat[len(plot_Es):]:

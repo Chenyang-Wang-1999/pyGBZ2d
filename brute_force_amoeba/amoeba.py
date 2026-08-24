@@ -6,7 +6,6 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 
 from typing import Optional
 import numpy as np
-from cmath import exp
 
 from gbz_types import (
     PointSubset, LineSubset, GBZResult, CharPoly,
@@ -63,9 +62,7 @@ def _probe_zero_plateau_near_mu1(
     mu1_bracket: Optional[tuple[float, float]],
     mu2_low: float = -1,
     mu2_high: float = 1,
-    N_points: int = 301,
     continuum_tol: float = 1e-6,
-    min_continuum_pts: int = 3,
     continuum_perturb: float = 1e-4,
     max_iter: int = 60,
     xtol: float = 1e-10,
@@ -89,13 +86,27 @@ def _probe_zero_plateau_near_mu1(
         bracket_width = abs(float(mu1_bracket[1]) - float(mu1_bracket[0]))
 
     def evaluator(mu1_probe: float) -> dict:
-        inner = _find_mu2_for_w2_zero(
-            char_poly, E_ref, mu1_probe, mu2_low, mu2_high, N_points=N_points,
-            continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
-            continuum_perturb=continuum_perturb, max_iter=max_iter,
-            xtol=xtol, max_range_expansions=max_range_expansions,
-            range_expand_factor=range_expand_factor,
-        )
+        # The shared ladder protocol (gbz_types.probe_zero_plateau) reads
+        # "success" to skip failed probes and keep walking the ladder.  The
+        # inner μ₂ bisection legitimately fails on the out-of-spectrum side
+        # of a band edge (w2 has no sign change → range-expansion error) —
+        # exactly where the probe operates.  Catch and report instead of
+        # letting the raise escalate into a failed whole-energy GBZResult.
+        try:
+            inner = _find_mu2_for_w2_zero(
+                char_poly, E_ref, mu1_probe, mu2_low, mu2_high,
+                continuum_tol=continuum_tol,
+                continuum_perturb=continuum_perturb, max_iter=max_iter,
+                xtol=xtol, max_range_expansions=max_range_expansions,
+                range_expand_factor=range_expand_factor,
+            )
+        except Exception as exc:
+            return {
+                "success": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "is_plateau": False,
+                "is_continuum": False,
+            }
         zeros_probe = inner.get("zeros") or []
         w1, _ = _get_average_winding_from_zeros(
             char_poly, E_ref, mu1_probe, inner["mu2"],
@@ -155,6 +166,12 @@ def collect_GBZ_subsets(
     plateau_winding_tol = solver_options.pop("plateau_winding_tol", None)
     plateau_probe_radius = solver_options.pop("plateau_probe_radius", None)
     plateau_area_threshold = solver_options.pop("plateau_area_threshold", 1e-2)
+    # Neighbour threshold for the torus-clustering pre-check, in units of
+    # the 2π torus period.  Deliberately a SEPARATE knob from
+    # plateau_area_threshold (a winding-area fraction): the two criteria
+    # have different units, and sharing one value couples their tuning.
+    # Defaults to the historical shared value for behaviour compatibility.
+    plateau_cluster_tol = solver_options.pop("plateau_cluster_tol", 1e-2)
     # kwargs forwarded to ZeroManager.run() (h0, ctrl, min_dtheta,
     # cluster_tol, mr_jump, verbose).  Kept separate from the bisection
     # options, which ZeroManager.run does not accept.
@@ -204,7 +221,7 @@ def collect_GBZ_subsets(
                 )
                 if w2_area < plateau_area_threshold:
                     _should_probe = _check_zeros_are_clustered(
-                        amoeba_res["zeros"], plateau_area_threshold,
+                        amoeba_res["zeros"], plateau_cluster_tol,
                     )
 
             if _should_probe:
@@ -213,9 +230,7 @@ def collect_GBZ_subsets(
                     amoeba_res.get("_mu1_bracket"),
                     mu2_low=solver_options.get("mu2_low", -1),
                     mu2_high=solver_options.get("mu2_high", 1),
-                    N_points=solver_options.get("N_points", 301),
                     continuum_tol=solver_options.get("continuum_tol", 1e-6),
-                    min_continuum_pts=solver_options.get("min_continuum_pts", 3),
                     continuum_perturb=solver_options.get("continuum_perturb", 1e-4),
                     max_iter=solver_options.get("max_iter", 60),
                     xtol=solver_options.get("xtol", 1e-10),

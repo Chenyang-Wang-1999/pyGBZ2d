@@ -30,7 +30,11 @@ from typing import Literal, Optional
 
 import numpy as np
 
-from gbz_types import CharPoly, PointSubset, LineSubset
+from gbz_types import (
+    TWO_PI,
+    CharPoly, PointSubset, LineSubset,
+    JoinableLinePiece, is_mr_cluster_endpoint,
+)
 
 from .ronkin_winding import _find_exact_crossing, _get_average_winding_from_zeros
 from continuation.zero_manager import SegmentData, ZeroManager
@@ -107,51 +111,14 @@ def _continuum_mask(zm: AmoebaZeroManager, mu2: float, tol: float, frac: float) 
 # ---------------------------------------------------------------------------
 # MR-boundary joining for continuum LineSubsets
 # ---------------------------------------------------------------------------
+#
+# _LinePiece / _is_cluster_endpoint live in gbz_types (as JoinableLinePiece /
+# is_mr_cluster_endpoint) — they are shared with brute_force_SGBZ's continuum
+# extractor.  The old underscore names remain as aliases for the in-module
+# call sites and the tests that construct pieces directly.
 
-class _LinePiece(LineSubset):
-    """A per-segment continuum LineSubset being joined across MR boundaries.
-
-    Carries ``ml``/``mr`` — the leftmost/rightmost original segment indices
-    spanned so far — so merges can be chained and the join at the cyclic seam
-    (segment 0 ↔ last segment) detected.  Behaviourally a ``LineSubset`` once
-    joining is done.
-    """
-
-    def __init__(self, E, mu1, theta1_arr, beta2_arr, ml: int, mr: int):
-        super().__init__(E=E, mu1=mu1,
-                         theta1_arr=theta1_arr, beta2_arr=beta2_arr)
-        self.ml = ml
-        self.mr = mr
-
-
-def _is_cluster_endpoint(
-    zm: AmoebaZeroManager, seg: SegmentData, side: str, root: complex,
-) -> bool:
-    """Whether an endpoint root *value* is part of the boundary MR cluster.
-
-    A segment boundary is an MR, but only the roots listed in
-    ``multiple_roots[mr].cluster_indices`` are genuinely multiple there; every
-    other root is a regular root passing straight through.  ``mr`` is the
-    segment's ``left_mr`` / ``right_mr``; ``mr < 0`` is the only "no MR" case —
-    it marks the θ₁=0/2π circle seam (segment 0's left / last segment's right,
-    set to -1 by ``ZeroManager.run``).  When ``has_boundary_mr`` is *False* there
-    is no boundary MR at θ₁=0, so interior MRs are indexed starting from 0 and
-    MR index 0 is a genuine interior MR, not the seam.
-
-    Matching is by *value* against ``multiple_roots[mr].roots``: this is
-    frame-independent, so it works whether that row is modulus-sorted (the
-    boundary MR at θ₁=0) or track-ordered (an interior MR), since
-    ``cluster_indices`` is always an index into that same row.
-    """
-    mr = seg.left_mr if side == 'left' else seg.right_mr
-    if mr < 0:
-        return False
-    cluster: list[tuple[int, ...]] = zm.multiple_roots[mr].cluster_indices
-    if not cluster:
-        return False
-    mr_roots = zm.multiple_roots[mr].roots
-    j_mod = int(np.argmin(np.abs(mr_roots - root)))
-    return any(j_mod in c for c in cluster)
+_LinePiece = JoinableLinePiece
+_is_cluster_endpoint = is_mr_cluster_endpoint
 
 
 def _join_continuum_across_mrs(
@@ -185,14 +152,17 @@ def _join_continuum_across_mrs(
     def find_by_left(seg_s: int, root: complex) -> int | None:
         # Piece whose leftmost spanned segment is seg_s and whose leftmost
         # β₂ ≈ root (continuum tracks on one segment are distinct roots).
+        # ROOT_TOL: the same root-value scale used by the Rule 1 screen —
+        # continuum tracks are separated by O(1), so 1e-9 cleanly separates
+        # "same track" from "adjacent track".
         for idx, p in enumerate(line_pieces):
-            if p.ml == seg_s and np.abs(p.beta2_arr[0] - root) < 1e-9:
+            if p.ml == seg_s and np.abs(p.beta2_arr[0] - root) < ROOT_TOL:
                 return idx
         return None
 
     def find_by_right(seg_s: int, root: complex) -> int | None:
         for idx, p in enumerate(line_pieces):
-            if p.mr == seg_s and np.abs(p.beta2_arr[-1] - root) < 1e-9:
+            if p.mr == seg_s and np.abs(p.beta2_arr[-1] - root) < ROOT_TOL:
                 return idx
         return None
 
@@ -249,8 +219,7 @@ def _join_continuum_across_mrs(
                     )
                 if pi_idx == li_idx:
                     continue  # already joined (e.g. the cyclic seam)
-                _merge_two(line_pieces, pi_idx, li_idx,
-                           cyclic=(s == 0))
+                _merge_two(line_pieces, pi_idx, li_idx)
                 changed = True
                 break  # line_pieces changed; restart the segment scan
             if changed:
@@ -263,45 +232,32 @@ def _join_continuum_across_mrs(
 def _merge_two(
     line_pieces: list[_LinePiece],
     prev_idx: int, cur_idx: int,
-    *, cyclic: bool,
 ) -> None:
     """Merge ``line_pieces[prev_idx]`` (right side) with ``[cur_idx]`` (left).
 
-    Non-cyclic (interior MR): ``prev`` (segment s-1) is to the LEFT of ``cur``
-    (segment s) in θ₁, so the array is ``[prev, cur[1:]]`` — θ₁ stays monotonic,
-    the shared MR row (cur's first row) is dropped.
+    The array is ``[prev, cur[1:]]`` for BOTH the interior-MR and the cyclic
+    seam case.  Interior MR: ``prev`` (segment s-1) is to the LEFT of ``cur``
+    (segment s) in θ₁, so θ₁ stays monotonic and the shared MR row (cur's
+    first row) is dropped.  Cyclic seam (θ₁=0 ≡ 2π): ``prev`` is the LAST
+    segment (right end at 2π), ``cur`` is segment 0 (left end at 0); putting
+    rp first aligns the seam (rp[-1] and cp[0] are the same physical point)
+    INSIDE the array — where the track is continuous through θ₁=0/2π — so
+    the array's two ends fall on the real terminators (interior cluster
+    MRs).  Reversing this — ``[cp, rp[1:]]`` — would splice at the wrong
+    physical point and break β₂ continuity.
 
-    Cyclic seam (θ₁=0 ≡ 2π): ``prev`` is the LAST segment (right end at 2π),
-    ``cur`` is segment 0 (left end at 0).  The shared point is the seam itself —
-    ``rp[-1]`` (θ=2π) and ``cp[0]`` (θ=0) are the same physical point.  The
-    concatenation must align these: ``[rp, cp[1:]]``, so the seam lands INSIDE
-    the array (where the track is continuous through θ₁=0/2π) and the array's
-    two ends fall on the real terminators (interior cluster MRs).  Reversing
-    this — ``[cp, rp[1:]]`` — would join segment 0's right end (an interior MR)
-    onto the last segment's second point, splicing at the wrong physical point
-    and breaking β₂ continuity.
+    The merged endpoints are rp.ml / cp.mr in both cases.  (An earlier
+    version swapped them at the seam, which mislabeled the piece and let
+    the join loop re-match an already-joined piece — visible only when MR
+    snapping makes a far endpoint's root coincide with the seam root.)
     """
     rp = line_pieces[prev_idx]
     cp = line_pieces[cur_idx]
-    if cyclic:
-        # prev = last segment (right end at 2π), cur = segment 0 (left end at 0).
-        # Align rp[-1] (θ=2π) with cp[0] (θ=0) — the seam — by putting rp first.
-        th = np.concatenate([rp.theta1_arr, cp.theta1_arr[1:]])
-        b2 = np.concatenate([rp.beta2_arr, cp.beta2_arr[1:]])
-        # merged = [rp, cp[1:]]: the left end is rp's left end (segment rp.ml),
-        # the right end is cp's right end (segment cp.mr) — same as the
-        # non-cyclic case.  (Previously this was swapped to cp.ml/rp.mr, which
-        # mislabeled the merged piece's endpoints and let the join loop
-        # re-match an already-joined piece at the seam — visible only when MR
-        # snapping makes a far endpoint's root coincide with the seam root.)
-        new_ml, new_mr = rp.ml, cp.mr
-    else:
-        th = np.concatenate([rp.theta1_arr, cp.theta1_arr[1:]])
-        b2 = np.concatenate([rp.beta2_arr, cp.beta2_arr[1:]])
-        new_ml, new_mr = rp.ml, cp.mr
+    th = np.concatenate([rp.theta1_arr, cp.theta1_arr[1:]])
+    b2 = np.concatenate([rp.beta2_arr, cp.beta2_arr[1:]])
     merged = _LinePiece(
         E=cp.E, mu1=cp.mu1, theta1_arr=th, beta2_arr=b2,
-        ml=new_ml, mr=new_mr,
+        ml=rp.ml, mr=cp.mr,
     )
     keep = [i for i in range(len(line_pieces)) if i not in (prev_idx, cur_idx)]
     new_list = [line_pieces[i] for i in keep]
@@ -435,11 +391,18 @@ def extract_amoeba_subsets(
         # b2 is THIS crossing's root; the screen asks whether ANY in-band
         # endpoint root matches it (∃ — a single scalar vs the endpoint-root
         # array).  A boundary point on a different, unconnected track (same
-        # θ₁, root differs by O(1)) survives.
-        if (cont_endpoints is not None
-                and np.min(np.abs(cont_endpoints - t1)) < snap_tol):
-            in_band = np.abs(cont_endpoints - t1) < snap_tol
-            if np.any(np.abs(cont_endpoint_roots[in_band] - b2) < ROOT_TOL):
+        # θ₁, root differs by O(1)) survives.  θ₁ distance is CIRCULAR:
+        # refined crossings wrap to [0, 2π) while a closed piece's right
+        # endpoint sits at exactly 2π — a linear distance would read ~2π
+        # across the seam and the snap would miss (duplicate PointSubset).
+        if cont_endpoints is not None:
+            d_circ = np.abs(
+                (t1 - cont_endpoints + pi) % (TWO_PI) - pi
+            )
+            in_band = d_circ < snap_tol
+            if np.any(in_band) and np.any(
+                np.abs(cont_endpoint_roots[in_band] - b2) < ROOT_TOL
+            ):
                 continue
 
         # Rule 2: dedup exact-touch ('zero') hits by zero identity.
@@ -546,7 +509,7 @@ def _finalize_crossing(
 
     # 'fine' / 'solve' — refine (t1, angle(b2)) via fsolve + analytic Jacobian.
     res = _find_exact_crossing(
-        poly, E, mu1, mu2, t1_lin % (2 * pi), float(np.angle(b2_lin)),
+        poly, E, mu1, mu2, t1_lin % (TWO_PI), float(np.angle(b2_lin)),
     )
     if res is None:
         return t1_lin, b2_lin
@@ -608,7 +571,7 @@ def amoeba_windings(
             t1, t2 = _crossing_thetas('zero', int(i), int(j), th, tr, la, mu2,
                                        refine, poly, E, mu1)
             jump = 1 if la[i, j] < mu2 else -1
-            zeros.append((t1 % (2 * pi), t2 % (2 * pi), jump))
+            zeros.append((t1 % (TWO_PI), t2 % (TWO_PI), jump))
 
         sc = d[:-1] * d[1:] < 0                       # (N-1, K)
         i_idx, j_idx = np.where(sc)
@@ -616,7 +579,7 @@ def amoeba_windings(
             t1, t2 = _crossing_thetas('cross', int(i), int(j), th, tr, la, mu2,
                                        refine, poly, E, mu1)
             jump = 1 if la[i, j] < mu2 else -1
-            zeros.append((t1 % (2 * pi), t2 % (2 * pi), jump))
+            zeros.append((t1 % (TWO_PI), t2 % (TWO_PI), jump))
 
     if not zeros:
         winding, _ = _get_average_winding_from_zeros(
@@ -624,16 +587,27 @@ def amoeba_windings(
         )
         return winding, [], False, 0.0
 
-    # dW/dmu2 (only when refined): Σ jump · θ₁_dot / (2π).
+    # dW/dmu2 (only when refined): Σ jump · θ₁_dot / (2π).  The sum runs
+    # over UNIQUE zeros: adjacent segments share their boundary MR row, so a
+    # d==0 exact touch on that row is recorded once per segment — the same
+    # physical zero.  (The winding integral above already folds duplicates
+    # via np.unique inside _get_average_winding_from_zeros; the derivative
+    # sum must match or the Newton step doubles the shared-touch
+    # contribution.)
     dW_dmu2 = 0.0
     if refine:
         from .ronkin_winding import _compute_zero_dtheta1_dmu2
+        seen_zero_keys: set[tuple[float, float]] = set()
         for t1, t2, jump in zeros:
+            key = (t1 % (TWO_PI), t2 % (TWO_PI))
+            if key in seen_zero_keys:
+                continue
+            seen_zero_keys.add(key)
             theta1_dot = _compute_zero_dtheta1_dmu2(
                 poly, E, mu1, mu2, t1, t2,
             )
             dW_dmu2 += jump * theta1_dot
-        dW_dmu2 /= (2 * pi)
+        dW_dmu2 /= (TWO_PI)
 
     winding, _ = _get_average_winding_from_zeros(
         poly, E, mu1, mu2, zeros, direction=2,
@@ -671,7 +645,7 @@ def _crossing_thetas(
         return t1_lin, float(np.angle(b2_lin))
 
     res = _find_exact_crossing(
-        poly, E, mu1, mu2, t1_lin % (2 * pi), float(np.angle(b2_lin)),
+        poly, E, mu1, mu2, t1_lin % (TWO_PI), float(np.angle(b2_lin)),
     )
     if res is None:
         return t1_lin, float(np.angle(b2_lin))

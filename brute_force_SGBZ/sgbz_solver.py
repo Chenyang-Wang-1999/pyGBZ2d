@@ -30,8 +30,7 @@ from .continuum_lines import (
 )
 from .winding import detect_crossings_and_winding
 from .plateau import _check_pmgbz_points_clustered, _probe_zero_plateau_near_mu1
-from .crossings import _CROSSING_TOL, _MAX_NEWTON_ITER
-from .mu2mid import Mu2MidZM
+from .mu2mid import Mu2MidZM, _CROSSING_TOL
 
 
 # Max bracket-expansion steps per side (aligned with amoeba's
@@ -53,7 +52,6 @@ def _evaluate_winding(
     *,
     continuum_tol: float,
     crossing_tol: float,
-    max_newton: int,
 ) -> tuple[Optional[float], Optional[list], Mu2MidZM]:
     """Evaluate W(E_ref, mu1) and the 0D subsets at *mu1*.
 
@@ -81,9 +79,7 @@ def _evaluate_winding(
         return None, None, zm
 
     subsets, W = detect_crossings_and_winding(
-        zm, poly,
-        crossing_tol=crossing_tol,
-        max_newton=max_newton,
+        zm, poly, crossing_tol=crossing_tol,
     )
     return W, subsets, zm
 
@@ -97,7 +93,6 @@ def _resolve_continuum_winding(
     continuum_perturb: float,
     continuum_tol: float,
     crossing_tol: float,
-    max_newton: int,
 ) -> tuple[Optional[float], Optional[float], Optional[float]]:
     """Compute the left / right winding limits at a continuum-degenerate mu1.
 
@@ -114,7 +109,6 @@ def _resolve_continuum_winding(
     eval_kwargs = dict(
         continuum_tol=continuum_tol,
         crossing_tol=crossing_tol,
-        max_newton=max_newton,
     )
     for scale in (1.0, 2.0, 4.0, 8.0):
         eps = continuum_perturb * scale
@@ -140,12 +134,10 @@ def solve_SGBZ_for_E(
     zero_tol: float = 1e-10,
     continuum_perturb: float = 1e-2,
     max_iter: int = 60,
-    xtol: float = 2e-12,
     zm_run_kwargs: Optional[dict] = None,
     *,
     continuum_tol: float = CONTINUUM_TOL,
     crossing_tol: float = _CROSSING_TOL,
-    max_newton: int = _MAX_NEWTON_ITER,
 ) -> dict:
     """Locate the winding-zero mu1 and return solve diagnostics.
 
@@ -177,7 +169,6 @@ def solve_SGBZ_for_E(
     eval_kwargs = dict(
         continuum_tol=continuum_tol,
         crossing_tol=crossing_tol,
-        max_newton=max_newton,
     )
 
     # --- winding_at: evaluate W(E_ref, mu1) + 0D subsets at *mu1_val* ---
@@ -268,6 +259,18 @@ def solve_SGBZ_for_E(
             if is_boundary:
                 return result
             mu1_low, w_low = proxy  # corrected (mu1, w) at the band edge
+            # Re-materialize the corrected band edge (mirrors the right-end
+            # path below): the proxy carries only (mu1, winding), but the
+            # left_endpoint_zero return below needs the 0D subsets — without
+            # this re-evaluation they stay None (the continuum evaluation
+            # returned (None, None, zm)) and collect_GBZ_subsets crashes on
+            # them outside its try/except.
+            w_low, gbz_low, zm_low = winding_at(mu1_low)
+            # A second continuum at the band edge itself (perturbation still
+            # inside the degenerate band): keep expanding rather than break
+            # on a stale proxy.
+            if w_low is None:
+                continue
 
         if w_low < zero_tol:
             break
@@ -282,7 +285,7 @@ def solve_SGBZ_for_E(
     if w_low > -zero_tol:
         return {
             "mu1": mu1_low,
-            "subsets": gbz_low,
+            "subsets": gbz_low if gbz_low is not None else [],
             "winding": w_low,
             "is_continuum": False,
             "_mu1_bracket": (mu1_low, mu1_low),
@@ -325,7 +328,7 @@ def solve_SGBZ_for_E(
     if abs(w_high) <= zero_tol:
         return {
             "mu1": mu1_ext_right,
-            "subsets": gbz_high,
+            "subsets": gbz_high if gbz_high is not None else [],
             "winding": w_high,
             "is_continuum": False,
             "_mu1_bracket": (mu1_ext_right, mu1_ext_right),
@@ -346,6 +349,9 @@ def solve_SGBZ_for_E(
 
         w_mid, gbz_mid, zm_mid = winding_at(mu1_mid)
 
+        # DEBUG
+        print(f"mu1_mid={mu1_mid}, w_mid={w_mid}, gbz_mid={gbz_mid}")
+
         if w_mid is None:
             is_boundary, proxy, result = handle_continuum(
                 mu1_mid, zm_mid, (mu1_low, mu1_high))
@@ -357,12 +363,31 @@ def solve_SGBZ_for_E(
             # proxy value (the bisection target is the genuine W-zero, not a
             # continuum edge).
             mu1_adj, f_mid = proxy
+            # A proxy winding of EXACTLY zero is the genuine answer, not a
+            # bracket update: f_mid == 0 assigned to either side collapses
+            # the bracket onto its own endpoint (w_low * 0 == 0 always takes
+            # the else-branch) and the bisection then walks that degenerate
+            # bracket until max_iter → guaranteed RuntimeError below.  The
+            # proxy's band-edge point IS a W-zero; resolve its subsets and
+            # return it.
+            if f_mid == 0.0:
+                w_edge, gbz_edge, _ = winding_at(mu1_adj)
+                if w_edge is not None and abs(w_edge) <= zero_tol:
+                    return {
+                        "mu1": mu1_adj,
+                        "subsets": gbz_edge if gbz_edge is not None else [],
+                        "winding": w_edge,
+                        "is_continuum": False,
+                        "_mu1_bracket": (mu1_low, mu1_high),
+                        "_winding_bracket": (w_low, w_high),
+                        "_exit_reason": "w_zero_continuum_edge",
+                    }
         else:
             mu1_adj = mu1_mid
             f_mid = w_mid
             # Convergence check only applies at genuine winding values.
             # At a continuum (w_mid is None) we continue bisection.
-            # 2025-08-15: x_tol is no longer an exit reason. Bisection is finished only when:
+            # 2026-08-15: x_tol is no longer an exit reason. Bisection is finished only when:
             #   1. f_mid is zero, corresponding to the discrete case
             #   2. continuum is detected.
             if abs(f_mid) <= zero_tol:
@@ -438,9 +463,10 @@ def collect_GBZ_subsets(
             a failed GBZResult.
         **options: solver options — "mu1_guess" (default (-1, 1)),
             "zero_tol" (1e-10), "continuum_perturb" (1e-2), "max_iter" (60),
-            "xtol" (2e-12), "plateau_check" (True), "plateau_probe_radius"
+            "plateau_check" (True), "plateau_probe_radius"
             (None), "zm_run_kwargs" ({}), plus the continuum/crossing
-            tunables "continuum_tol", "crossing_tol", "max_newton".
+            tunables "continuum_tol", "crossing_tol".
+            The obsolete "N_points" / "xtol" / "max_newton" are accepted and ignored.
 
     Returns:
         GBZResult with connected subsets.  ``gbz.is_empty`` / ``gbz.index
@@ -459,17 +485,19 @@ def collect_GBZ_subsets(
     zero_tol = solver_options.pop("zero_tol", 1e-10)
     continuum_perturb = solver_options.pop("continuum_perturb", 1e-2)
     max_iter = solver_options.pop("max_iter", 60)
-    xtol = solver_options.pop("xtol", 2e-12)
     zm_run_kwargs = solver_options.pop("zm_run_kwargs", {})
 
     # Continuum / crossing tunables (rarely overridden).
     continuum_tol = solver_options.pop("continuum_tol", CONTINUUM_TOL)
     crossing_tol = solver_options.pop("crossing_tol", _CROSSING_TOL)
-    max_newton = solver_options.pop("max_newton", _MAX_NEWTON_ITER)
 
-    # N_points is obsolete under the adaptive ZeroManager mesh; accept it
-    # silently for API compatibility with older callers.
+    # Obsolete knobs, accepted silently for API compatibility with older
+    # callers: N_points (fixed mesh, replaced by the adaptive ZeroManager)
+    # and xtol (a bisection x-tolerance that was never consumed — bisection
+    # exits on winding-zero / continuum only).
     solver_options.pop("N_points", None)
+    solver_options.pop("xtol", None)
+    solver_options.pop("max_newton", None)
     if solver_options:
         import warnings
         warnings.warn(
@@ -481,46 +509,46 @@ def collect_GBZ_subsets(
         sgbz_res = solve_SGBZ_for_E(
             poly, E_ref, mu1_guess=mu1_guess, zero_tol=zero_tol,
             continuum_perturb=continuum_perturb, max_iter=max_iter,
-            xtol=xtol, zm_run_kwargs=zm_run_kwargs,
+            zm_run_kwargs=zm_run_kwargs,
             continuum_tol=continuum_tol,
             crossing_tol=crossing_tol,
-            max_newton=max_newton,
         )
         subsets = sgbz_res["subsets"]
         mu1 = sgbz_res["mu1"]
         is_continuum = sgbz_res["is_continuum"]
+
+        # Continuum boundary → 1D LineSubsets materialised by handle_continuum
+        # (the cluster tracks where |β_M| = |β_{M+1}| holds identically, joined
+        # across MRs).  is_continuum stays True so existing spectrum-membership
+        # assertions still hold; subsets now carry the actual lines.
+        if is_continuum:
+            line_subsets = subsets or []
+            n_1d = len(line_subsets)
+            return GBZResult(E_ref=E_ref, success=True, is_continuum=True,
+                            subsets=list(line_subsets), index=(0, n_1d))
+
+        # Discrete case: apply the plateau check before trusting the subsets.
+        if subsets and plateau_check:
+            candidate = GBZResult(E_ref=E_ref, subsets=subsets,
+                                index=(len(subsets), 0))
+            if _check_pmgbz_points_clustered(candidate):
+                plateau_info = _probe_zero_plateau_near_mu1(
+                    poly, E_ref, mu1, sgbz_res.get("_mu1_bracket"),
+                    zm_run_kwargs,
+                    continuum_tol=continuum_tol,
+                    crossing_tol=crossing_tol,
+                    zero_tol=zero_tol,
+                    continuum_perturb=continuum_perturb,
+                    probe_radius=plateau_probe_radius,
+                )
+                if plateau_info["found"]:
+                    subsets = []
+
     except Exception as e:
         if debug_mode:
             raise e
         print("Error: %s" % str(e))
         return GBZResult(E_ref=E_ref, success=False, error=str(e))
-
-    # Continuum boundary → 1D LineSubsets materialised by handle_continuum
-    # (the cluster tracks where |β_M| = |β_{M+1}| holds identically, joined
-    # across MRs).  is_continuum stays True so existing spectrum-membership
-    # assertions still hold; subsets now carry the actual lines.
-    if is_continuum:
-        line_subsets = subsets or []
-        n_1d = len(line_subsets)
-        return GBZResult(E_ref=E_ref, success=True, is_continuum=True,
-                         subsets=list(line_subsets), index=(0, n_1d))
-
-    # Discrete case: apply the plateau check before trusting the subsets.
-    if subsets and plateau_check:
-        candidate = GBZResult(E_ref=E_ref, subsets=subsets,
-                              index=(len(subsets), 0))
-        if _check_pmgbz_points_clustered(candidate):
-            plateau_info = _probe_zero_plateau_near_mu1(
-                poly, E_ref, mu1, sgbz_res.get("_mu1_bracket"),
-                zm_run_kwargs,
-                continuum_tol=continuum_tol,
-                crossing_tol=crossing_tol, max_newton=max_newton,
-                zero_tol=zero_tol,
-                continuum_perturb=continuum_perturb,
-                probe_radius=plateau_probe_radius,
-            )
-            if plateau_info["found"]:
-                subsets = []
 
     n_0d = sum(1 for s in subsets if isinstance(s, PointSubset))
     n_1d = sum(1 for s in subsets if isinstance(s, LineSubset))

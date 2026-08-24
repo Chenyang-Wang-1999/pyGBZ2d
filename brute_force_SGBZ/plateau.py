@@ -20,6 +20,7 @@ import cmath
 from typing import Optional
 
 from gbz_types import (
+    TWO_PI,
     CharPoly, GBZResult, PointSubset,
     check_points_clustered_on_torus, probe_zero_plateau,
 )
@@ -47,7 +48,7 @@ def _check_pmgbz_points_clustered(
     region, so the points cluster into nearly degenerate pairs — each
     point sits within ``tol_normalized`` of a neighbour.
     """
-    twopi = 2 * math.pi
+    twopi = TWO_PI
     points: list[tuple[float, float]] = [
         (cmath.phase(s.beta1) % twopi, cmath.phase(s.beta2) % twopi)
         for s in gbz.subsets if isinstance(s, PointSubset)
@@ -65,7 +66,6 @@ def _evaluate_probe(
     *,
     continuum_tol: float,
     crossing_tol: float,
-    max_newton: int,
 ) -> dict:
     """Build ONE Mu2MidZM at (E_ref, mu1) and evaluate the winding + subset count.
 
@@ -87,9 +87,7 @@ def _evaluate_probe(
             "winding": float('nan'), "gbz_count": 0,
         }
     subsets, W = detect_crossings_and_winding(
-        m, poly,
-        crossing_tol=crossing_tol,
-        max_newton=max_newton,
+        m, poly, crossing_tol=crossing_tol,
     )
     return {
         "success": True, "is_continuum": False,
@@ -117,7 +115,6 @@ def _probe_zero_plateau_near_mu1(
     *,
     continuum_tol: float,
     crossing_tol: float,
-    max_newton: int,
     zero_tol: float = 1e-10,
     continuum_perturb: float = 1e-2,
     probe_radius: Optional[float] = None,
@@ -141,7 +138,6 @@ def _probe_zero_plateau_near_mu1(
     eval_kwargs = dict(
         continuum_tol=continuum_tol,
         crossing_tol=crossing_tol,
-        max_newton=max_newton,
     )
 
     def evaluator(mu1_probe: float) -> dict:

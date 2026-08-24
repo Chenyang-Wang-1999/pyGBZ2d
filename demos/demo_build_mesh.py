@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 import networkx as nx
 
-from gbz_types import LineSubset, to_sphere_r3
+from gbz_types import LineSubset, to_sphere_r3, TWO_PI
 from demo_nexus import build_nexus, nexus_info
 from demo_fku import fku_triangulate
 
@@ -46,8 +46,8 @@ TORUS_r = 1.0
 
 
 def _torus_point(theta1, theta2):
-    t1 = np.asarray(theta1, dtype=float) % (2 * np.pi)
-    t2 = np.asarray(theta2, dtype=float) % (2 * np.pi)
+    t1 = np.asarray(theta1, dtype=float) % (TWO_PI)
+    t2 = np.asarray(theta2, dtype=float) % (TWO_PI)
     x = (TORUS_R + TORUS_r * np.cos(t2)) * np.cos(t1)
     y = (TORUS_R + TORUS_r * np.cos(t2)) * np.sin(t1)
     z = TORUS_r * np.sin(t2)
@@ -71,7 +71,7 @@ def _solve_nexus_at_E(coeffs, degs, E):
         return None
 
     lines.sort(key=lambda L: float(np.median(
-        np.angle(np.asarray(L.beta2_arr, dtype=complex)) % (2 * np.pi))))
+        np.angle(np.asarray(L.beta2_arr, dtype=complex)) % (TWO_PI))))
     return build_nexus(lines, tol=1e-12)
 
 
@@ -664,7 +664,7 @@ def main():
         if r.success and r.index == (0, 2):
             lines = [s for s in r.subsets if isinstance(s, LineSubset)]
             lines.sort(key=lambda L: float(np.median(
-                np.angle(np.asarray(L.beta2_arr, dtype=complex)) % (2 * np.pi))))
+                np.angle(np.asarray(L.beta2_arr, dtype=complex)) % (TWO_PI))))
             G = build_nexus(lines, tol=1e-12)
             nexuses[E] = (G, nexus_info(G))
 

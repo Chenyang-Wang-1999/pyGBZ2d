@@ -81,7 +81,7 @@ def main():
     print("=" * 70)
 
     # ---- 1. bisection finds (mu1, mu2) ----
-    res = bisect_amoeba_ronkin_min(char_poly, E, N_points=301)
+    res = bisect_amoeba_ronkin_min(char_poly, E)
     mu1, mu2 = res["mu1"], res["mu2"]
     print(f"\n[1] bisection:")
     print(f"    mu1 = {mu1}")

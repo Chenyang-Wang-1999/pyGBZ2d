@@ -19,11 +19,10 @@ pipeline still consumes:
 from typing import Optional
 import warnings
 import numpy as np
-from math import pi
 from cmath import exp
 from scipy.optimize import fsolve
 
-from gbz_types import CharPoly
+from gbz_types import CharPoly, TWO_PI
 
 
 def _find_exact_crossing(
@@ -73,7 +72,7 @@ def _find_exact_crossing(
     beta2 = exp(mu2 + 1j * t2)
     residual = abs(poly.eval_val((E_ref, beta1, beta2)))
     if residual < 1e-10:
-        return (float(t1 % (2 * pi)), float(t2 % (2 * pi)))
+        return (float(t1 % (TWO_PI)), float(t2 % (TWO_PI)))
     return None
 
 
@@ -138,9 +137,9 @@ def _get_average_winding_from_zeros(
         left = partition_thetas[i]
         right = partition_thetas[(i + 1) % n_seg]
         if i == n_seg - 1:
-            right += 2 * pi
+            right += TWO_PI
         width = right - left
-        mid = (0.5 * (left + right)) % (2 * pi)
+        mid = (0.5 * (left + right)) % (TWO_PI)
 
         beta_param = exp(mu_solve + 1j * mid)
         roots = char_poly.solve_roots_1d(
@@ -151,7 +150,7 @@ def _get_average_winding_from_zeros(
         total += u * width
         non_zero_area += abs(u) * width
 
-    return total / (2 * pi), non_zero_area / (2 * pi)
+    return total / (TWO_PI), non_zero_area / (TWO_PI)
 
 
 def _compute_zero_dtheta1_dmu2(

@@ -19,6 +19,8 @@ import importlib.util
 import sys
 from dataclasses import dataclass
 from math import pi
+
+from gbz_types import TWO_PI
 from pathlib import Path
 from typing import Iterable
 
@@ -65,7 +67,7 @@ def build_char_poly(demo_module):
 
 
 def angular_distance(a: float, b: float) -> float:
-    return abs(((a - b + pi) % (2 * pi)) - pi)
+    return abs(((a - b + pi) % (TWO_PI)) - pi)
 
 
 def net_zero_count(zeros: Iterable[tuple], tol: float = 1e-7) -> int:

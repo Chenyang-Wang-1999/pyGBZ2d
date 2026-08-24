@@ -6,7 +6,8 @@ from math import pi
 from cmath import exp
 from collections import defaultdict
 
-from gbz_types import CharPoly, hungarian_match_indices, to_sphere_r3, cost_from_sphere_r3
+from gbz_types import (CharPoly, hungarian_match_indices, to_sphere_r3,
+                       cost_from_sphere_r3, TWO_PI)
 from continuation.zero_manager import ZeroManager, SegmentData
 
 
@@ -46,15 +47,12 @@ def _make_poly_F():
     return CharPoly(coeffs, degs)
 
 
+from conftest import build_HN2D_polynomial as _build_hn2d_raw
+
+
 def build_HN2D_polynomial(J1, J2, gamma_1, gamma_2, delta_1, delta_2):
-    J11 = exp(gamma_1 + 1j * delta_1) * J1
-    J12 = exp(-gamma_1 + 1j * delta_1) * np.conj(J1)
-    J21 = exp(gamma_2 + 1j * delta_2) * J2
-    J22 = exp(-gamma_2 + 1j * delta_2) * np.conj(J2)
-    coeffs = np.array([1, -J11, -J12, -J21, -J22], dtype=complex)
-    degs = np.array([
-        [1, 0, 0], [0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1],
-    ], dtype=int)
+    """CharPoly wrapper over the shared (coeffs, degs) builder in conftest."""
+    coeffs, degs = _build_hn2d_raw(J1, J2, gamma_1, gamma_2, delta_1, delta_2)
     return CharPoly(coeffs, degs)
 
 
@@ -232,7 +230,7 @@ class TestEdgeCases:
         zm = ZeroManager(poly_F, 0j, 0.0)
         zm.run(h0=0.1, cluster_tol=1e-4, min_dtheta=1e-6)
         for mr in zm.multiple_roots:
-            assert 0 <= mr.theta1 < 2 * pi
+            assert 0 <= mr.theta1 < TWO_PI
 
     def test_boundary_perm_exists(self, poly_D):
         """boundary_perm should be set after a successful run."""

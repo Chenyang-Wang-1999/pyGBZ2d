@@ -12,35 +12,12 @@ import pytest
 from cmath import exp
 
 import brute_force_SGBZ as bfs
-from brute_force_SGBZ import sgbz_solver, crossings, winding as sgbz_winding
+from brute_force_SGBZ import sgbz_solver, winding as sgbz_winding
 from brute_force_SGBZ import pairwise as sgbz_pairwise
-from gbz_types import PointSubset, LineSubset, GBZResult, CharPoly
+from gbz_types import PointSubset, LineSubset, GBZResult, CharPoly, TWO_PI
 from continuation import ZeroManager
 
-
-# ---- shared helpers ----
-
-def build_HN2D_polynomial(J1, J2, gamma_1, gamma_2, delta_1, delta_2, basis="10"):
-    """Build 2D HN model characteristic polynomial."""
-    J11 = exp(gamma_1 + 1j * delta_1) * J1
-    J12 = exp(-gamma_1 + 1j * delta_1) * np.conj(J1)
-    J21 = exp(gamma_2 + 1j * delta_2) * J2
-    J22 = exp(-gamma_2 + 1j * delta_2) * np.conj(J2)
-
-    coeffs = np.array([1, -J11, -J12, -J21, -J22], dtype=complex)
-
-    if basis == "10":
-        degs = np.array([
-            [1, 0, 0], [0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1],
-        ], dtype=int)
-    elif basis == "11":
-        degs = np.array([
-            [1, 0, 0], [0, -1, 1], [0, 1, -1], [0, 0, -1], [0, 0, 1],
-        ], dtype=int)
-    else:
-        raise ValueError(f"Unknown basis: {basis}")
-
-    return coeffs, degs
+from conftest import build_HN2D_polynomial
 
 
 # ---- fixtures ----
@@ -422,6 +399,222 @@ class TestPairwiseAnalysis:
         assert groups[0].theta == pytest.approx(0.1)
         assert groups[0].column_components == ((0, 1, 2),)
 
+    def test_mr_boundary_touch_is_collected_not_skipped(self):
+        """A modulus coincidence on an MR boundary row is an event (2026-08-18).
+
+        ``collect_pair_events`` historically skipped touch events landing on
+        a segment's MR boundary rows (``left_mr/right_mr >= 0``), deferring
+        to the MR materialization channel — but that channel only
+        materialized clusters straddling M-1/M, so any OTHER modulus
+        coincidence at the boundary row was dropped by both channels (the
+        seam missed-detection behind the E=1.212 failure).  Now the touch
+        flows through the same EventGroup machinery, marked ``is_mr``, with
+        ``direction=None`` from the divergent cluster tangents (→ hard,
+        charge None downstream).
+
+        poly_F ``f = β₂² − 2β₂ − β₁ + 2`` at μ₁=0: the roots
+        ``β₂ = 1 ± √(β₁ − 1)`` coincide exactly at θ₁=0 (β₁=1), so run()
+        records a boundary MR and segment 0's row 0 carries the snapped
+        equal-modulus pair → one touch at i=0 with left_mr=0.
+        """
+        coeffs = np.array([1, -2, -1, 2], dtype=complex)
+        degs = np.array([
+            [0, 0, 2], [0, 0, 1], [0, 1, 0], [0, 0, 0],
+        ], dtype=int)
+        poly = CharPoly(coeffs, degs)
+        zm = bfs.Mu2MidZM(poly, 0j, 0.0)
+        zm.run(h0=0.1, cluster_tol=1e-4, min_dtheta=1e-6)
+        zm.analyze()
+
+        assert zm.segments[0].left_mr == 0  # row 0 IS the boundary MR row
+        mr_events = [e for e in zm._pair_events if e.is_mr]
+        assert len(mr_events) == 1
+        ev = mr_events[0]
+        assert ev.kind == 'touch'
+        assert ev.seg_idx == 0 and ev.i == 0
+        assert ev.theta_star == pytest.approx(0.0, abs=1e-9)
+        # Cluster tangents at the MR row are inf → direction is None
+        # (hard boundary, charge None downstream).
+        assert ev.direction is None
+
+        mr_groups = [g for g in zm._event_groups if g.is_mr]
+        assert len(mr_groups) == 1
+        assert mr_groups[0].theta == pytest.approx(0.0, abs=1e-9)
+
+    def test_seam_merge_relabels_2pi_side_events_to_theta0_frame(self):
+        """2π-side events merged into the θ=0 group must swap column frames.
+
+        ``group_events``' seam merge anchors the merged group at θ=0, but
+        events detected near 2π carry segment track-frame labels, which
+        differ from the θ=0 frame by ``boundary_perm`` (the closing row
+        stores ``left_boundary_roots`` permuted into the track frame).
+        Without relabelling, finalize's frame-0 interpretation of the
+        2π-side labels hit the wrong tracks and the boundary coverage test
+        silently dropped the event (the missed seam crossing behind the
+        E=1.212 y-SGBZ failure).
+
+        Synthetic two-column setup: moduli coincide exactly at both seam
+        rows (θ=0 and θ=2π — physically the same point), splitting in
+        between, with a NON-trivial boundary_perm [1, 0] so the two frames
+        genuinely differ.  The 2π-side event (columns 0,1 in track frame)
+        must be relabelled to (1,0) in the θ=0-anchored merged group.
+        """
+        from brute_force_SGBZ.mu2mid import ItemView
+        from dataclasses import replace as _replace
+
+        th = np.array([0.0, 0.1, 0.2, 6.183185307179586,
+                       6.283185307179586])  # 2π - 0.1, then 2π
+        twopi = 6.283185307179586
+
+        # Modulus curves: equal at row 0 (θ=0) and row 4 (θ=2π), split in
+        # between — crossing in interval [3,4] (2π side) only.
+        la = np.array([
+            [0.0, 0.0],       # θ=0: equal (seam degeneracy)
+            [-0.05, 0.05],
+            [-0.08, 0.08],
+            [-0.04, 0.04],
+            [0.0, 0.0],       # θ=2π: equal again
+        ])
+
+        class FakeSeg:
+            theta1_arr = th
+            left_mr = -1
+            right_mr = -1
+
+        class FakeZM:
+            segments = [FakeSeg()]
+            M = 1
+            K = 2
+            boundary_perm = np.array([1, 0])   # NON-trivial monodromy
+            _continuum_clusters = [[]]
+
+            def __init__(self):
+                self._item_views = [ItemView(
+                    rep_cols=np.array([0, 1]),
+                    mults=np.array([1, 1]),
+                    item_logabs=la,
+                    item_tang_re=np.zeros_like(la),
+                    sort_to_item=np.argsort(la, axis=1),
+                    j_lo=np.array([0, 0, 0, 0, 0]),
+                    j_hi=np.array([1, 1, 1, 1, 1]),
+                )]
+
+        zm = FakeZM()
+        # Event detected on the 2π side (interval [3,4]) with track-frame
+        # labels (0, 1); θ* refines to exactly 2π.
+        ev_2pi = sgbz_pairwise.PairEvent(
+            seg_idx=0, i=3, ia=0, ib=1, cols_a=(0,), cols_b=(1,),
+            rep_a=0, rep_b=1, kind='cross', pair_kind='M-1_M',
+            theta_star=twopi, direction=1)
+
+        groups = sgbz_pairwise.group_events(zm, [ev_2pi], merge_tol=1e-10)
+        # Single event, no seam counterpart on the 0 side: no merge — and
+        # crucially NO relabelling either (nothing moves to θ=0).
+        assert len(groups) == 1
+        assert groups[0].events[0].cols_a == (0,)
+
+        # Now the full scenario: a matching event on the 0 side (touch at
+        # row 0, frame-0 labels) so the seam merge fires.
+        ev_0 = sgbz_pairwise.PairEvent(
+            seg_idx=0, i=0, ia=0, ib=1, cols_a=(0,), cols_b=(1,),
+            rep_a=0, rep_b=1, kind='touch', pair_kind='M-1_M',
+            theta_star=0.0, direction=None)
+
+        groups = sgbz_pairwise.group_events(zm, [ev_0, ev_2pi], merge_tol=1e-10)
+        merged = groups[0]
+        assert merged.theta == 0.0
+        # The 2π-side event comes FIRST in the tuple (last.events +
+        # first.events) and must now carry θ=0-frame labels: inv_perm maps
+        # 0→1, 1→0 for boundary_perm=[1,0].
+        e2, e0 = merged.events[0], merged.events[1]
+        assert e2.theta_star == pytest.approx(twopi)   # provenance kept
+        assert e2.cols_a == (1,) and e2.cols_b == (0,)
+        assert e2.rep_a == 1 and e2.rep_b == 0
+        # The 0-side event is already frame-0: untouched.
+        assert e0.cols_a == (0,) and e0.cols_b == (1,)
+        assert e0.theta_star == pytest.approx(0.0)
+
+    def test_transient_inf_row_does_not_discard_pair_events(self):
+        """A transient 0/∞ root must not kill the pair's other crossings.
+
+        ``collect_pair_events`` historically skipped a pair whenever ANY
+        row of ``ln|β₂_a| − ln|β₂_b|`` was non-finite, so one transient
+        padding root (a degree-deficient solve at a single θ, later
+        re-matched to a real root) silently discarded the pair's genuine
+        crossings elsewhere on the segment.  The scan must instead drop
+        only the mesh intervals that touch the bad row.  A persistent
+        padding column (every row non-finite) still yields no events.
+
+        Synthetic fixture (HN models never produce transient 0/∞ roots):
+        item a is ∞ at row 0 only; the pair has one transversal crossing
+        at θ* = 1/3 inside interval [0.3, 0.4].
+        """
+        from brute_force_SGBZ.mu2mid import ItemView
+
+        th = np.array([0.0, 0.1, 0.2, 0.3, 0.4])
+
+        def roots_at(t):
+            # item a: e^{1-3t} (inf at t=0 via the padded row below);
+            # item b: e^{-1+3t} i — log-moduli cross exactly at t = 1/3.
+            return np.array([np.exp(1.0 - 3.0 * t),
+                             np.exp(-1.0 + 3.0 * t) * 1j])
+
+        def build_zm(transient: bool):
+            class FakeSeg:
+                theta1_arr = th
+                tracked_roots = np.array([
+                    (np.array([np.inf + 0j, np.exp(-1.0) * 1j])
+                     if transient and i == 0 else roots_at(t))
+                    for i, t in enumerate(th)
+                ])
+                tangents = np.array([
+                    [np.nan, 3.0] if (transient and i == 0) else [-3.0, 3.0]
+                    for i in range(len(th))
+                ], dtype=complex)
+                left_mr = -1
+                right_mr = -1
+
+            la = np.log(np.abs(FakeSeg.tracked_roots))
+            tang_re = FakeSeg.tangents.real
+            sort_to_item = np.argsort(la, axis=1)  # mults all 1
+
+            class FakeZM:
+                segments = [FakeSeg()]
+                M = 1
+                _continuum_clusters = [[]]
+
+                def __init__(self):
+                    self._item_views = [ItemView(
+                        rep_cols=np.array([0, 1]),
+                        mults=np.array([1, 1]),
+                        item_logabs=la,
+                        item_tang_re=tang_re,
+                        sort_to_item=sort_to_item,
+                        j_lo=sort_to_item[:, 0],
+                        j_hi=sort_to_item[:, 1],
+                    )]
+
+                def solve_at(self, t, seg_idx=0, i=0, interp=None):
+                    return roots_at(float(t)), np.array([-3.0, 3.0],
+                                                         dtype=complex)
+
+            return FakeZM()
+
+        events = sgbz_pairwise.collect_pair_events(build_zm(True))
+        assert len(events) == 1
+        ev = events[0]
+        assert ev.kind == 'cross'
+        assert ev.converged
+        assert ev.theta_star == pytest.approx(1.0 / 3.0, abs=1e-9)
+        assert ev.direction == -1
+        assert ev.pair_kind == 'M-1_M'
+
+        # Persistent padding (item a non-finite on EVERY row): still no
+        # events — the historical behaviour is the degenerate case.
+        zm = build_zm(False)
+        zm._item_views[0].item_logabs[:, 0] = np.inf
+        assert sgbz_pairwise.collect_pair_events(zm) == []
+
     def test_isolated_tie_row_does_not_set_jlo_equal_jhi(self, poly_A):
         """ItemView clusters are whole-segment continua, not isolated ties."""
         poly = CharPoly(*poly_A)
@@ -442,7 +635,7 @@ class TestPairwiseAnalysis:
         path = zm.mu2_mid
         assert isinstance(path, bfs.Mu2Mid)
         assert len(path.pieces) > 0
-        vals = np.array([path.value(t) for t in np.linspace(0, 2 * np.pi, 401)])
+        vals = np.array([path.value(t) for t in np.linspace(0, TWO_PI, 401)])
         assert vals.min() >= -14.0
         assert vals.max() <= 14.0
 
@@ -518,7 +711,7 @@ class TestReviewFixes:
         calls = {"n": 0}
 
         def fake_eval(poly_, E_ref, mu1, zm_run_kwargs, *,
-                      continuum_tol, crossing_tol, max_newton):
+                      continuum_tol, crossing_tol):
             calls["n"] += 1
             return 1.0, [], None   # W never crosses zero
 
@@ -537,7 +730,7 @@ class TestReviewFixes:
         seen = []
 
         def fake_eval(poly_, E_ref, mu1, zm_run_kwargs, *,
-                      continuum_tol, crossing_tol, max_newton):
+                      continuum_tol, crossing_tol):
             seen.append(float(mu1))
             if mu1 < 0.0:
                 return -1.0, [], None
@@ -565,7 +758,7 @@ class TestReviewFixes:
         poly = CharPoly(*poly_A)
 
         def fake_eval(poly_, E_ref, mu1, zm_run_kwargs, *,
-                      continuum_tol, crossing_tol, max_newton):
+                      continuum_tol, crossing_tol):
             if mu1 == -1.0:
                 return -1.0, [], None
             if mu1 == 0.0:
@@ -588,7 +781,7 @@ class TestReviewFixes:
         assert res["mu1"] == pytest.approx(0.1)
         assert res["subsets"] == []
 
-    # ---- B.4: _ensure_mu2mid analyzes with CONTINUUM_TOL ----
+    # ---- B.4: ensure_mu2mid analyzes with CONTINUUM_TOL ----
 
     def test_ensure_mu2mid_uses_continuum_tol(self, poly_A, monkeypatch):
         poly = CharPoly(*poly_A)
@@ -596,29 +789,25 @@ class TestReviewFixes:
         zm.run()
 
         seen = {}
-        orig_analyze = crossings.Mu2MidZM.analyze
+        orig_analyze = bfs.Mu2MidZM.analyze
 
         def spy_analyze(self_, *args, **kwargs):
             seen["tie_tol"] = kwargs.get("tie_tol")
             return orig_analyze(self_, *args, **kwargs)
 
-        monkeypatch.setattr(crossings.Mu2MidZM, "analyze", spy_analyze)
+        monkeypatch.setattr(bfs.Mu2MidZM, "analyze", spy_analyze)
         subsets, charges = bfs.detect_crossings_simple(zm, poly)
 
         assert seen["tie_tol"] == bfs.CONTINUUM_TOL
         assert len(subsets) == 2   # the known mu1=0.1 crossing is still found
 
     # ---- hard-boundary charge is None (unknown), not a numeric placeholder ----
-
-    def test_hard_charge_is_none_sentinel(self):
-        ch_mr = crossings._classify_charge(0.0, 1.0 + 0j, 1.0, near_mr=True)
-        assert ch_mr["kind"] == "mr"
-        assert ch_mr["charge"] is None
-
-        ch_tangent = crossings._classify_charge(
-            0.0, 1.0 + 0j, float("nan"), near_mr=False)
-        assert ch_tangent["kind"] == "tangent"
-        assert ch_tangent["charge"] is None
+    #
+    # The legacy _classify_charge direct test was removed with crossings.py.
+    # Both semantics it guarded are covered on the real path:
+    #   * ordinary charges are ±1 — asserted in TestSgbzSolver10 above;
+    #   * the None sentinel never enters arithmetic — that is exactly what
+    #     test_compute_average_winding_skips_none_hard_charge (B.5) checks.
 
     # ---- B.5: soft-only charge conservation ----
 

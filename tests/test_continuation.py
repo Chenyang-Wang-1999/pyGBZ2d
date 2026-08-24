@@ -14,6 +14,7 @@ from cmath import exp
 from collections import defaultdict
 
 from gbz_types import (
+    TWO_PI,
     CharPoly, hungarian_match_indices, sort_by_root_abs,
     to_sphere_r3, cost_from_sphere_r3,
 )
@@ -96,15 +97,12 @@ def _make_poly_F():
 # HN model
 # ===========================================================================
 
+from conftest import build_HN2D_polynomial as _build_hn2d_raw
+
+
 def build_HN2D_polynomial(J1, J2, gamma_1, gamma_2, delta_1, delta_2):
-    J11 = exp(gamma_1 + 1j * delta_1) * J1
-    J12 = exp(-gamma_1 + 1j * delta_1) * np.conj(J1)
-    J21 = exp(gamma_2 + 1j * delta_2) * J2
-    J22 = exp(-gamma_2 + 1j * delta_2) * np.conj(J2)
-    coeffs = np.array([1, -J11, -J12, -J21, -J22], dtype=complex)
-    degs = np.array([
-        [1, 0, 0], [0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1],
-    ], dtype=int)
+    """CharPoly wrapper over the shared (coeffs, degs) builder in conftest."""
+    coeffs, degs = _build_hn2d_raw(J1, J2, gamma_1, gamma_2, delta_1, delta_2)
     return CharPoly(coeffs, degs)
 
 
@@ -265,7 +263,7 @@ class TestComputeTangentSynthetic:
             ln_b2 = np.log(b2)
             ln_b2_fwd = np.log(b2_fwd)
             diff = ln_b2_fwd - ln_b2
-            diff = diff - 2j * pi * round(diff.imag / (2 * pi))
+            diff = diff - 2j * pi * round(diff.imag / (TWO_PI))
             fd = diff / dtheta
             np.testing.assert_allclose(V[from_idx], fd, rtol=1e-3, atol=1e-6)
 
@@ -483,7 +481,7 @@ class TestSolveMultipleRootsInInterval:
         theta1_mr = solve_multiple_roots_in_interval(
             poly_F, 0j, 0.0, -0.1, 0.1, np.array([1.0 + 0j, 1.0 + 0j]),
         )
-        assert min(abs(theta1_mr), abs(theta1_mr - 2 * pi)) < 0.01
+        assert min(abs(theta1_mr), abs(theta1_mr - TWO_PI)) < 0.01
 
     def test_refine_poly_B(self, poly_B):
         """Non-generic double root at θ₁=0: solve in a small bracket."""
@@ -493,7 +491,7 @@ class TestSolveMultipleRootsInInterval:
         theta1_mr = solve_multiple_roots_in_interval(
             poly_B, 0j, 0.0, -0.05, 0.05, roots_left,
         )
-        assert min(abs(theta1_mr), abs(theta1_mr - 2 * pi)) < 0.01
+        assert min(abs(theta1_mr), abs(theta1_mr - TWO_PI)) < 0.01
 
 
 # ===========================================================================
@@ -504,7 +502,7 @@ class TestIntegrateSegment:
     def test_poly_D_no_mr(self, poly_D):
         """Poly D has well-separated roots — should complete without MR."""
         roots_0 = np.asarray(poly_D.solve_roots_1d((0, 1), (0j, exp(0j)), (2,)))
-        seg = integrate_segment(poly_D, 0j, 0.0, 0.0, roots_0, 2 * pi,
+        seg = integrate_segment(poly_D, 0j, 0.0, 0.0, roots_0, TWO_PI,
                                 h0=0.1)
         assert seg.stop_reason == StopReason.completed
         assert seg.tracked_roots.shape[1] == 3
@@ -513,14 +511,14 @@ class TestIntegrateSegment:
     def test_poly_F_stops_at_mr(self, poly_F):
         """Integrating from 0.2 to 2π should complete (MR at 0=2π is boundary)."""
         roots_0 = np.asarray(poly_F.solve_roots_1d((0, 1), (0j, exp(0.001j)), (2,)))
-        seg = integrate_segment(poly_F, 0j, 0.0, 0.001, roots_0, 2 * pi,
+        seg = integrate_segment(poly_F, 0j, 0.0, 0.001, roots_0, TWO_PI,
                                 h0=0.1, min_dtheta=1e-6)
         assert seg.stop_reason == StopReason.completed
 
     def test_poly_B_segment(self, poly_B):
         """Poly B: integrate a segment."""
         roots_0 = np.asarray(poly_B.solve_roots_1d((0, 1), (0j, exp(0.5j)), (2,)))
-        seg = integrate_segment(poly_B, 0j, 0.0, 0.5, roots_0, 2 * pi,
+        seg = integrate_segment(poly_B, 0j, 0.0, 0.5, roots_0, TWO_PI,
                                 h0=0.1)
         assert seg.stop_reason == StopReason.completed
         assert seg.tracked_roots.shape[1] == 2
@@ -530,7 +528,7 @@ class TestIntegrateSegment:
         E_ref = hn_params["E_ref"]
         mu1 = hn_params["mu1"]
         roots_0 = np.asarray(hn_poly.solve_roots_1d((0, 1), (E_ref, exp(mu1)), (2,)))
-        seg = integrate_segment(hn_poly, E_ref, mu1, 0.0, roots_0, 2 * pi,
+        seg = integrate_segment(hn_poly, E_ref, mu1, 0.0, roots_0, TWO_PI,
                                 h0=0.1)
         # Interval trigger may fire on genuine close approaches.
         assert seg.stop_reason in (StopReason.completed, StopReason.multiple_root_in_interval)
@@ -539,7 +537,7 @@ class TestIntegrateSegment:
     def test_tracks_continuous(self, poly_D):
         """Tracked roots within a segment should not have large jumps."""
         roots_0 = np.asarray(poly_D.solve_roots_1d((0, 1), (0j, exp(0j)), (2,)))
-        seg = integrate_segment(poly_D, 0j, 0.0, 0.0, roots_0, 2 * pi,
+        seg = integrate_segment(poly_D, 0j, 0.0, 0.0, roots_0, TWO_PI,
                                 h0=0.1)
         tracked = seg.tracked_roots
         for i in range(len(tracked) - 1):
@@ -587,7 +585,7 @@ class TestComputeTangentHN:
                 continue
             ln_b2 = np.log(b2); ln_b2_fwd = np.log(b2_fwd)
             diff = ln_b2_fwd - ln_b2
-            diff = diff - 2j * pi * round(diff.imag / (2 * pi))
+            diff = diff - 2j * pi * round(diff.imag / (TWO_PI))
             np.testing.assert_allclose(V[from_idx], diff / dtheta, rtol=1e-3, atol=1e-6)
 
 
@@ -660,7 +658,7 @@ class TestEdgeCases:
         ], dtype=int)
         poly = CharPoly(coeffs, degs)
         roots_0 = np.asarray(poly.solve_roots_1d((0, 1), (0j, 1.0+0j), (2,)))
-        seg = integrate_segment(poly, 0j, 0.0, 0.0, roots_0, 2 * pi, h0=0.1)
+        seg = integrate_segment(poly, 0j, 0.0, 0.0, roots_0, TWO_PI, h0=0.1)
         assert seg.stop_reason == StopReason.completed
 
     def test_empty_polynomial_handling(self):

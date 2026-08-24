@@ -8,6 +8,8 @@ Usage:
 import pickle
 from pathlib import Path
 import numpy as np
+
+from gbz_types import TWO_PI
 import pyvista as pv
 
 HERE = Path(__file__).resolve().parent
@@ -18,8 +20,8 @@ TORUS_r = 1.0
 
 
 def _torus_point(theta1, theta2):
-    t1 = np.asarray(theta1, dtype=float) % (2 * np.pi)
-    t2 = np.asarray(theta2, dtype=float) % (2 * np.pi)
+    t1 = np.asarray(theta1, dtype=float) % (TWO_PI)
+    t2 = np.asarray(theta2, dtype=float) % (TWO_PI)
     x = (TORUS_R + TORUS_r * np.cos(t2)) * np.cos(t1)
     y = (TORUS_R + TORUS_r * np.cos(t2)) * np.sin(t1)
     z = TORUS_r * np.sin(t2)

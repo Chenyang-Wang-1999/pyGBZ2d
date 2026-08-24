@@ -65,10 +65,13 @@ Continuum detection is folded into the μ₂_mid build (`Mu2MidZM.has_continuum`
 - `_runs_to_pieces`: one `_LinePiece` per run per continuum track (each cluster column is a distinct β₂ curve at the same `|β₂|`).
 - `_join_runs_across_mrs`: join pieces whose endpoints touch a segment edge (MR / θ₁=0≡2π seam). An endpoint strictly inside a segment is a sort-change terminator — no join. At an MR, if the endpoint root is in the MR's cluster the track terminates; otherwise it continues into the adjacent segment and is matched by root value. Iterated to a fixpoint so chains and the cyclic seam converge.
 
-### 2.3 `crossings.py` — Crossing Detection / PointSubset Materialization
+### 2.3 PointSubset Materialization (in `winding.py`; formerly `crossings.py`)
 
 Crossing DETECTION lives in `pairwise.py` and is orchestrated by
-`Mu2MidZM.analyze`. `detect_crossings_simple` only materializes results.
+`Mu2MidZM.analyze`. `winding.detect_crossings_simple` only materializes
+results (the former `crossings.py` module was dissolved 2026-08-18: its
+materialization half merged into `winding.py`, the `Mu2MidZM` bootstrap
+`ensure_mu2mid` moved to `mu2mid.py`).
 
 **Detection**: on each segment's ItemView, every representative item pair is
 scanned by `d = item_logabs[a] − item_logabs[b]`:
@@ -88,15 +91,18 @@ column. Charge is the side-change rule
 **MR echo drop**: crossings within `_MR_PROXIMITY_TOL` of a boundary MR are
 replaced by the exact ZeroManager MR record.
 
-**Charge classification** (`_classify_charge`):
-- **Ordinary** (charge ±1): `charge = sign(g')` where `g = ln|β_j| − μ₂_mid`. At the crossing `j` is a boundary column so `sign(g') = sign(½ gap')`.
-- **Hard boundaries — MR / tangent / unknown**: the charge is **unknown**. The charge dict stores `charge=None` (never a numeric placeholder), so any accidental arithmetic on a hard boundary's charge fails loudly with `TypeError`. MR: near a multiple root (branch point). Tangent: `g'` not finite (near-tangency treated as hard for safety). Unknown: `g'` not finite.
+**Charge classification** (in the materialized charge dicts):
+- **Ordinary** (charge ±1/0): the side-change charge `q` computed by
+  `pairwise.finalize_event_groups`.
+- **Hard boundaries — MR / tangent**: the charge is **unknown**. The charge
+  dict stores `charge=None` (never a numeric placeholder), so any accidental
+  arithmetic on a hard boundary's charge fails loudly with `TypeError`.
 
 MR/tangent/unknown act as **hard** region boundaries (delimit regions, do not propagate winding); ordinary is **soft** (propagates via charge).
 
 ### 2.4 `winding.py` — Average Winding Computation
 
-Computes the average major-axis winding number `W(E_ref, μ₁)` from a built `Mu2MidZM` at fixed `(E_ref, μ₁)` together with the charge list from `crossings.py`.
+Computes the average major-axis winding number `W(E_ref, μ₁)` from a built `Mu2MidZM` at fixed `(E_ref, μ₁)` together with the charge list from `detect_crossings_simple` (same module, §2.3).
 
 **Loop path** (§6.4): `β₂ = exp(μ₂_mid(θ₁) + iθ₂)` with `θ₁ ∈ [0, 2π)` and fixed `θ₂`. The μ₂_mid path is the independent piecewise-smooth `Mu2Mid` object: each smooth piece is `hermite_interp_poly` from endpoint `(value, derivative)`; ordinary knots share one derivative (C1), while event / MR / ±14-saturation knots are breakpoints with left/right derivatives. Values are bounded to `±14` at build time, and the winding quad is split at every piece boundary.
 
@@ -228,7 +234,7 @@ def compute_average_winding(
 ) -> float
 ```
 
-Compute the average major-axis winding number `W(E_ref, μ₁)` from a built `Mu2MidZM` and the charge list from `crossings.py`. Partitions the `θ₂` circle into regions delimited by hard boundaries (MR/tangent/unknown, charge `None` — unknown), picks one seed interval per region (maximizing `min |f|` along the loop), computes `w₀` via `_loop_winding_quad`, and propagates across the region's soft boundaries (ordinary, charge ±1). When every boundary is soft the charges must sum to zero, otherwise `RuntimeError`; any hard boundary disables the conservation check. Arc-weighted mean of the per-interval windings.
+Compute the average major-axis winding number `W(E_ref, μ₁)` from a built `Mu2MidZM` and the charge list from `detect_crossings_simple`. Partitions the `θ₂` circle into regions delimited by hard boundaries (MR/tangent/unknown, charge `None` — unknown), picks one seed interval per region (maximizing `min |f|` along the loop), computes `w₀` via `_loop_winding_quad`, and propagates across the region's soft boundaries (ordinary, charge ±1). When every boundary is soft the charges must sum to zero, otherwise `RuntimeError`; any hard boundary disables the conservation check. Arc-weighted mean of the per-interval windings.
 
 ### 3.7 `solve_SGBZ_for_E`
 

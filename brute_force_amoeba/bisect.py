@@ -18,13 +18,13 @@ from typing import Optional
 from gbz_types import CharPoly
 
 from .ronkin_winding import _get_average_winding_from_zeros
-from .zm_extract import AmoebaZeroManager, amoeba_windings, CONTINUUM_TOL, CONTINUUM_FRAC
+from .zm_extract import AmoebaZeroManager, amoeba_windings, CONTINUUM_FRAC
 
 
 def _refine_and_correct(
     char_poly, E_ref, mu1, mu2_0,
     zm, low, high, low_init, high_init,
-    continuum_tol, min_continuum_pts_unused, xtol,
+    continuum_tol, xtol,
     frac,
 ):
     """Refine crossings at mu2_0, then apply Newton correction if needed.
@@ -52,7 +52,11 @@ def _refine_and_correct(
             "winding": w_ref, "_zm": zm,
         }
 
-    # Newton correction using analytical derivative
+    # Newton correction using analytical derivative.  The 1e-15 floor on
+    # |dW/dmu2| only guards the division by an exactly-zero derivative
+    # (w_ref is O(1), so any |dW| > 1e-15 gives a finite, meaningful step);
+    # below it the derivative carries no signal and the bracket midpoint is
+    # the honest next guess.
     if abs(dW_dmu2) > 1e-15:
         delta = -w_ref / dW_dmu2
         # Clamp to initial bracket with margin
@@ -103,9 +107,7 @@ def _find_mu2_for_w2_zero(
     mu1: float,
     mu2_low: float,
     mu2_high: float,
-    N_points: int = 301,
     continuum_tol: float = 1e-6,
-    min_continuum_pts: int = 3,
     continuum_perturb: float = 1e-4,
     max_iter: int = 60,
     xtol: float = 1e-10,
@@ -224,7 +226,7 @@ def _find_mu2_for_w2_zero(
             return _refine_and_correct(
                 char_poly, E_ref, mu1, mu2_mid,
                 zm, low, high, low_init, high_init,
-                continuum_tol, min_continuum_pts, xtol, frac,
+                continuum_tol, xtol, frac,
             )
 
         if w_low * w_mid < 0:
@@ -256,9 +258,7 @@ def _resolve_continuum(
     mu2_low: float = -1.0,
     mu2_high: float = 1.0,
     continuum_perturb: float = 1e-4,
-    N_points: int = 301,
     continuum_tol: float = 1e-6,
-    min_continuum_pts: int = 3,
     max_iter: int = 60,
     xtol: float = 1e-10,
     max_range_expansions: int = 10,
@@ -336,16 +336,14 @@ def _resolve_continuum(
     # theta2 circle.
     inner_left = _find_mu2_for_w2_zero(
         char_poly, E_ref, mu1 - continuum_perturb, mu2_low, mu2_high,
-        N_points=N_points,
-        continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
+        continuum_tol=continuum_tol,
         continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
         max_range_expansions=max_range_expansions,
         range_expand_factor=range_expand_factor, frac=frac,
     )
     inner_right = _find_mu2_for_w2_zero(
         char_poly, E_ref, mu1 + continuum_perturb, mu2_low, mu2_high,
-        N_points=N_points,
-        continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
+        continuum_tol=continuum_tol,
         continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
         max_range_expansions=max_range_expansions,
         range_expand_factor=range_expand_factor, frac=frac,
@@ -380,9 +378,7 @@ def bisect_amoeba_ronkin_min(
     mu1_high: float = 1,
     mu2_low: float = -1,
     mu2_high: float = 1,
-    N_points: int = 301,
     continuum_tol: float = 1e-6,
-    min_continuum_pts: int = 3,
     continuum_perturb: float = 1e-4,
     max_iter: int = 60,
     xtol: float = 1e-10,
@@ -424,16 +420,14 @@ def bisect_amoeba_ronkin_min(
     for _ in range(max_range_expansions):
         inner_low = _find_mu2_for_w2_zero(
             char_poly, E_ref, low, mu2_low, mu2_high,
-            N_points=N_points,
-            continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
+            continuum_tol=continuum_tol,
             continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
             max_range_expansions=max_range_expansions,
             range_expand_factor=range_expand_factor, frac=frac,
         )
         inner_high = _find_mu2_for_w2_zero(
             char_poly, E_ref, high, mu2_low, mu2_high,
-            N_points=N_points,
-            continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
+            continuum_tol=continuum_tol,
             continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
             max_range_expansions=max_range_expansions,
             range_expand_factor=range_expand_factor, frac=frac,
@@ -471,8 +465,7 @@ def bisect_amoeba_ronkin_min(
 
         inner_mid = _find_mu2_for_w2_zero(
             char_poly, E_ref, mu1_mid, mu2_low, mu2_high,
-            N_points=N_points,
-            continuum_tol=continuum_tol, min_continuum_pts=min_continuum_pts,
+            continuum_tol=continuum_tol,
             continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
             max_range_expansions=max_range_expansions,
             range_expand_factor=range_expand_factor, frac=frac, _zm=zm,
@@ -490,8 +483,7 @@ def bisect_amoeba_ronkin_min(
                 char_poly, E_ref, mu1_mid, mu2_mid, zm,
                 mu2_low=mu2_low, mu2_high=mu2_high,
                 continuum_perturb=continuum_perturb,
-                N_points=N_points, continuum_tol=continuum_tol,
-                min_continuum_pts=min_continuum_pts,
+                continuum_tol=continuum_tol,
                 max_iter=max_iter, xtol=xtol,
                 max_range_expansions=max_range_expansions,
                 range_expand_factor=range_expand_factor, frac=frac,

@@ -19,9 +19,9 @@ import numpy as np
 from gbz_types import CharPoly, LineSubset
 from continuation import ZeroManager
 
-from .crossings import _ensure_mu2mid
+from .mu2mid import ensure_mu2mid
 from .mu2mid import Mu2MidZM, CONTINUUM_TOL
-from brute_force_amoeba.zm_extract import _LinePiece, _is_cluster_endpoint
+from gbz_types import JoinableLinePiece as _LinePiece, is_mr_cluster_endpoint as _is_cluster_endpoint
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,14 @@ def _join_runs_across_mrs(
         j_prev = int(np.argmin(np.abs(right_b - root)))
         return j_prev, complex(right_b[j_prev])
 
-    for _ in range(n_seg):
+    # Restart the scan after every merge: a merge invalidates the piece
+    # indices (the list is rebuilt in place), so a plain nested loop would
+    # read stale positions.  `while changed` (NOT a fixed n_seg budget —
+    # the required number of merges scales with continuum multiplicity ×
+    # segment boundaries, not with n_seg; a capped budget left high-fold
+    # continua as broken open pieces) is safe: each merge strictly
+    # decreases the piece count, so the loop terminates.
+    while True:
         changed = False
         for s in range(n_seg):
             seg = zm.segments[s]
@@ -206,6 +213,8 @@ def _join_runs_across_mrs(
                     continue
                 if pi_idx == li_idx:
                     continue
+                # cyclic=True wraps the segment-0 side past 2π so the merged
+                # θ array stays monotonic across the seam.
                 _merge_two(pieces, pi_idx, li_idx, cyclic=(s == 0))
                 changed = True
                 break
@@ -245,7 +254,7 @@ def extract_continuum_linesubsets(
     Precondition: continuum detection has already run and returned
     ``has_continuum == True``.
     """
-    m = _ensure_mu2mid(zm, **(zm_run_kwargs or {}))
+    m = ensure_mu2mid(zm, **(zm_run_kwargs or {}))
     if not m.has_continuum:
         raise RuntimeError(
             "extract_continuum_linesubsets requires has_continuum=True; "

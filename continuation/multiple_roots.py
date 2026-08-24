@@ -8,8 +8,9 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 
 import numpy as np
 from typing import Optional, NamedTuple
-from cmath import exp, pi
+from cmath import exp
 from gbz_types import (
+    TWO_PI,
     CharPoly,
     hungarian_match_indices,
     to_sphere_r3,
@@ -31,7 +32,10 @@ class MultipleRootInfo(NamedTuple):
     # (``sqrt(mean(|β − mean|²))``), same order as ``cluster_indices``.
     # Empty when no cluster was detected.  A small value means the numerical
     # roots were already nearly coincident; a large one flags a loose cluster.
-    cluster_stds: list[float] = []
+    # tuple (not list): a NamedTuple literal default must be immutable —
+    # a shared mutable list default would alias across records.  Consumers
+    # only read it.
+    cluster_stds: tuple[float, ...] = ()
 
 
 def snap_clusters_to_mean(
@@ -271,25 +275,41 @@ def _closest_pair_deriv(
     """Compute min Euclidean distance among roots, its θ₁-derivative,
     and the pair achieving the minimum.
 
+    Roots whose tangent is nan (the 0/∞ padding roots held fixed by the
+    integrator) or inf (divergent, at a branch point) are excluded from
+    the pair search: a nan/inf derivative would poison the interval
+    trigger's ``_prev_deriv`` and blind it permanently (``nan < 0`` is
+    False forever after).  The point trigger owns the branch-point regime.
+
     Returns
     -------
     min_dist : float
-        Minimum |β_i − β_j| over all root pairs.
-    deriv_sign : int
-        −1 (approaching), 0 (stationary), or +1 (separating).
+        Minimum |β_i − β_j| over finite-tangent root pairs (``inf`` when
+        fewer than two such roots exist).
+    deriv : float
+        Raw d|β_i − β_j|²/dθ₁ of that pair; only its sign is consumed.
     pair : tuple[int, int]
-        Track indices (i, j) of the closest pair.
+        Track indices (i, j) of the closest pair, or (-1, -1) when none.
     """
     n = len(roots)
+    finite = [
+        j for j in range(n)
+        if np.isfinite(V[j].real) and np.isfinite(V[j].imag)
+    ]
+
     min_dist = np.inf
     min_i, min_j = -1, -1
 
-    for i in range(n):
-        for j in range(i + 1, n):
+    for a in range(len(finite)):
+        for b in range(a + 1, len(finite)):
+            i, j = finite[a], finite[b]
             d = np.abs(roots[i] - roots[j])
             if d < min_dist:
                 min_dist = d
                 min_i, min_j = i, j
+
+    if min_i < 0:
+        return float(min_dist), 0.0, (-1, -1)
 
     deriv = _pair_distance_deriv(roots, V, (min_i, min_j))
 
@@ -361,7 +381,7 @@ def solve_multiple_roots_in_interval(
         return deriv
 
     if theta1_right < theta1_left:
-        theta1_right += 2 * pi
+        theta1_right += TWO_PI
 
     # Tangent at the reference (right) endpoint — reused across Brent trials.
     V_ref, _ = compute_tangent(

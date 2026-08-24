@@ -3,13 +3,14 @@ author:        wangchenyang <cy-wang21@mails.tsinghua.edu.cn>
 date:          2026-08-10
 Copyright © Department of Physics, Tsinghua University. All rights reserved
 
-Topological charge + average major-axis winding (§3, §6.4).
+Topological charge + average major-axis winding (§3, §6.4), plus the 0D
+PointSubset materialization from analyzed EventGroups.
 
 Computes the average major-axis winding number ``W(E_ref, mu1)`` — the
 quantity whose zero in ``mu1`` defines the SGBZ — from a
 ``Mu2MidZM`` (a ``ZeroManager`` with the piecewise-smooth μ₂_mid built) at
 fixed ``(E_ref, mu1)`` together with the charge list from
-:mod:`brute_force_SGBZ.crossings`.
+:func:`detect_crossings_simple` below.
 
 Design (``log/2026-08-13-SGBZ算法梳理.md`` §3/§6.4):
 
@@ -44,11 +45,10 @@ import numpy as np
 from cmath import exp
 from scipy import integrate
 
-from gbz_types import CharPoly, PointSubset
+from gbz_types import CharPoly, PointSubset, TWO_PI
 from continuation import ZeroManager
 
-from .crossings import detect_crossings_simple, _ensure_mu2mid, _MAX_NEWTON_ITER
-from .mu2mid import Mu2MidZM
+from .mu2mid import Mu2MidZM, ensure_mu2mid, _CROSSING_TOL
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +116,7 @@ def get_winding_number(
             winding_fun, bounds[i], bounds[i + 1],
             epsabs=1e-3, epsrel=1e-3, limit=200,
         )[0]
-    return total / (2 * math.pi)
+    return total / (TWO_PI)
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +146,7 @@ def _loop_winding_quad(
         raise RuntimeError("compute_average_winding requires Mu2MidZM.analyze() "
                            "to have built the mu2_mid path")
     path = zm.mu2_mid
-    twopi = 2 * math.pi
+    twopi = TWO_PI
     bp_thetas = [float(t) for t in path.breakpoints
                  if 0.0 < t < twopi]
 
@@ -222,7 +222,7 @@ def _pick_seed_theta2(
     place the seed in the region's cyclic order without a fragile
     circular-containment test.
     """
-    twopi = 2 * math.pi
+    twopi = TWO_PI
     fracs = np.arange(1, n_per_interval + 1) / (n_per_interval + 1)
 
     best_t2 = float(intervals[0][0])
@@ -273,10 +273,10 @@ def compute_average_winding(
     contribute 0 to the arc-weighted mean; sequential charge propagation
     handles a +1/−1 pair at one θ₂ correctly.
     """
-    m = _ensure_mu2mid(zm)
+    m = ensure_mu2mid(zm)
     E_ref = m.E_ref
     mu1 = m.mu1
-    twopi = 2 * math.pi
+    twopi = TWO_PI
 
     # Boundary list (θ₂, is_hard, dc).  For an ORDINARY boundary
     # dc = charge = sign(g') is the loop-winding jump as θ₂ increases PAST
@@ -375,6 +375,91 @@ def compute_average_winding(
 
 
 # ---------------------------------------------------------------------------
+# 0D PointSubset materialization from analyzed EventGroups
+# ---------------------------------------------------------------------------
+#
+# The crossing *detection* lives in pairwise.py (EventGroups, built by
+# Mu2MidZM.analyze); MR boundary rows flow through the same EventGroup
+# machinery (marked ``is_mr``), so this section ONLY turns the analyzed
+# groups into PointSubsets + charge dicts.  There is deliberately no
+# separate MR materialization channel and no MR-echo drop: both were
+# removed because the MR channel only materialized clusters straddling
+# M-1/M, silently dropping any other modulus coincidence at a boundary
+# row (the seam missed-detection at E=1.212), and the echo-drop
+# proximity rule discarded legitimate dense events.
+
+
+def detect_crossings_simple(
+    zm: ZeroManager,
+    poly: CharPoly,
+    *,
+    crossing_tol: float = _CROSSING_TOL,
+    zm_run_kwargs: dict | None = None,
+) -> tuple[list[PointSubset], list[dict]]:
+    """Materialize 0D PMGBZ PointSubsets from analyzed EventGroups.
+
+    An EventGroup whose induced item/column component covers BOTH sorted
+    positions M-1 and M is an SGBZ boundary point; every REAL column of that
+    component gets its own PointSubset (representative items are expanded
+    through their full clusters).  MR-row events (``is_mr``) and tangent
+    events materialize with ``charge=None`` -- a hard boundary for the
+    winding propagation.  Assumes no boundary continuum (the solver gates
+    with ``has_continuum``).
+
+    *crossing_tol* is accepted for backward compatibility and has no
+    effect: the refinement tolerance is fixed at ``Mu2MidZM.analyze`` time
+    (by the caller that built the instance), not here.
+
+    Returns
+    -------
+    subsets : list[PointSubset]
+        One PointSubset per REAL column of every M-1/M boundary event
+        component.
+    charges : list[dict]
+        One dict per subset: ``charge`` is the side-change charge
+        (+1 / -1 / 0) for ordinary events and ``None`` for mr/tangent.
+    """
+    M = poly.M
+    K = poly.M + poly.N
+    if M >= K:
+        raise ValueError(f"M={M} >= K={K}: no PMGBZ boundary to check")
+    if M <= 0:
+        raise ValueError(f"M={M} <= 0: invalid boundary index")
+
+    m = ensure_mu2mid(zm, **(zm_run_kwargs or {}))
+
+    E_ref = m.E_ref
+    mu1 = m.mu1
+
+    subsets: list[PointSubset] = []
+    charges: list[dict] = []
+
+    for g in m._event_groups:
+        if not g.point_columns:
+            continue
+        if g.row < 0:
+            continue
+        seg = m.segments[g.seg_idx]
+        theta1 = float(g.theta) % (TWO_PI)
+
+        for col in g.point_columns:
+            beta2 = complex(seg.tracked_roots[g.row, col])
+            theta2 = float(np.angle(beta2)) % (TWO_PI)
+            q = g.column_q.get(col)
+            if g.is_mr:
+                kind = 'mr'
+            elif q is not None:
+                kind = 'ordinary'
+            else:
+                kind = 'tangent'
+            subsets.append(PointSubset(
+                E=E_ref, beta1=exp(mu1 + 1j * theta1), beta2=beta2))
+            charges.append(dict(
+                theta1=theta1, theta2=theta2, charge=q, kind=kind))
+    return subsets, charges
+
+
+# ---------------------------------------------------------------------------
 # Convenience: detection + winding in one call
 # ---------------------------------------------------------------------------
 
@@ -382,25 +467,22 @@ def detect_crossings_and_winding(
     zm: ZeroManager,
     poly: CharPoly,
     *,
-    crossing_tol: float = 1e-10,
-    max_newton: int = _MAX_NEWTON_ITER,
+    crossing_tol: float = _CROSSING_TOL,
     zm_run_kwargs: dict | None = None,
 ) -> tuple[list[PointSubset], float]:
     """Crossing detection + average major-axis winding.
 
     Builds μ₂_mid once (in :func:`detect_crossings_simple` via
-    :func:`_ensure_mu2mid`); the winding reuses that built ``Mu2MidZM`` — the
+    :func:`ensure_mu2mid`); the winding reuses that built ``Mu2MidZM`` — the
     shared instance is read from the crossing detector's bootstrap.  When the
     caller passes a plain ``ZeroManager`` both stages rebuild a fresh
     ``Mu2MidZM`` (the bisection path avoids this by constructing one itself).
 
     Returns ``(subsets, W_avg)``.
     """
-    m = _ensure_mu2mid(zm, **(zm_run_kwargs or {}))
+    m = ensure_mu2mid(zm, **(zm_run_kwargs or {}))
     subsets, charges = detect_crossings_simple(
-        m, poly,
-        crossing_tol=crossing_tol,
-        max_newton=max_newton,
+        m, poly, crossing_tol=crossing_tol,
     )
     W_avg = compute_average_winding(m, poly, charges)
     return subsets, W_avg

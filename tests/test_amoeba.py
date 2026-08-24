@@ -7,20 +7,9 @@ from cmath import exp
 import brute_force_amoeba as bfa
 from brute_force_amoeba.bisect import _resolve_continuum
 from brute_force_amoeba.zm_extract import AmoebaZeroManager
-from gbz_types import PointSubset, LineSubset, GBZResult, CharPoly
+from gbz_types import PointSubset, LineSubset, GBZResult, CharPoly, TWO_PI
 
-
-def build_HN2D_polynomial(J1, J2, gamma_1, gamma_2, delta_1, delta_2, basis="10"):
-    J11 = exp(gamma_1 + 1j * delta_1) * J1
-    J12 = exp(-gamma_1 + 1j * delta_1) * np.conj(J1)
-    J21 = exp(gamma_2 + 1j * delta_2) * J2
-    J22 = exp(-gamma_2 + 1j * delta_2) * np.conj(J2)
-
-    coeffs = np.array([1, -J11, -J12, -J21, -J22], dtype=complex)
-    degs = np.array([
-        [1, 0, 0], [0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1],
-    ], dtype=int)
-    return coeffs, degs
+from conftest import build_HN2D_polynomial
 
 
 @pytest.fixture
@@ -153,7 +142,7 @@ def _build_two_segment_zm(mu2, cont_on_seg1=True, cluster_tracks=(0, 1),
         tangents=np.zeros_like(tr0),
     )
 
-    th1 = np.linspace(pi, 2 * pi, 11)
+    th1 = np.linspace(pi, TWO_PI, 11)
     tr1 = np.zeros((11, K), dtype=complex)
     mr_roots = np.array(sorted([m, m, tr0[-1, 2]], key=abs))
     tr1[0] = mr_roots
@@ -187,11 +176,11 @@ def _build_two_segment_zm(mu2, cont_on_seg1=True, cluster_tracks=(0, 1),
         # the continuum too — the only joinable boundary is then the interior MR.
         mr_list.append(MultipleRootInfo(
             theta1=0.0, cluster_indices=[(0, 1, 2)],
-            roots=mr_roots, cluster_stds=[0.0],
+            roots=mr_roots, cluster_stds=(0.0,),
         ))
     mr_list.append(MultipleRootInfo(
         theta1=pi, cluster_indices=cluster,
-        roots=mr_roots, cluster_stds=[0.0],
+        roots=mr_roots, cluster_stds=(0.0,),
     ))
     zm = SimpleNamespace(
         segments=[seg0, seg1],
@@ -474,7 +463,8 @@ class TestResolveContinuum:
 @pytest.fixture
 def nnc_char_poly():
     """Build the next-nearest-coupling model from demos/imaginary-degeneracy-splitting.py."""
-    from BerryPy import TightBinding as tb
+    # README lists BerryPy as OPTIONAL; skip (not error) when it is absent.
+    tb = pytest.importorskip("BerryPy").TightBinding
 
     gamma = 0.2
     u1, v1, w = 1.0, 0.8, 0.5
@@ -534,7 +524,7 @@ class TestPlateauEdge:
         from brute_force_amoeba.bisect import bisect_amoeba_ronkin_min
         from brute_force_amoeba.ronkin_winding import _get_average_winding_from_zeros
 
-        res = bisect_amoeba_ronkin_min(char_poly, self.E_PLATEAU_EDGE, N_points=301)
+        res = bisect_amoeba_ronkin_min(char_poly, self.E_PLATEAU_EDGE)
         zeros = res["zeros"]
 
         # Condition (a): non-zero winding area must be tiny — w2 is uniformly 0.
@@ -560,7 +550,7 @@ class TestPlateauEdge:
         char_poly, coeffs, degs = nnc_char_poly
         from brute_force_amoeba.bisect import bisect_amoeba_ronkin_min
 
-        res = bisect_amoeba_ronkin_min(char_poly, self.E_PLATEAU_EDGE, N_points=301)
+        res = bisect_amoeba_ronkin_min(char_poly, self.E_PLATEAU_EDGE)
         zeros = res["zeros"]
 
         # No crossings → net jump 0 (uniform zero-w2 plateau).

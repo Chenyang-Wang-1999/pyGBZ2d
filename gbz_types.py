@@ -17,12 +17,17 @@ from __future__ import annotations
 import math
 from cmath import exp, log
 from dataclasses import dataclass
-from itertools import chain
-from typing import Any, Optional, TYPE_CHECKING, Union
+from typing import Optional, Union
 
 import numpy as np
 import poly_tools as pt
 from scipy.optimize import linear_sum_assignment
+
+# The single 2π constant for the whole project.  Every module imports it
+# from here instead of spelling `2 * pi` locally, so all seam comparisons
+# (θ % 2π, circ_dist, closing-row θ=2π, boundary-MR tolerance) operate on
+# one bit-identical float.  Equal to math.tau; asserted in tests.
+TWO_PI: float = 2.0 * math.pi
 
 # ---- characteristic polynomial wrapper ----
 
@@ -197,7 +202,7 @@ class PointSubset:
     @property
     def theta1(self) -> float:
         """Phase angle of beta1 in [0, 2π)."""
-        return float(math.atan2(self.beta1.imag, self.beta1.real) % (2 * math.pi))
+        return float(math.atan2(self.beta1.imag, self.beta1.real) % (TWO_PI))
 
     def as_triplet(self) -> tuple[complex, complex, complex]:
         """Return (E, k1, k2) where k_j = -i * log(beta_j)."""
@@ -243,7 +248,7 @@ class LineSubset:
     @property
     def theta1_width(self) -> float:
         w = self.theta1_end - self.theta1_start
-        return float(w if w > 0 else w + 2 * math.pi)
+        return float(w if w > 0 else w + TWO_PI)
 
     @property
     def left_endpoint(self) -> tuple[complex, complex]:
@@ -296,6 +301,61 @@ class GBZResult:
 
 
 ConnectedSubset = Union[PointSubset, LineSubset]
+
+
+# ---------------------------------------------------------------------------
+# Cross-module LineSubset joining helpers
+# ---------------------------------------------------------------------------
+#
+# Both the amoeba extractor (brute_force_amoeba.zm_extract) and the SGBZ
+# continuum extractor (brute_force_SGBZ.continuum_lines) join per-segment
+# continuum LineSubsets across MR boundaries into closed curves.  The join
+# unit and the MR-cluster endpoint test are module-agnostic (they only need
+# the ZeroManager protocol: segments with left_mr/right_mr, multiple_roots),
+# so they live here — no extractor should import the other's private pieces.
+
+class JoinableLinePiece(LineSubset):
+    """A per-segment continuum LineSubset being joined across MR boundaries.
+
+    Carries ``ml``/``mr`` — the leftmost/rightmost original segment indices
+    spanned so far — so merges can be chained and the join at the cyclic seam
+    (segment 0 ↔ last segment) detected.  Behaviourally a ``LineSubset`` once
+    joining is done.
+    """
+
+    def __init__(self, E, mu1, theta1_arr, beta2_arr, ml: int, mr: int):
+        super().__init__(E=E, mu1=mu1,
+                         theta1_arr=theta1_arr, beta2_arr=beta2_arr)
+        self.ml = ml
+        self.mr = mr
+
+
+def is_mr_cluster_endpoint(zm, seg, side: str, root: complex) -> bool:
+    """Whether an endpoint root *value* is part of the boundary MR cluster.
+
+    A segment boundary is an MR, but only the roots listed in
+    ``multiple_roots[mr].cluster_indices`` are genuinely multiple there; every
+    other root is a regular root passing straight through.  ``mr`` is the
+    segment's ``left_mr`` / ``right_mr``; ``mr < 0`` is the only "no MR" case —
+    it marks the θ₁=0/2π circle seam (segment 0's left / last segment's right,
+    set to -1 by ``ZeroManager.run``).  When ``has_boundary_mr`` is *False* there
+    is no boundary MR at θ₁=0, so interior MRs are indexed starting from 0 and
+    MR index 0 is a genuine interior MR, not the seam.
+
+    Matching is by *value* against ``multiple_roots[mr].roots``: this is
+    frame-independent, so it works whether that row is modulus-sorted (the
+    boundary MR at θ₁=0) or track-ordered (an interior MR), since
+    ``cluster_indices`` is always an index into that same row.
+    """
+    mr = seg.left_mr if side == 'left' else seg.right_mr
+    if mr < 0:
+        return False
+    cluster = zm.multiple_roots[mr].cluster_indices
+    if not cluster:
+        return False
+    mr_roots = zm.multiple_roots[mr].roots
+    j_mod = int(np.argmin(np.abs(mr_roots - root)))
+    return any(j_mod in c for c in cluster)
 
 
 # ---- shared utility functions ----
@@ -484,8 +544,8 @@ def circ_dist(a: float, b: float) -> float:
     extends to θ₁ ≈ 2π; likewise for θ₂ boundaries near the seam.  Robust
     to inputs outside [0, 2π) via the leading ``% (2π)``.
     """
-    d = abs(a - b) % (2 * math.pi)
-    return min(d, 2 * math.pi - d)
+    d = abs(a - b) % (TWO_PI)
+    return min(d, TWO_PI - d)
 
 
 # ---------------------------------------------------------------------------
@@ -524,7 +584,7 @@ def check_points_clustered_on_torus(
     """
     if len(points) < 2:
         return False
-    tol_rad = tol_normalized * (2 * math.pi)
+    tol_rad = tol_normalized * (TWO_PI)
     for i, (t1_i, t2_i) in enumerate(points):
         has_neighbor = False
         for j, (t1_j, t2_j) in enumerate(points):

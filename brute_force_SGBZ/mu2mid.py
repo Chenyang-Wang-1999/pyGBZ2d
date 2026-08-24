@@ -27,6 +27,8 @@ exists anywhere downstream.
 
 from __future__ import annotations
 
+import warnings
+
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -67,6 +69,32 @@ def logabs_clamped(roots: np.ndarray) -> np.ndarray:
     return np.clip(np.log(np.abs(roots)), -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
 
 
+def ensure_mu2mid(zm: ZeroManager, **run_kwargs) -> "Mu2MidZM":
+    """Return an analyzed Mu2MidZM, reusing *zm* if it is already analyzed.
+
+    A plain ``ZeroManager`` cannot be analyzed in place, so a fresh
+    ``Mu2MidZM`` is constructed from its ``(poly, E_ref, mu1)``, run and
+    analyzed with ``tie_tol=CONTINUUM_TOL``.  This is the single bootstrap
+    every consumer (winding, continuum extraction) goes through, kept next
+    to the class it builds.
+    """
+    if isinstance(zm, Mu2MidZM) and getattr(zm, '_analyzed', False):
+        if run_kwargs:
+            warnings.warn(
+                f"zm is already analyzed; zm_run_kwargs {run_kwargs} are "
+                f"ignored (analyze() only runs once per Mu2MidZM)"
+            )
+        return zm
+    m = Mu2MidZM(zm.poly, zm.E_ref, zm.mu1)
+    m.run(**run_kwargs)
+    m.analyze(tie_tol=CONTINUUM_TOL)
+    return m
+
+
+# Back-compat alias: the bootstrap historically lived in crossings.py.
+_ensure_mu2mid = ensure_mu2mid
+
+
 # ---------------------------------------------------------------------------
 # ItemView
 # ---------------------------------------------------------------------------
@@ -85,18 +113,6 @@ class ItemView(NamedTuple):
     sort_to_item: np.ndarray
     j_lo: np.ndarray
     j_hi: np.ndarray
-
-
-class Mu2MidBreakpoint(NamedTuple):
-    """Legacy-compatible breakpoint record (event / MR / clamp boundary)."""
-    theta1: float
-    value: float
-    deriv_left: float
-    deriv_right: float
-    pair_kind: str
-    columns: tuple
-    is_pmgbz: bool
-    gap: float
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +437,6 @@ class Mu2MidZM(ZeroManager):
         self.mu2_mid_theta1 = path.theta1
         self.mu2_mid_values = path.values
         self.mu2_mid_derivs = path.derivs
-        self.mu2_mid_breakpoints: list[Mu2MidBreakpoint] = []
 
         jls, jhs = [], []
         seg_vals, seg_ders = [], []

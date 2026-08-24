@@ -21,6 +21,12 @@ into one *EventGroup* mesh row; the group keeps every member event and the
 item/column connectivity they induce, but no numerical modulus check is ever
 used to decide cluster membership.
 
+MR boundary rows are NOT special-cased: a modulus coincidence there is
+detected by the same touch/cross scan as anywhere else (``is_mr=True`` on
+the event marks it, and its topological charge becomes ``None`` -- the
+divergent cluster tangents make any direction unreliable).  There is no
+separate MR→PointSubset materialization channel and no echo-drop rule.
+
 Topological charge is NOT obtained by summing pair directions.  It is the
 side change of the curve relative to the M-1/M cut:
 
@@ -36,12 +42,13 @@ from __future__ import annotations
 
 import math
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.optimize import brentq
 
+from gbz_types import TWO_PI
 from continuation import ZeroManager
 
 if TYPE_CHECKING:
@@ -84,6 +91,7 @@ class PairEvent:
     pair_kind: str               # 'M-2_M-1' | 'M-1_M' | 'M_M+1' | 'multi'
     theta_star: float
     direction: int | None        # sign(Re(V_a) - Re(V_b)), None = tangent
+    is_mr: bool = False          # event sits on a segment MR boundary row
     converged: bool = True
 
 
@@ -102,6 +110,8 @@ class EventGroup:
     item_components: tuple[tuple[int, ...], ...] = ()
     # Same components expanded to real tracked_roots columns.
     column_components: tuple[tuple[int, ...], ...] = ()
+    # Any member event sits on a segment MR boundary row.
+    is_mr: bool = False
 
     # Filled after mesh insertion and ItemView rebuild.
     row: int = -1
@@ -176,7 +186,7 @@ def _direction_from_tangents(
 
 def _normalize_theta(theta: float) -> float:
     """Normalize to [0, 2π)."""
-    return float(theta % (2.0 * math.pi))
+    return float(theta % (TWO_PI))
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +209,7 @@ def collect_pair_events(
         th = seg.theta1_arr
         n = len(th)
         if n < 2:
-            continue
+            raise ValueError(f"Segment {s_idx} has less than 2 items. E_ref={zm.E_ref}, mu1={zm.mu1}")
         view = zm._item_views[s_idx]
         n_items = len(view.rep_cols)
         for ia in range(n_items):
@@ -209,47 +219,60 @@ def collect_pair_events(
                 cols_b = _item_columns(zm, s_idx, ib)
                 rep_b = int(view.rep_cols[ib])
                 d = view.item_logabs[:, ia] - view.item_logabs[:, ib]
-                if not np.all(np.isfinite(d)):
-                    continue  # 0/∞ padding pair: no usable crossing
-
+                # A non-finite d row (0/∞ padding root → log|β₂| = ±∞)
+                # poisons only the mesh intervals it touches, not the whole
+                # pair: a transient singular root at one θ (a
+                # degree-deficient solve later re-matched to a real root)
+                # must not silently discard this pair's genuine crossings
+                # elsewhere on the segment.  Persistent padding columns
+                # still yield zero valid intervals, so the historical
+                # whole-pair skip is the degenerate case of this scan.
+                # touch needs no finite mask: d[i] == 0.0 already implies
+                # both moduli are finite there (±∞ − ±∞ is nan, never 0).
+                finite = np.isfinite(d)
                 touch = np.flatnonzero(d[:-1] == 0.0)
-                cross = np.flatnonzero(d[:-1] * d[1:] < 0.0)
+                cross = np.flatnonzero(
+                    finite[:-1] & finite[1:] & (d[:-1] * d[1:] < 0.0))
 
                 for i in touch:
-                    i = int(i)
-                    # MR boundary rows are handled by the exact MR records.
-                    if i == 0 and seg.left_mr >= 0:
-                        continue
-                    if i == n - 1 and seg.right_mr >= 0:
-                        continue
+                    # A touch landing on a segment's MR boundary row is an
+                    # MR event, not a skipped one: the MR channel used to
+                    # own it, but that channel only materializes clusters
+                    # straddling M-1/M, so any other modulus coincidence at
+                    # the boundary row was silently dropped (the seam
+                    # missed-detection at E=1.212).  It flows through the
+                    # same EventGroup machinery; only its charge becomes
+                    # None (is_mr=True).
+                    is_mr = ((i == 0 and seg.left_mr >= 0)
+                             or (i == n - 1 and seg.right_mr >= 0))
                     events.append(PairEvent(
-                        seg_idx=s_idx, i=i, ia=ia, ib=ib,
+                        seg_idx=s_idx, i=int(i), ia=ia, ib=ib,
                         cols_a=cols_a, cols_b=cols_b,
                         rep_a=rep_a, rep_b=rep_b,
                         kind='touch',
                         pair_kind=_touch_pair_kind(
-                            view, seg, i, ia, ib, zm.M),
+                            view, seg, int(i), ia, ib, zm.M),
                         theta_star=float(th[i]),
                         direction=_direction_from_tangents(
-                            seg, i, rep_a, rep_b, min_direction_deriv),
+                            seg, int(i), rep_a, rep_b, min_direction_deriv),
+                        is_mr=is_mr,
                         converged=True,
                     ))
 
                 for i in cross:
-                    i = int(i)
                     theta_star, direction, converged = _refine_pair_crossing(
-                        zm, s_idx, i, rep_a, rep_b,
+                        zm, s_idx, int(i), rep_a, rep_b,
                         float(th[i]), float(th[i + 1]),
                         crossing_tol=crossing_tol,
                         min_direction_deriv=min_direction_deriv,
                     )
                     events.append(PairEvent(
-                        seg_idx=s_idx, i=i, ia=ia, ib=ib,
+                        seg_idx=s_idx, i=int(i), ia=ia, ib=ib,
                         cols_a=cols_a, cols_b=cols_b,
                         rep_a=rep_a, rep_b=rep_b,
                         kind='cross',
                         pair_kind=_pair_kind_from_row(
-                            view, i, ia, ib, zm.M),
+                            view, int(i), ia, ib, zm.M),
                         theta_star=theta_star,
                         direction=direction,
                         converged=converged,
@@ -387,9 +410,25 @@ def group_events(
         if len(seg_groups) >= 2:
             first, last = seg_groups[0], seg_groups[-1]
             if _circ_gap(first.theta, last.theta) < merge_tol:
+                # Events detected on the 2π side carry segment track-frame
+                # column labels, which differ from the θ=0 frame by
+                # boundary_perm (the closing row stores left_boundary_roots
+                # permuted into the track frame).  The merged group is
+                # anchored at θ=0, where finalize reads every member's
+                # labels as frame-0 — so relabel ONLY events genuinely
+                # detected on the 2π side (last.theta > π); events detected
+                # near 0⁺ are already frame-0 and must pass through
+                # untouched.
+                if last.theta > math.pi:
+                    seam_events = tuple(
+                        _relabel_event_to_theta0_frame(zm, s_idx, e)
+                        for e in last.events
+                    )
+                else:
+                    seam_events = last.events
                 merged = EventGroup(
                     seg_idx=s_idx, theta=0.0,
-                    events=last.events + first.events,
+                    events=seam_events + first.events,
                 )
                 _fill_group_components(merged)
                 seg_groups = [merged] + seg_groups[1:-1]
@@ -398,14 +437,47 @@ def group_events(
     return groups
 
 
+def _relabel_event_to_theta0_frame(
+    zm: ZeroManager, s_idx: int, ev: PairEvent,
+) -> PairEvent:
+    """Translate one 2π-side event's identity labels to the θ=0 frame.
+
+    The closing row of a full-circle segment stores ``left_boundary_roots``
+    permuted into the track frame (run(): ``left_boundary_roots[perm]``), so
+    track column j at the 2π end carries the θ=0 root ``inv_perm[j]`` — the
+    same physical root that track ``inv_perm[j]`` owns at row 0.  Without
+    this translation a seam-merged event names its pair by 2π-side labels
+    while the group lives in the θ=0 frame, so finalize's side/charge reads
+    hit the wrong tracks and the boundary coverage test silently drops the
+    event.  ``theta_star`` is kept as detected (provenance); only the
+    identity labels move.
+    """
+    inv_perm = np.empty(zm.K, dtype=int)
+    inv_perm[zm.boundary_perm] = np.arange(zm.K)
+
+    view = zm._item_views[s_idx]
+    rep_a = int(inv_perm[ev.rep_a])
+    rep_b = int(inv_perm[ev.rep_b])
+    ia = int(np.flatnonzero(view.rep_cols == rep_a)[0])
+    ib = int(np.flatnonzero(view.rep_cols == rep_b)[0])
+    return replace(
+        ev,
+        ia=ia, ib=ib,
+        cols_a=tuple(int(inv_perm[c]) for c in ev.cols_a),
+        cols_b=tuple(int(inv_perm[c]) for c in ev.cols_b),
+        rep_a=rep_a, rep_b=rep_b,
+    )
+
+
 def _circ_gap(a: float, b: float) -> float:
-    twopi = 2.0 * math.pi
+    twopi = TWO_PI
     d = abs((a - b) % twopi)
     return min(d, twopi - d)
 
 
 def _fill_group_components(g: EventGroup) -> None:
     """Item/column connectivity induced by member events (no modulus check)."""
+    g.is_mr = any(e.is_mr for e in g.events)
     item_edges = [(e.ia, e.ib) for e in g.events]
     item_components = _connected_components(item_edges)
     g.item_components = tuple(tuple(c) for c in item_components)
@@ -480,9 +552,14 @@ def insert_event_groups(
             g.seg_idx = last
             g.row = len(zm.segments[last].theta1_arr) - 1
         # Row indices shift while later (smaller-θ) insertions happen, so
-        # resolve every group's row against the FINAL mesh.
+        # resolve every group's row against the FINAL mesh.  Identity (not
+        # `in`) membership: EventGroup is a dataclass whose value-equality
+        # could match a DIFFERENT group that happens to carry equal fields
+        # (symmetric models); the seam groups were already assigned rows
+        # above and must be skipped, not re-resolved.
+        seam_ids = {id(g) for g in seam_groups}
         for g in gs:
-            if g in seam_groups:
+            if id(g) in seam_ids:
                 continue
             g.row = _find_mesh_row(zm, g.seg_idx, g.theta)
 

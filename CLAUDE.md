@@ -7,34 +7,57 @@ Non-Hermitian skin effect computation for 2D tight-binding models. Two complemen
 ```
 brute-force-non-hermitian/
 ├── gbz_types.py             # Unified data types shared by both modules:
-│                            #   PointSubset (0D), LineSubset (1D, lazy beta2_arr),
-│                            #   GBZResult, ConnectedSubset = Union[Point, Line]
+│                            #   CharPoly (the single polynomial entry point),
+│                            #   PointSubset (0D), LineSubset (1D, eager beta2_arr),
+│                            #   GBZResult, ConnectedSubset = Union[Point, Line],
+│                            #   TWO_PI (the single project-wide 2π constant)
 │                            # + shared utils: sort_by_root_abs, chordal_cost_matrix,
 │                            #   hungarian_match_indices, find_cyclic_true_intervals,
-│                            #   get_minor_degrees, generate_probe_steps, to_sphere_r3
+│                            #   get_minor_degrees, generate_probe_steps, to_sphere_r3,
+│                            #   circ_dist, check_points_clustered_on_torus,
+│                            #   probe_zero_plateau, JoinableLinePiece,
+│                            #   is_mr_cluster_endpoint (cross-module MR join test)
 ├── brute_force_SGBZ/        # SGBZ / average major-axis winding formulation
 │   ├── __init__.py             # Whitelist exports (re-exports gbz_types classes)
-│   ├── continuum.py            # Continuum detection (detect_continuum_simple/full)
-│   ├── crossings.py            # Crossing detection + charge classification
-│   ├── winding.py              # Average winding computation (compute_average_winding)
+│   ├── mu2mid.py               # ItemView + Mu2Mid piecewise-Hermite path + Mu2MidZM
+│   │                           #   (ZeroManager subclass; analyze() = cluster + pairwise
+│   │                           #   + insert + finalize + μ₂_mid build; has_continuum)
+│   ├── pairwise.py             # THE crossing channel: collect_pair_events (touch/cross,
+│   │                           #   brentq refinement, is_mr marking), EventGroup merge,
+│   │                           #   insert_event_groups, finalize_event_groups (charges)
+│   ├── continuum_lines.py      # Continuum LineSubset extraction (detect_continuum_simple,
+│   │                           #   extract_continuum_linesubsets, MR/seam joining)
+│   ├── winding.py              # W(E_ref, mu1) loop-winding + 0D PointSubset materialization
+│   │                           #   from EventGroups (detect_crossings_simple — pure
+│   │                           #   materialization, no MR channel / echo drop)
 │   ├── plateau.py              # Zero-plateau detection (clustering + probe)
 │   └── sgbz_solver.py          # solve_SGBZ_for_E, collect_GBZ_subsets (returns GBZResult)
 ├── brute_force_amoeba/        # Amoeba / Ronkin function formulation
 │   ├── __init__.py             # Whitelist exports (re-exports gbz_types classes)
-│   ├── tracks.py               # Root tracks via Hungarian matching (get_hungarian_sorted_roots)
-│   ├── ronkin_winding.py       # Ronkin winding (get_a1/a2_average_winding, crossing detection)
+│   ├── ronkin_winding.py       # Ronkin winding (avg windings from zeros, non-zero area)
 │   ├── bisect.py               # Bisection + Newton refinement (bisect_amoeba_ronkin_min)
+│   ├── zm_extract.py           # extract_amoeba_subsets from track crossings of ln|β₂|=μ₂
 │   └── amoeba.py               # collect_GBZ_subsets (returns GBZResult), plateau check, orchestration
 ├── continuation/               # Pseudo-arclength continuation for β₂-root tracking along θ₁
 │   ├── __init__.py             # Public API re-exports
+│   ├── interpolation.py        # hermite_interp_poly (cubic Hermite kernel shared by
+│   │                           #   predict_roots_hermite and Mu2Mid pieces)
 │   ├── arclength.py            # compute_tangent, predict_roots, estimate_error, arclength_step
 │   ├── multiple_roots.py       # MR detection: point/interval triggers, detect_cluster,
 │   │                           #   solve_multiple_roots_in_interval, MultipleRootInfo
 │   └── zero_manager.py         # ZeroManager orchestrator, integrate_segment, SegmentData
 ├── tests/                      # pytest: test_gbz_types.py, test_sgbz.py, test_amoeba.py,
-│                               #   test_continuation.py, test_zero_manager.py
-├── conftest.py
+│                               #   test_continuation.py, test_zero_manager.py,
+│                               #   test_interpolation.py, test_counterexamples.py
+│                               #   (slow: --run-slow), test_regressions.py, test_debug_tool.py
+├── conftest.py                 # sys.path bootstrap + shared build_HN2D_polynomial + slow marker
 ├── demos/                      # Runnable demo scripts (demo_unified.py shows the GBZResult API)
+├── debug_tool/                 # Fixed-(E_ref, mu1) debugging (see debug_tool/README.md):
+│                               #   gbz_debug.py — collect_debug_subsets (GBZDebugReport: subsets +
+│                               #   SGBZ charges of BOTH methods at a frozen mu1), compute_loop_windings
+│                               #   (loop winding numbers + charge-consistency gap checks),
+│                               #   plot_winding_debug (theta1-theta2 torus figure)
+│                               #   demo_debug_tool.py — CLI (Haldane E=1.212 debug point, HN2D)
 ├── diagnostics/                # Debug scripts and analysis reports
 ├── data/                       # Pickled computation results (demos / replication)
 ├── log/                        # Change logs
@@ -44,10 +67,11 @@ brute-force-non-hermitian/
 ├── doc/                        # Documentation
 │   ├── SGBZ.md                 # SGBZ theory, architecture, API
 │   ├── amoeba.md               # Amoeba theory, algorithm, API
+│   ├── continuation.md         # Continuation module (arclength/MR/ZeroManager/interpolation)
 │   ├── 拓扑匹配算法说明.md       # Topological matching algorithm
 │   ├── sn-main.tex             # Simplified paper for SGBZ, main text
 │   └── sn-supp.tex             # Simplified paper for SGBZ, supplementary information. Amoeba GBZ is discussed in section{Comparison with reported frameworks}
-├── TODO/                       # Optimization checklists
+├── TODO/                       # Optimization checklists (review-2026-08-18-remaining.md)
 └── README.md
 ```
 

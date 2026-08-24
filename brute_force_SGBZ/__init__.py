@@ -8,8 +8,10 @@ SGBZ (strip GBZ) computation via continuation.ZeroManager + μ₂_mid.
 The SGBZ subset for a reference energy ``E_ref`` is found by bisecting
 ``mu1 = log|beta1|`` for the zero of the average major-axis winding number
 ``W(E_ref, mu1)``.  Crossing detection is pairwise on ItemView
-representatives (``Mu2MidZM.analyze`` → EventGroups); the loop-winding path
-``μ₂_mid(θ₁)`` is the independent piecewise-smooth ``Mu2Mid`` object.
+representatives (``Mu2MidZM.analyze`` → EventGroups, see ``pairwise.py``);
+``winding.detect_crossings_simple`` materializes those groups into
+PointSubsets and the loop-winding path ``μ₂_mid(θ₁)`` is the independent
+piecewise-smooth ``Mu2Mid`` object.
 '''
 
 from gbz_types import (
@@ -19,15 +21,15 @@ from gbz_types import (
 
 from .mu2mid import (
     Mu2MidZM, Mu2Mid, Mu2MidPiece,
-    ItemView, Mu2MidBreakpoint,
+    ItemView,
     CONTINUUM_TOL, CONTINUUM_FRAC,
 )
 from .continuum_lines import (
     detect_continuum_simple,
     extract_continuum_linesubsets,
 )
-from .crossings import detect_crossings_simple
 from .winding import (
+    detect_crossings_simple,
     detect_crossings_and_winding,
     compute_average_winding,
     WindingFun,
@@ -47,7 +49,6 @@ __all__ = [
     "Mu2Mid",
     "Mu2MidPiece",
     "ItemView",
-    "Mu2MidBreakpoint",
     "CONTINUUM_TOL",
     "CONTINUUM_FRAC",
 

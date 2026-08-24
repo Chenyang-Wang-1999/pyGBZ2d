@@ -64,7 +64,7 @@ def main():
     # ---- SGBZ ----
     print("\n--- collect_GBZ_subsets ([10]-SGBZ) ---")
     poly = CharPoly(coeffs, degs)
-    gbz_sgbz = bfs.collect_GBZ_subsets(coeffs, degs, E_test, 0.0, N_points=201)
+    gbz_sgbz = bfs.collect_GBZ_subsets(coeffs, degs, E_test, 0.0)
     print(f"  is_gbz: {gbz_sgbz.is_gbz}")
     print(f"  index: {gbz_sgbz.index} (n_0D={gbz_sgbz.index[0]}, n_1D={gbz_sgbz.index[1]})")
     print(f"  n_subsets: {len(gbz_sgbz.subsets)}")
@@ -99,7 +99,7 @@ def main():
 
     # ---- Outside spectrum ----
     print("\n--- Outside spectrum (E=5.0) ---")
-    gbz_out = bfs.collect_GBZ_subsets(coeffs, degs, 5.0 + 0j, 0.0, N_points=101)
+    gbz_out = bfs.collect_GBZ_subsets(coeffs, degs, 5.0 + 0j, 0.0)
     print(f"  is_gbz: {gbz_out.is_gbz}, index: {gbz_out.index}")
 
 

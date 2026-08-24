@@ -19,7 +19,6 @@ References
 from __future__ import annotations
 
 import numpy as np
-from math import pi
 from cmath import exp
 from dataclasses import dataclass
 from typing import Optional, NamedTuple
@@ -154,7 +153,10 @@ def predict_roots(
 ) -> np.ndarray:
     """First-order tangent prediction: β₂ⱼ → β₂ⱼ · exp(Vⱼ · Δθ₁).
 
-    Roots at 0 or ∞ (where Vⱼ = 0) stay unchanged.
+    Singular roots (the 0/∞ padding, whose Vⱼ = nan), roots with a
+    divergent tangent (Vⱼ = inf, at a branch point) and predictions whose
+    ``exp`` overflows all stay unchanged — a tangent extrapolation past
+    |V·Δθ| ≳ 1 carries no information anyway.
     """
     predicted = np.empty_like(roots)
 
@@ -166,7 +168,16 @@ def predict_roots(
         if not np.isfinite(V[j]):
             predicted[j] = beta2
             continue
-        predicted[j] = beta2 * np.exp(V[j] * dtheta1)
+        cand = beta2 * np.exp(V[j] * dtheta1)
+        # A divergent-but-finite tangent times a large step can overflow
+        # exp() into inf/nan.  The tangent extrapolation is only valid for
+        # |V·Δθ| ≲ 1 anyway; past that the prediction carries no
+        # information, so hold the root fixed (singular-root semantics)
+        # instead of feeding nan into the Hungarian match.
+        if not np.isfinite(cand.real) or not np.isfinite(cand.imag):
+            predicted[j] = beta2
+            continue
+        predicted[j] = cand
 
     return predicted
 
@@ -259,7 +270,16 @@ def estimate_error(
         if dist > max_chordal:
             max_chordal = dist
 
-    scale = atol + rtol * np.median(np.abs(roots_actual))
+    # Scale from the FINITE roots only: padded 0/∞ roots (inf modulus)
+    # would inflate the median to inf and drive error_norm to 0 —
+    # unconditionally accepting steps whose prediction is completely
+    # wrong.  Chordal distance itself is already dimensionless (≤2), so
+    # the finite-root median only calibrates the relative tolerance.
+    finite_abs = np.abs(roots_actual[np.isfinite(roots_actual)])
+    if finite_abs.size:
+        scale = atol + rtol * float(np.median(finite_abs))
+    else:
+        scale = atol
     return max_chordal / scale
 
 

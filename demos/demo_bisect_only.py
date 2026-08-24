@@ -14,7 +14,7 @@ import networkx as nx
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gbz_types import LineSubset, to_sphere_r3
+from gbz_types import LineSubset, to_sphere_r3, TWO_PI
 from demo_nexus import build_nexus, nexus_info
 from demo_fku import fku_triangulate
 from demo_build_mesh import (
@@ -124,7 +124,7 @@ def main():
         if r.success and r.index == (0, 2):
             lines = [s for s in r.subsets if isinstance(s, LineSubset)]
             lines.sort(key=lambda L: float(np.median(
-                np.angle(np.asarray(L.beta2_arr, dtype=complex)) % (2 * np.pi))))
+                np.angle(np.asarray(L.beta2_arr, dtype=complex)) % (TWO_PI))))
             G = build_nexus(lines, tol=1e-12)
             nexuses[E] = (G, nexus_info(G))
 

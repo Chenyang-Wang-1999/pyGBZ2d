@@ -133,7 +133,7 @@ def main():
     for name, model_fn in [('BASE', model_base), ('XY', model_xy)]:
         coeffs, degs = model_fn().get_characteristic_polynomial_data()
         poly = CharPoly(coeffs, degs)
-        res = bisect_amoeba_ronkin_min(poly, E, N_points=301)
+        res = bisect_amoeba_ronkin_min(poly, E)
         zm = res['_zm']
         mu1, mu2 = res['mu1'], res['mu2']
         w2, zs, hc, _ = amoeba_windings(zm, poly, E, mu1, mu2, refine=False)

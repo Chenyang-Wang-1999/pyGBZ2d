@@ -20,7 +20,7 @@ import numpy as np
 import networkx as nx
 from scipy.spatial import Delaunay
 
-from gbz_types import LineSubset, to_sphere_r3
+from gbz_types import LineSubset, to_sphere_r3, TWO_PI
 from demo_nexus import build_nexus, nexus_info
 from demo_build_mesh import (
     _solve_nexus_at_E, _cycle_vertex_order, _torus_point,
@@ -256,7 +256,7 @@ def main():
         if r.success and r.index == (0, 2) and abs(E) < 0.005:
             lines = [s for s in r.subsets if isinstance(s, LineSubset)]
             lines.sort(key=lambda L: float(np.median(
-                np.angle(np.asarray(L.beta2_arr, dtype=complex)) % (2 * np.pi))))
+                np.angle(np.asarray(L.beta2_arr, dtype=complex)) % (TWO_PI))))
             G_zero = build_nexus(lines, tol=1e-12)
             break
 
