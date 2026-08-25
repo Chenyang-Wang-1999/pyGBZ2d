@@ -13,6 +13,10 @@ it compares representative item ``ln|β₂|`` curves pairwise:
     interval and the θ=0/2π seam is counted once);
   * ``d[:-1] * d[1:] < 0``      -- transversal sign change.
 
+Before the scan, :func:`refine_mesh_for_multiple_crossings` refines mesh
+intervals whose cubic-Hermite interpolants predict two or more crossings, so
+an even number of crossings inside one interval is not silently lost.
+
 Only sign-change events are refined: a linear root prediction seeds
 ``scipy.optimize.brentq`` on the true ``ln|β₂_a| − ln|β₂_b|`` function.
 There is NO θ deduplication -- every sign-change interval produces exactly
@@ -50,6 +54,7 @@ from scipy.optimize import brentq
 
 from gbz_types import TWO_PI
 from continuation import ZeroManager
+from continuation.interpolation import hermite_interp_poly
 
 if TYPE_CHECKING:
     from .mu2mid import Mu2MidZM
@@ -64,6 +69,17 @@ _BRENTQ_MAXITER: int = 100
 # Real-root filter for nothing here (brentq operates on the true function);
 # this tolerance only guards exact-endpoint float comparison.
 _THETA_EQ_TOL: float = 1e-15
+
+# Mesh refinement for multi-crossing intervals (runs after ZeroManager.run,
+# before collect_pair_events).  ``_REFINE_DEFAULT_TIE_TOL`` must match
+# Mu2MidZM's CONTINUUM_TOL; ``analyze()`` passes the live value explicitly.
+_REFINE_DEFAULT_TIE_TOL: float = 1e-6
+_REFINE_DEFAULT_MAX_ROUNDS: int = 3
+_REFINE_DEFAULT_SAFETY_FACTOR: float = 4.0
+_REFINE_DEFAULT_MAX_SUBINTERVALS: int = 64
+_REFINE_DEFAULT_MAX_TOTAL_INSERTS: int = 2000
+# Real-root / duplicate-θ filter in units of max(1, interval length).
+_REFINE_REL_TOL: float = 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +139,363 @@ class EventGroup:
 
 
 # ---------------------------------------------------------------------------
+# Pre-crossing mesh refinement (even / multiple crossings per interval)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _RefinementPlan:
+    """One original mesh interval that needs a finer sub-mesh.
+
+    *roots* are the merged interior θ positions (local coordinates in
+    ``(0, theta_b - theta_a)``) of the crossings predicted by the cubic
+    Hermite interpolant of ``ln|β_a| - ln|β_b|``.
+    """
+    seg_idx: int
+    i: int
+    theta_a: float
+    theta_b: float
+    roots: tuple[float, ...]
+
+
+def _real_roots_in_open_interval(poly: np.ndarray, h: float) -> list[float]:
+    """Real roots of *poly* strictly inside ``(0, h)``, sorted and deduped."""
+    if poly.size < 2:
+        return []
+    tol = _REFINE_REL_TOL * max(1.0, float(h))
+    roots: list[float] = []
+    for r in np.roots(poly):
+        if not np.isfinite(r.real) or not np.isfinite(r.imag):
+            continue
+        # Numerical noise turns near-real roots into tiny-imag pairs.
+        if abs(float(r.imag)) > tol * max(1.0, abs(float(r.real))):
+            continue
+        x = float(r.real)
+        if 0.0 < x < h:
+            roots.append(x)
+    roots.sort()
+    out: list[float] = []
+    for x in roots:
+        if out and x - out[-1] <= tol:
+            continue
+        out.append(x)
+    return out
+
+
+def _hermite_dips_near_zero(
+    poly: np.ndarray,
+    d0: float,
+    *,
+    tie_tol: float,
+    h: float,
+) -> bool:
+    """Same-sign endpoint cubic that dips/touches near zero inside ``(0,h)``.
+
+    With ``d0,d1 > 0`` two interior crossings require an interior minimum
+    below 0 (or within *tie_tol* of it for a near-tangency); symmetrically
+    for ``d0,d1 < 0``.
+    """
+    deriv = np.polyder(poly)
+    if deriv.size < 2:
+        return False
+    for x in _real_roots_in_open_interval(deriv, h):
+        v = float(np.polyval(poly, x))
+        if d0 > 0.0 and v < tie_tol:
+            return True
+        if d0 < 0.0 and v > -tie_tol:
+            return True
+    return False
+
+
+def _safe_deriv_diff(a: float, b: float) -> float:
+    """``a - b`` with inf/nan sentinels: non-finite → ``inf``.
+
+    The Hermite builder already falls back to linear for any non-finite
+    endpoint derivative, so collapsing inf−inf / inf−finite to ``inf`` keeps
+    that behaviour without letting ``float`` subtraction emit
+    ``RuntimeWarning: invalid value encountered``.
+    """
+    if not (math.isfinite(a) and math.isfinite(b)):
+        return math.inf
+    return a - b
+
+
+def _merge_close_roots(
+    roots: list[float],
+    crossing_tol: float,
+) -> tuple[float, ...]:
+    """Merge roots closer than *crossing_tol* into cluster midpoints.
+
+    The downstream EventGroup machinery merges events closer than
+    ``crossing_tol`` anyway, so such roots must not force a fine sub-mesh.
+    """
+    clusters: list[list[float]] = []
+    for x in sorted(roots):
+        if clusters and x - clusters[-1][-1] < crossing_tol:
+            clusters[-1].append(x)
+        else:
+            clusters.append([x])
+    return tuple(float(np.mean(c)) for c in clusters)
+
+
+def _find_refinement_plans(
+    zm,
+    *,
+    tie_tol: float,
+    crossing_tol: float,
+) -> list[_RefinementPlan]:
+    """Cheap logabs-distance screen + cubic-Hermite root prediction.
+
+    For every item pair on every mesh interval, build the cubic Hermite
+    interpolant of ``d = ln|β_a| - ln|β_b|`` from endpoint values and
+    derivatives.  An interval is suspicious when the pair already has a
+    sign change / endpoint touch, when a same-sign cubic dips within
+    *tie_tol* of zero, or when the interval touches an MR boundary row
+    (the Hermite anchor is unreliable there, so be conservative).  The
+    predicted roots of all suspicious pairs are merged per interval; a plan
+    is emitted only when at least two well-separated roots survive.
+    """
+    plans: list[_RefinementPlan] = []
+    for s_idx, seg in enumerate(zm.segments):
+        th = seg.theta1_arr
+        n = len(th)
+        if n < 2:
+            continue
+        view = zm._item_views[s_idx]
+        n_items = len(view.rep_cols)
+        for i in range(n - 1):
+            h = float(th[i + 1] - th[i])
+            if not np.isfinite(h) or h <= 0.0:
+                continue
+            mr_adjacent = (
+                (i == 0 and seg.left_mr >= 0)
+                or (i == n - 2 and seg.right_mr >= 0)
+            )
+            pair_roots: list[float] = []
+            for ia in range(n_items):
+                ya0 = float(view.item_logabs[i, ia])
+                ya1 = float(view.item_logabs[i + 1, ia])
+                for ib in range(ia + 1, n_items):
+                    yb0 = float(view.item_logabs[i, ib])
+                    yb1 = float(view.item_logabs[i + 1, ib])
+                    d0 = ya0 - yb0
+                    d1 = ya1 - yb1
+                    # Non-finite d (0/∞ padding roots) is the β₂=0 / β₂=∞
+                    # gap, handled separately: do not let it poison this pair
+                    # or the interval.
+                    if not (np.isfinite(d0) and np.isfinite(d1)):
+                        continue
+                    m0 = _safe_deriv_diff(
+                        float(view.item_tang_re[i, ia]),
+                        float(view.item_tang_re[i, ib]))
+                    m1 = _safe_deriv_diff(
+                        float(view.item_tang_re[i + 1, ia]),
+                        float(view.item_tang_re[i + 1, ib]))
+
+                    suspicious = (
+                        d0 == 0.0 or d1 == 0.0 or d0 * d1 < 0.0
+                        or mr_adjacent
+                    )
+                    if (not suspicious and d0 * d1 > 0.0):
+                        poly = hermite_interp_poly(h, d0, m0, d1, m1)
+                        suspicious = _hermite_dips_near_zero(
+                            poly, d0, tie_tol=tie_tol, h=h)
+                    if not suspicious:
+                        continue
+
+                    poly = hermite_interp_poly(h, d0, m0, d1, m1)
+                    pair_roots.extend(_real_roots_in_open_interval(poly, h))
+
+            roots = _merge_close_roots(pair_roots, crossing_tol)
+            if len(roots) >= 2:
+                plans.append(_RefinementPlan(
+                    seg_idx=s_idx, i=i,
+                    theta_a=float(th[i]), theta_b=float(th[i + 1]),
+                    roots=roots,
+                ))
+    return plans
+
+
+def _refinement_grid_points(
+    plan: _RefinementPlan,
+    *,
+    safety_factor: float,
+    max_subintervals: int,
+) -> list[float]:
+    """Sub-mesh θ positions isolating the predicted roots.
+
+    The finest gap ``Δ`` between consecutive predicted positions (endpoints
+    included) receives ``ρ = safety_factor`` uniform sub-intervals; in
+    addition one separation midpoint is put into every gap.  If the
+    predicted roots are so close that the uniform grid would need more than
+    *max_subintervals*, the predicted roots themselves are inserted as
+    touch anchors.
+    """
+    a, b = plan.theta_a, plan.theta_b
+    h = b - a
+    roots = tuple(sorted(plan.roots))
+    n = len(roots)
+    if n < 2 or not (0.0 < h):
+        return []
+
+    p = (0.0,) + roots + (h,)
+    gaps = [p[k + 1] - p[k] for k in range(len(p) - 1)]
+    delta = min(gaps)
+    if not np.isfinite(delta) or delta <= 0.0:
+        return []
+
+    raw = int(math.ceil(safety_factor * h / delta))
+    lower = n + 2
+    upper = max(lower, max_subintervals)
+    m_sub = int(min(max(raw, lower), upper))
+    hit_cap = raw > upper
+
+    out: list[float] = []
+    # Uniform sub-mesh in (a, b); the endpoints are already mesh rows.
+    out.extend(a + k * h / m_sub for k in range(1, m_sub))
+    # One separation midpoint in every endpoint/root gap — position-free
+    # insurance against a badly aligned uniform grid.
+    out.extend(a + 0.5 * (p[k] + p[k + 1]) for k in range(len(p) - 1))
+    if hit_cap:
+        # Roots too close for the desired ρ: pin the roots themselves.
+        out.extend(a + x for x in roots)
+    return out
+
+
+def _insert_refinement_grids(
+    zm,
+    plans: list[_RefinementPlan],
+    *,
+    safety_factor: float,
+    max_subintervals: int,
+    max_total_inserts: int | None,
+) -> int:
+    """Insert every plan's sub-mesh (descending θ per segment)."""
+    by_seg: dict[int, list[_RefinementPlan]] = {}
+    for p in plans:
+        by_seg.setdefault(p.seg_idx, []).append(p)
+
+    inserted_total = 0
+    for s_idx, seg_plans in sorted(by_seg.items()):
+        seg = zm.segments[s_idx]
+        th = np.asarray(seg.theta1_arr, dtype=float)
+
+        # (theta, local_tol) with a per-interval tolerance — a global segment
+        # tolerance would erase the fine grid of a tiny near-tangent interval.
+        entries: list[tuple[float, float]] = []
+        for plan in seg_plans:
+            tol = _REFINE_REL_TOL * max(1.0, float(plan.theta_b - plan.theta_a))
+            for theta in _refinement_grid_points(
+                plan,
+                safety_factor=safety_factor,
+                max_subintervals=max_subintervals,
+            ):
+                if np.any(np.abs(th - theta) <= tol):
+                    continue
+                entries.append((theta, tol))
+        entries.sort(key=lambda x: x[0])
+        deduped: list[float] = []
+        deduped_tols: list[float] = []
+        for theta, tol in entries:
+            if deduped and theta - deduped[-1] <= max(tol, deduped_tols[-1]):
+                continue
+            deduped.append(theta)
+            deduped_tols.append(tol)
+
+        for theta in sorted(deduped, reverse=True):
+            if (max_total_inserts is not None
+                    and inserted_total >= max_total_inserts):
+                return inserted_total
+            try:
+                _, changed = zm.insert_solution(
+                    theta, seg_idx=s_idx, interp='hermite')
+            except Exception as exc:  # a failed refinement must not kill analysis
+                warnings.warn(
+                    f"multi-crossing refinement insert failed at theta="
+                    f"{theta:.6e} in segment {s_idx}: {exc}"
+                )
+                continue
+            if changed:
+                inserted_total += 1
+    return inserted_total
+
+
+def refine_mesh_for_multiple_crossings(
+    zm,
+    *,
+    tie_tol: float = _REFINE_DEFAULT_TIE_TOL,
+    crossing_tol: float = 1e-10,
+    max_rounds: int = _REFINE_DEFAULT_MAX_ROUNDS,
+    safety_factor: float = _REFINE_DEFAULT_SAFETY_FACTOR,
+    max_subintervals: int = _REFINE_DEFAULT_MAX_SUBINTERVALS,
+    max_total_inserts: int = _REFINE_DEFAULT_MAX_TOTAL_INSERTS,
+) -> int:
+    """Refine mesh intervals holding two or more close crossings.
+
+    Runs between ``ZeroManager.run()`` and :func:`collect_pair_events`: every
+    round rebuilds ItemView on the current mesh, re-predicts multi-root
+    intervals with cubic Hermite, inserts the sub-mesh, and repeats.  Returns
+    the number of inserted rows.  The final EventGroup pass is unchanged —
+    it simply sees one crossing per sub-interval.
+    """
+    if max_rounds <= 0:
+        return 0
+
+    total = 0
+    last_plans: list[_RefinementPlan] = []
+    force_final_insert = False
+
+    for _ in range(max_rounds):
+        # Rebuild the ItemView on the CURRENT (possibly refined) mesh.
+        clusters = zm._detect_continuum_clusters_internal(tie_tol)
+        zm._continuum_clusters = clusters
+        zm._item_views = zm._build_item_views(clusters)
+
+        last_plans = _find_refinement_plans(
+            zm, tie_tol=tie_tol, crossing_tol=crossing_tol)
+        if not last_plans:
+            break
+
+        budget = (None if max_total_inserts is None
+                  else max(0, max_total_inserts - total))
+        inserted = _insert_refinement_grids(
+            zm, last_plans,
+            safety_factor=safety_factor,
+            max_subintervals=max_subintervals,
+            max_total_inserts=budget,
+        )
+        total += inserted
+        if inserted == 0:
+            warnings.warn(
+                "multi-crossing refinement generated no new rows; "
+                "stopping early to avoid an idle loop"
+            )
+            break
+        if budget is not None and total >= max_total_inserts:
+            force_final_insert = True
+            warnings.warn(
+                f"multi-crossing refinement reached the insertion budget "
+                f"({max_total_inserts}); residual plans will get one final "
+                f"unbudgeted insertion pass"
+            )
+            break
+    else:
+        force_final_insert = True
+
+    if force_final_insert and last_plans:
+        warnings.warn(
+            "multi-crossing refinement plans remain after the round limit; "
+            "applying one final root+separator insertion pass"
+        )
+        total += _insert_refinement_grids(
+            zm, last_plans,
+            safety_factor=safety_factor,
+            max_subintervals=max_subintervals,
+            max_total_inserts=None,
+        )
+    return total
+
+
+# ---------------------------------------------------------------------------
 # ItemView helpers (duck-typed on Mu2MidZM)
 # ---------------------------------------------------------------------------
 
@@ -178,7 +551,9 @@ def _direction_from_tangents(
     seg, row: int, rep_a: int, rep_b: int, min_direction_deriv: float,
 ) -> int | None:
     """Pair derivative difference with minimum-derivative protection."""
-    gp = float(seg.tangents[row, rep_a].real - seg.tangents[row, rep_b].real)
+    gp = _safe_deriv_diff(
+        float(seg.tangents[row, rep_a].real),
+        float(seg.tangents[row, rep_b].real))
     if not np.isfinite(gp) or abs(gp) < min_direction_deriv:
         return None
     return 1 if gp > 0 else -1
@@ -532,13 +907,25 @@ def insert_event_groups(
     zm: ZeroManager,
     groups: list[EventGroup],
 ) -> None:
-    """Insert one mesh row per EventGroup (descending θ per segment)."""
+    """Insert event rows + one directly-solved regular row between adjacent events.
+
+    Every EventGroup gets exactly one representative mesh row (descending θ per
+    segment).  In addition every original ``touch`` mesh row is part of the
+    event set: those rows already exist in the mesh, but they must never be
+    read as "regular" by :func:`finalize_event_groups`.
+
+    After all event rows are in place, adjacent event positions are separated
+    by a regular row at their midpoint, obtained by a REAL polynomial solve
+    (``ZeroManager.insert_solution``) — never by interpolation of neighbouring
+    roots.
+    """
     by_seg: dict[int, list[EventGroup]] = {}
     for g in groups:
         by_seg.setdefault(g.seg_idx, []).append(g)
 
     for s_idx, gs in sorted(by_seg.items()):
         seam_groups: list[EventGroup] = []
+        interior_groups: list[EventGroup] = []
         for g in sorted(gs, key=lambda x: x.theta, reverse=True):
             theta_norm = _normalize_theta(g.theta)
             if theta_norm == 0.0 and g.theta > math.pi:
@@ -547,21 +934,113 @@ def insert_event_groups(
                 seam_groups.append(g)
                 continue
             zm.insert_solution(g.theta, seg_idx=s_idx, interp='linear')
+            interior_groups.append(g)
+
+        seam_ids = {id(g) for g in seam_groups}
+        event_thetas = _event_thetas_for_segment(gs, seam_ids)
+        _insert_regular_rows_between_events(zm, s_idx, event_thetas)
+
         for g in seam_groups:
             last = len(zm.segments) - 1
             g.seg_idx = last
             g.row = len(zm.segments[last].theta1_arr) - 1
-        # Row indices shift while later (smaller-θ) insertions happen, so
-        # resolve every group's row against the FINAL mesh.  Identity (not
-        # `in`) membership: EventGroup is a dataclass whose value-equality
-        # could match a DIFFERENT group that happens to carry equal fields
+        # Row indices shift while later insertions happen, so resolve every
+        # interior group's row against the FINAL mesh.  Identity (not `in`)
+        # membership: EventGroup is a dataclass whose value-equality could
+        # match a DIFFERENT group that happens to carry equal fields
         # (symmetric models); the seam groups were already assigned rows
         # above and must be skipped, not re-resolved.
-        seam_ids = {id(g) for g in seam_groups}
-        for g in gs:
-            if id(g) in seam_ids:
-                continue
+        for g in interior_groups:
             g.row = _find_mesh_row(zm, g.seg_idx, g.theta)
+
+    event_rows = _resolve_event_rows(zm, groups)
+    _check_event_row_separation(zm, event_rows)
+
+
+def _event_thetas_for_segment(
+    groups: list[EventGroup],
+    seam_ids: set[int],
+) -> list[float]:
+    """Sorted unique event θ positions of one segment.
+
+    The event set is the EventGroup representative rows PLUS the original
+    ``touch`` event rows (their θ already exists in the mesh).  A deferred
+    seam group is represented by ``TWO_PI`` — its row is assigned to the very
+    end of the final mesh only after the regular-row insertions below.
+    """
+    thetas: set[float] = set()
+    for g in groups:
+        if id(g) in seam_ids:
+            thetas.add(TWO_PI)
+        else:
+            thetas.add(_normalize_theta(g.theta))
+        for e in g.events:
+            if e.kind == 'touch':
+                thetas.add(_normalize_theta(e.theta_star))
+    return sorted(thetas)
+
+
+def _insert_regular_rows_between_events(
+    zm: ZeroManager,
+    s_idx: int,
+    event_thetas: list[float],
+) -> None:
+    """Insert one directly-solved regular row between adjacent event rows.
+
+    ``interp='hermite'`` only selects the track-matching anchor inside
+    ``insert_solution``; the root values themselves are always freshly solved
+    from the characteristic polynomial at the midpoint θ.
+    """
+    if len(event_thetas) < 2:
+        return
+    for a, b in zip(event_thetas, event_thetas[1:]):
+        if not (a < b):
+            continue
+        seg = zm.segments[s_idx]
+        th = seg.theta1_arr
+        if np.any((th > a) & (th < b)):
+            continue  # an existing row already separates these events
+        mid = (a + b) / 2.0
+        if not (a < mid < b):
+            mid = float(np.nextafter(a, b))
+            if not (a < mid < b):
+                raise RuntimeError(
+                    f"cannot place a regular row between adjacent event "
+                    f"positions {a} and {b} in segment {s_idx}"
+                )
+        zm.insert_solution(mid, seg_idx=s_idx, interp='hermite')
+
+
+def _resolve_event_rows(
+    zm: ZeroManager,
+    groups: list[EventGroup],
+) -> set[tuple[int, int]]:
+    """Rows that must never be read as regular: group rows + touch rows."""
+    event_rows: set[tuple[int, int]] = set()
+    for g in groups:
+        if g.row >= 0:
+            event_rows.add((g.seg_idx, g.row))
+        for e in g.events:
+            if e.kind != 'touch':
+                continue
+            row = _find_mesh_row(zm, e.seg_idx, e.theta_star)
+            event_rows.add((e.seg_idx, row))
+    return event_rows
+
+
+def _check_event_row_separation(
+    zm: ZeroManager,
+    event_rows: set[tuple[int, int]],
+) -> None:
+    """Invariant: no two event rows may be adjacent inside one segment."""
+    for s_idx in range(len(zm.segments)):
+        rows = sorted(r for (ss, r) in event_rows if ss == s_idx)
+        for a, b in zip(rows, rows[1:]):
+            if b == a + 1:
+                raise RuntimeError(
+                    f"adjacent event rows {a} and {b} in segment {s_idx}: "
+                    f"the regular-row separator is missing"
+                )
 
 
 def _find_mesh_row(zm: ZeroManager, seg_idx: int, theta: float) -> int:
@@ -585,9 +1064,10 @@ def finalize_event_groups(zm: Mu2MidZM, groups: list[EventGroup]) -> None:
     never used for sorting.  The θ=0/2π seam uses the documented convention
     ``roots_right[boundary_perm] == roots_left``.
     """
-    event_rows: set[tuple[int, int]] = {
-        (g.seg_idx, g.row) for g in groups if g.row >= 0
-    }
+    # Event rows = group representative rows + the original touch rows.  A
+    # touch row is a real d==0 mesh point and must be skipped even when its
+    # group was later merged/moved to a different representative θ.
+    event_rows: set[tuple[int, int]] = _resolve_event_rows(zm, groups)
     M = zm.M
     inv_perm = np.empty(zm.K, dtype=int)
     inv_perm[zm.boundary_perm] = np.arange(zm.K)

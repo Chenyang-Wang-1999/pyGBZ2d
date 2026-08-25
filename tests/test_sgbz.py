@@ -399,6 +399,82 @@ class TestPairwiseAnalysis:
         assert groups[0].theta == pytest.approx(0.1)
         assert groups[0].column_components == ((0, 1, 2),)
 
+    def test_touch_member_rows_stay_in_event_set_after_grouping(self):
+        """A merged group's representative row AND its original touch rows
+        must all be event rows — a d==0 mesh point is never regular."""
+        class FakeSeg:
+            theta1_arr = np.array([0.0, 0.1, 0.2])
+
+        class FakeZM:
+            segments = [FakeSeg]
+
+        ev_touch = sgbz_pairwise.PairEvent(
+            seg_idx=0, i=1, ia=0, ib=1, cols_a=(0,), cols_b=(1,),
+            rep_a=0, rep_b=1, kind='touch', pair_kind='M-1_M',
+            theta_star=0.1, direction=None)
+        g = sgbz_pairwise.EventGroup(
+            seg_idx=0, theta=0.15, events=(ev_touch,), row=2)
+
+        rows = sgbz_pairwise._resolve_event_rows(FakeZM(), [g])
+        assert rows == {(0, 2), (0, 1)}  # group row + original touch row
+
+    def test_regular_row_is_inserted_between_adjacent_events(self):
+        """Two event positions with no mesh row between them get a directly
+        solved regular row at their midpoint, hermite matching anchor."""
+        class FakeSeg:
+            def __init__(self, th):
+                self.theta1_arr = np.asarray(th, dtype=float)
+
+        class FakeZM:
+            def __init__(self, th):
+                self.segments = [FakeSeg(th)]
+                self.calls = []
+
+            def insert_solution(self, theta, seg_idx=0, interp=None):
+                self.calls.append((float(theta), interp))
+                arr = self.segments[seg_idx].theta1_arr
+                self.segments[seg_idx].theta1_arr = np.insert(
+                    arr, int(np.searchsorted(arr, theta)), theta)
+
+        zm = FakeZM([0.0, 0.1])
+        sgbz_pairwise._insert_regular_rows_between_events(zm, 0, [0.0, 0.1])
+        assert zm.calls == [(0.05, 'hermite')]
+        assert np.allclose(zm.segments[0].theta1_arr, [0.0, 0.05, 0.1])
+
+        zm = FakeZM([0.0, 0.05, 0.1])
+        sgbz_pairwise._insert_regular_rows_between_events(zm, 0, [0.0, 0.1])
+        assert zm.calls == []  # an existing regular row already separates them
+
+    def test_event_row_separation_invariant_raises(self):
+        class FakeSeg:
+            theta1_arr = np.array([0.0, 0.1, 0.2])
+
+        class FakeZM:
+            segments = [FakeSeg]
+
+        with pytest.raises(RuntimeError, match="adjacent event rows"):
+            sgbz_pairwise._check_event_row_separation(
+                FakeZM(), {(0, 0), (0, 1)})
+        # one regular row in between is fine
+        sgbz_pairwise._check_event_row_separation(FakeZM(), {(0, 0), (0, 2)})
+
+    def test_analyze_has_a_regular_row_next_to_every_event(self, poly_A):
+        """Integration: after analyze(), every event row's adjacent mesh
+        rows (inside the segment) must not be event rows."""
+        poly = CharPoly(*poly_A)
+        zm = bfs.Mu2MidZM(poly, 1.0 + 0j, 0.1)
+        zm.run()
+        zm.analyze()
+
+        event_rows = sgbz_pairwise._resolve_event_rows(zm, zm._event_groups)
+        for s_idx, seg in enumerate(zm.segments):
+            n = len(seg.theta1_arr)
+            for row in sorted(r for (ss, r) in event_rows if ss == s_idx):
+                if row > 0:
+                    assert (s_idx, row - 1) not in event_rows
+                if row + 1 < n:
+                    assert (s_idx, row + 1) not in event_rows
+
     def test_mr_boundary_touch_is_collected_not_skipped(self):
         """A modulus coincidence on an MR boundary row is an event (2026-08-18).
 
@@ -638,6 +714,174 @@ class TestPairwiseAnalysis:
         vals = np.array([path.value(t) for t in np.linspace(0, TWO_PI, 401)])
         assert vals.min() >= -14.0
         assert vals.max() <= 14.0
+
+    # ---- 2026-08-25: pre-crossing mesh refinement ----
+
+    @staticmethod
+    def _two_root_interval_zm():
+        """Synthetic ItemView whose pair d(θ) has two roots inside [0,1].
+
+        d(x) = 4 (x − 0.25)(x − 0.55) is positive at both endpoints with
+        negative derivative at 0 and positive at 1 — the shape the old
+        sign-change scan is blind to.
+        """
+        from types import SimpleNamespace
+        from brute_force_SGBZ.mu2mid import ItemView
+
+        r1, r2 = 0.25, 0.55
+        d0 = 4.0 * r1 * r2
+        d1 = 4.0 * (1.0 - r1) * (1.0 - r2)
+        m0 = -4.0 * (r1 + r2)
+        m1 = 4.0 * (2.0 - r1 - r2)
+        th = np.array([0.0, 1.0])
+        view = ItemView(
+            rep_cols=np.array([0, 1]),
+            mults=np.array([1, 1]),
+            item_logabs=np.array([[d0, 0.0], [d1, 0.0]]),
+            item_tang_re=np.array([[m0, 0.0], [m1, 0.0]]),
+            sort_to_item=np.tile(np.array([0, 1]), (2, 1)),
+            j_lo=np.array([0, 0]), j_hi=np.array([1, 1]),
+        )
+        seg = SimpleNamespace(theta1_arr=th, left_mr=-1, right_mr=-1)
+        return SimpleNamespace(segments=[seg], _item_views=[view])
+
+    def test_multi_root_plan_predicts_two_interior_roots(self):
+        zm = self._two_root_interval_zm()
+        plans = sgbz_pairwise._find_refinement_plans(
+            zm, tie_tol=1e-6, crossing_tol=1e-10)
+        assert len(plans) == 1
+        p = plans[0]
+        assert np.allclose(p.roots, [0.25, 0.55], atol=1e-12)
+
+        grid = sorted(set(sgbz_pairwise._refinement_grid_points(
+            p, safety_factor=4.0, max_subintervals=64)))
+        # Min gap Δ=0.25 with ρ=4 → 16 uniform sub-intervals, plus the two
+        # non-uniform separation midpoints 0.4 and 0.775.
+        assert 0.4 in grid
+        assert 0.775 in grid
+        assert len(grid) >= 15 + 2
+        # Every predicted root has a grid point strictly between itself and
+        # each neighbour (endpoints included).
+        for a, b in zip((0.0, 0.25, 0.55), (0.25, 0.55, 1.0)):
+            assert any(a < t < b for t in grid)
+
+    def test_multi_root_plan_hits_subinterval_cap(self):
+        plan = sgbz_pairwise._RefinementPlan(
+            seg_idx=0, i=0, theta_a=0.0, theta_b=1.0,
+            roots=(0.4, 0.4 + 1e-8))
+        grid = sorted(set(sgbz_pairwise._refinement_grid_points(
+            plan, safety_factor=4.0, max_subintervals=64)))
+        # ρh/Δ ≈ 4e8 ≫ 64: the cap keeps the uniform grid bounded and the
+        # predicted roots themselves become touch anchors.
+        assert len(grid) <= 64 + 8
+        assert 0.4 in grid
+        assert 0.4 + 1e-8 in grid
+
+    def test_roots_closer_than_crossing_tol_merge_away(self):
+        merged = sgbz_pairwise._merge_close_roots(
+            [0.4, 0.4 + 0.5e-10], crossing_tol=1e-10)
+        assert len(merged) == 1
+        assert merged[0] == pytest.approx(0.4 + 0.25e-10)
+
+    def test_nonfinite_pair_diff_is_skipped_by_planner(self):
+        from types import SimpleNamespace
+        from brute_force_SGBZ.mu2mid import ItemView
+
+        th = np.array([0.0, 1.0])
+        view = ItemView(
+            rep_cols=np.array([0, 1]),
+            mults=np.array([1, 1]),
+            # d = inf − finite = inf on both rows → no finite crossings.
+            item_logabs=np.array([[np.inf, 0.0], [np.inf, 0.0]]),
+            item_tang_re=np.zeros((2, 2)),
+            sort_to_item=np.tile(np.array([0, 1]), (2, 1)),
+            j_lo=np.array([0, 0]), j_hi=np.array([1, 1]),
+        )
+        seg = SimpleNamespace(theta1_arr=th, left_mr=-1, right_mr=-1)
+        zm = SimpleNamespace(segments=[seg], _item_views=[view])
+        assert sgbz_pairwise._find_refinement_plans(
+            zm, tie_tol=1e-6, crossing_tol=1e-10) == []
+
+    @staticmethod
+    def _two_crossing_laurent_poly():
+        """Real M=2 Laurent model with two modulus crossings in one interval.
+
+        Roots β₁+1.98 and β₁−0.02 cross in modulus when cos θ = −0.98, i.e.
+        θ = arccos(−0.98) and 2π − arccos(−0.98) (separation ≈ 0.4).  The
+        extra roots 3 and 4 stay above the dynamic pair, and the β₂⁻²
+        denominator makes M=2, K=4 (valid SGBZ boundary indices).
+        """
+        a, b = 1.98, -0.02
+        s, p = a + b, a * b
+
+        def add(terms, c, e1, e2):
+            if abs(c) > 1e-14:
+                terms.append((c, [0, e1, e2]))
+
+        terms = []
+        add(terms, 1, 0, 4)
+        add(terms, -2, 1, 3); add(terms, -(s + 7), 0, 3)
+        add(terms, 1, 2, 2); add(terms, s + 14, 1, 2)
+        add(terms, p + 7 * s + 12, 0, 2)
+        add(terms, -7, 2, 1); add(terms, -(7 * s + 24), 1, 1)
+        add(terms, -(7 * p + 12 * s), 0, 1)
+        add(terms, 12, 2, 0); add(terms, 12 * s, 1, 0)
+        add(terms, 12 * p, 0, 0)
+        coeffs = np.array([c for c, _ in terms], dtype=complex)
+        degs = np.array([d for _, d in terms], dtype=int)
+        degs[:, 2] -= 2   # divide by β₂² → denominator order M=2
+        poly = CharPoly(coeffs, degs)
+        assert poly.M == 2 and poly.M + poly.N == 4
+        return poly
+
+    def test_refine_isolates_two_real_crossings_before_pair_scan(self):
+        """End-to-end: a coarse interval holding two crossings is refined,
+        then collect_pair_events finds both.
+
+        ZeroManager's adaptive mesh is finer than needed, so the test first
+        runs it and then deliberately coarsens one interval back to two
+        endpoint rows — the situation the pre-crossing refinement exists for.
+        """
+        poly = self._two_crossing_laurent_poly()
+        zm = bfs.Mu2MidZM(poly, 0.0 + 0j, 0.0)
+        zm.run(h0=0.5, min_dtheta=1e-10)
+
+        seg = zm.segments[0]
+        th = seg.theta1_arr
+        i0 = int(np.argmin(np.abs(th - 2.6)))
+        i1 = int(np.argmin(np.abs(th - 3.6)))
+        assert th[i0] < 2.8 and th[i1] > 3.4
+
+        keep = np.concatenate([np.arange(0, i0 + 1), np.arange(i1, len(th))])
+        seg.theta1_arr = th[keep]
+        seg.tracked_roots = seg.tracked_roots[keep, :]
+        seg.tangents = seg.tangents[keep, :]
+        seg.abs_argsort = seg.abs_argsort[keep, :]
+
+        # The coarse interval has d > 0 at both ends → the old scan sees 0.
+        zm._continuum_clusters = zm._detect_continuum_clusters_internal(1e-6)
+        zm._item_views = zm._build_item_views(zm._continuum_clusters)
+        assert sgbz_pairwise.collect_pair_events(zm) == []
+
+        inserted = sgbz_pairwise.refine_mesh_for_multiple_crossings(
+            zm, tie_tol=1e-6, crossing_tol=1e-10)
+        assert inserted > 0
+
+        # Rebuild ItemView exactly like analyze() does after refinement.
+        zm._continuum_clusters = zm._detect_continuum_clusters_internal(1e-6)
+        zm._item_views = zm._build_item_views(zm._continuum_clusters)
+        events = sgbz_pairwise.collect_pair_events(zm)
+        pair_events = [e for e in events if {e.ia, e.ib} == {0, 1}]
+        assert len(pair_events) == 2
+
+        theta_c = float(np.arccos(-0.98))
+        found = sorted(e.theta_star for e in pair_events)
+        assert found[0] == pytest.approx(theta_c, abs=1e-6)
+        assert found[1] == pytest.approx(TWO_PI - theta_c, abs=1e-6)
+
+        # The refined mesh stays monotonic with unique θ rows.
+        th_refined = zm.segments[0].theta1_arr
+        assert np.all(np.diff(th_refined) > 0.0)
 
 
 # ---- 0/∞ root truncation ----

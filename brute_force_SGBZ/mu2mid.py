@@ -44,6 +44,7 @@ from .pairwise import (
     finalize_event_groups,
     group_events,
     insert_event_groups,
+    refine_mesh_for_multiple_crossings,
 )
 
 
@@ -264,11 +265,21 @@ class Mu2MidZM(ZeroManager):
         crossing_tol: float = _CROSSING_TOL,
         min_direction_deriv: float = MIN_DIRECTION_DERIV,
         verbose: bool = False,
+        refine_multi_crossings: bool = True,
+        refine_max_rounds: int = 3,
+        refine_safety_factor: float = 4.0,
+        refine_max_subintervals: int = 64,
+        refine_max_total_inserts: int = 2000,
     ) -> None:
         """Run pairwise crossing analysis and build the μ₂_mid path.
 
         ``continuum_clusters``: per-segment column-tuples (the ItemView
         clustering source).  ``None`` runs the internal whole-segment vote.
+
+        ``refine_multi_crossings`` enables the pre-crossing mesh refinement
+        pass (:func:`brute_force_SGBZ.pairwise.refine_mesh_for_multiple_crossings`)
+        that isolates intervals with two or more close crossings before the
+        sign-change scan runs.
         """
         if self._analyzed:
             return
@@ -278,6 +289,25 @@ class Mu2MidZM(ZeroManager):
             continuum_clusters = self._detect_continuum_clusters_internal(tie_tol)
         self._continuum_clusters = continuum_clusters
         self._item_views = self._build_item_views(continuum_clusters)
+
+        # 0. pre-crossing mesh refinement: isolate multiple crossings per
+        # interval so the sign-change scan below sees each one.
+        if refine_multi_crossings:
+            n_refined = refine_mesh_for_multiple_crossings(
+                self,
+                tie_tol=tie_tol,
+                crossing_tol=crossing_tol,
+                max_rounds=refine_max_rounds,
+                safety_factor=refine_safety_factor,
+                max_subintervals=refine_max_subintervals,
+                max_total_inserts=refine_max_total_inserts,
+            )
+            if verbose:
+                print(f"[analyze] multi-crossing refinement inserted "
+                      f"{n_refined} rows")
+            self._continuum_clusters = self._detect_continuum_clusters_internal(
+                tie_tol)
+            self._item_views = self._build_item_views(self._continuum_clusters)
 
         # 1. representative-item pairwise intersections (zero dedup).
         events = collect_pair_events(
@@ -319,6 +349,11 @@ class Mu2MidZM(ZeroManager):
         crossing_tol: float = _CROSSING_TOL,
         min_direction_deriv: float = MIN_DIRECTION_DERIV,
         verbose: bool = False,
+        refine_multi_crossings: bool = True,
+        refine_max_rounds: int = 3,
+        refine_safety_factor: float = 4.0,
+        refine_max_subintervals: int = 64,
+        refine_max_total_inserts: int = 2000,
     ) -> None:
         """Legacy-compatible alias for :meth:`analyze`."""
         self.analyze(
@@ -327,6 +362,11 @@ class Mu2MidZM(ZeroManager):
             crossing_tol=crossing_tol,
             min_direction_deriv=min_direction_deriv,
             verbose=verbose,
+            refine_multi_crossings=refine_multi_crossings,
+            refine_max_rounds=refine_max_rounds,
+            refine_safety_factor=refine_safety_factor,
+            refine_max_subintervals=refine_max_subintervals,
+            refine_max_total_inserts=refine_max_total_inserts,
         )
 
     # ------------------------------------------------------------------

@@ -33,19 +33,20 @@ In general the SGBZ spectrum is a subset of the amoeba spectrum. For uniform ban
 
 **`Mu2MidBreakpoint`** — one breakpoint of the curve. `pair_kind` is one of `M-2_M-1` / `M-1_M` (PMGBZ boundary crossing, `is_pmgbz=True`) / `M_M+1` / `multi` (MR). `value` is continuous across a breakpoint; `deriv_left`/`deriv_right` may jump (a swap with the same {a,b} set stays strictly continuous; an internal break changes the set and gives a real jump). MR breakpoints have `deriv_left = deriv_right = inf` (the `dβ/dθ` branch-point divergence).
 
-**`analyze` / pairwise crossing** — the 2026-08-16 build:
+**`analyze` / pairwise crossing** — the 2026-08-25 build:
 
 | Stage | Action |
 |-------|--------|
 | 1 — ItemView | Whole-segment same-modulus clustering (vote + BFS) → representative items. Cluster semantics: **columns equal-modulus over the whole segment**; isolated ties are never injected into ItemView. |
+| 1b — multi-crossing refinement | Before the pairwise scan, every interval/pair is screened with the cubic-Hermite interpolant of `d = item_logabs[a] − item_logabs[b]` (endpoint values + tangents). Intervals whose same-sign cubic dips near zero, or that already touch / change sign, have their predicted interior roots collected; two or more well-separated roots trigger a sub-mesh (`ρ=4` sub-intervals in the narrowest gap + separation midpoints, capped at 64, up to 3 rounds). This lets the sign-change scan below see even numbers of crossings per interval. |
 | 2 — pairwise intersections | For every representative item pair, `d = item_logabs[a] − item_logabs[b]`. `d[:-1]==0` is an exact touch (not refined, left-closed/right-open); `d[:-1]*d[1:]<0` is a transversal crossing → linear prediction + `brentq` refinement. Zero θ deduplication. |
-| 3 — EventGroup | θ* closer than `crossing_tol` (including the θ=0≡2π circular seam) merge into one mesh row at the midpoint; connectivity/charges are kept per member event. Every downstream stage consumes EventGroups only — no singleton special case. |
-| 4 — mesh insert | Each EventGroup inserted once with `insert_solution(interp='linear')`; rows re-resolved on the final mesh; ItemView is rebuilt. |
+| 3 — EventGroup | θ* closer than `crossing_tol` (including the θ=0≡2π circular seam) merge into one mesh row at the midpoint; connectivity/charges are kept per member event. Every downstream stage consumes EventGroups only — no singleton special case. A merged group's representative row AND every original touch row are event rows. |
+| 4 — mesh insert | Each EventGroup inserted once with `insert_solution(interp='linear')`. Adjacent event positions inside a segment are separated by a regular row at their midpoint, directly solved with `insert_solution(interp='hermite')`; rows re-resolved on the final mesh; ItemView is rebuilt. The invariant "no two event rows adjacent inside one segment" is checked explicitly. |
 | 5 — Mu2Mid build | Independent `Mu2Mid` object (not a ZeroManager): piecewise-smooth intervals, `hermite_interp_poly` inside each piece, ordinary knots C1, event/MR/±14 knots are breakpoints. Each Hermite piece is split at its ±14 roots; outside-band subpieces become `v=±14, dv=0`. |
 
 **Inline continuum detection**: `has_continuum` is read directly off the ItemView — any row with `j_lo == j_hi` means one continuum item occupies both M-1 and M there, so the boundary pair is a 1D subset; no second scan or fraction gate is needed. So the bisection gate *is* the build itself (§1/§6.3), with no separate two-point detector and its false-negative risk. The `_detect_continuum_clusters_internal` same-modulus criterion is a **column-level vote**: column pair `(j,k)` is clustered when `|ln|β_j| − ln|β_k|| < tie_tol` holds on a fraction of rows strictly above `CONTINUUM_FRAC` (0.9, matching amoeba's `_continuum_mask`), followed by BFS transitive closure. Real-analyticity guarantees same-modulus along the whole zero curve (same column index, until an MR), so a majority vote over sampled rows is the correct detector; the old whole-segment max criterion was over-conservative and could split a genuine cluster on a single noisy row.
 
-**Mesh-mutation contract** (2026-08-16): the mesh is mutated ONLY while inserting EventGroup rows (`insert_solution(interp='linear')`). The crossing refinement itself solves transiently via `ZeroManager.solve_at` and never inserts; all event rows are inserted in one batch, and group rows are resolved on the final mesh so later insertions cannot leave stale indices.
+**Mesh-mutation contract** (2026-08-25): the mesh is mutated in two batch phases — first by the multi-crossing refinement (stage 1b, `insert_solution(interp='hermite')`), then by the EventGroup insertions (`insert_solution(interp='linear')`, plus directly-solved regular separator rows between adjacent events). The crossing refinement itself solves transiently via `ZeroManager.solve_at` and never inserts; group rows are resolved on the final mesh so later insertions cannot leave stale indices.
 
 **Unified Hermite interpolation** (2026-08-15): cubic-Hermite polynomial construction goes through `continuation.interpolation` — `cubic_hermite_poly` / `hermite_interp_poly` (automatic linear fallback for non-finite endpoint derivatives). The new `Mu2Mid` path uses it per smooth piece; crossing refinement itself is purely linear + `brentq`.
 
@@ -80,6 +81,10 @@ scanned by `d = item_logabs[a] − item_logabs[b]`:
   on the true `ln|β_a| − ln|β_b|`.
 - No θ deduplication; θ* closer than `crossing_tol` (including across the
   θ=0≡2π circular seam) merge into one `EventGroup` mesh row.
+- Event rows = EventGroup representative rows + original touch rows.  Between
+  adjacent event rows inside one segment a regular midpoint row is inserted by
+  a real polynomial solve (`interp='hermite'`), so `finalize_event_groups`
+  never reads another event row as a "regular" side.
 
 **PointSubset rule**: for each EventGroup, find the item/column connected
 component whose sort positions cover BOTH `M-1` and `M`; expand it to all
@@ -87,9 +92,6 @@ REAL columns (never just representatives) and emit one `PointSubset` per
 column. Charge is the side-change rule
 `q = (side_right − side_left)/2` where `side = +1` for positions ≥ M and
 `-1` for positions < M; q may be 0 for merged events.
-
-**MR echo drop**: crossings within `_MR_PROXIMITY_TOL` of a boundary MR are
-replaced by the exact ZeroManager MR record.
 
 **Charge classification** (in the materialized charge dicts):
 - **Ordinary** (charge ±1/0): the side-change charge `q` computed by
@@ -151,6 +153,11 @@ class Mu2MidZM(ZeroManager):
         crossing_tol: float = 1e-10,
         min_direction_deriv: float = 1e-12,
         verbose: bool = False,
+        refine_multi_crossings: bool = True,
+        refine_max_rounds: int = 3,
+        refine_safety_factor: float = 4.0,
+        refine_max_subintervals: int = 64,
+        refine_max_total_inserts: int = 2000,
     ) -> None: ...
 ```
 
@@ -163,6 +170,28 @@ After `analyze`:
 - `has_continuum`: `any(j_lo == j_hi)`;
 - `mu2_mid`: independent `Mu2Mid` object (`Mu2MidPiece` list, `value_deriv`, `breakpoints`);
 - `mu2_mid_theta1/values/derivs` and `seg_mu2_*`: compatibility flat arrays.
+
+### 3.1b `refine_mesh_for_multiple_crossings`
+
+```python
+def refine_mesh_for_multiple_crossings(
+    zm,
+    *,
+    tie_tol: float = 1e-6,
+    crossing_tol: float = 1e-10,
+    max_rounds: int = 3,
+    safety_factor: float = 4.0,
+    max_subintervals: int = 64,
+    max_total_inserts: int = 2000,
+) -> int
+```
+
+Runs between `ZeroManager.run()` and `collect_pair_events` (called
+automatically by `analyze` unless `refine_multi_crossings=False`).  It
+screens every interval/pair with the cubic-Hermite interpolant of
+`d = ln|β_a| − ln|β_b|`, predicts interior roots of suspicious pairs, and
+inserts a sub-mesh for intervals with ≥ 2 well-separated predicted roots
+(§2.1 stage 1b).  Returns the number of inserted mesh rows.
 
 ### 3.2 `detect_continuum_simple`
 
@@ -196,18 +225,17 @@ def detect_crossings_simple(
     poly: CharPoly,
     *,
     crossing_tol: float = 1e-10,
-    max_newton: int = 100,
     zm_run_kwargs: dict | None = None,
 ) -> tuple[list[PointSubset], list[dict]]
 ```
 
 0D PMGBZ-boundary crossing detection + charge classification. Detection is done by `Mu2MidZM.analyze` (pairwise ItemView intersections); this function only materializes EventGroups. When a fresh `Mu2MidZM` is built, `_ensure_mu2mid` analyzes with `tie_tol=CONTINUUM_TOL` (1e-6). Assumes no boundary continuum — gate with `detect_continuum_simple` / `has_continuum` first.
 
-`max_newton` is a backward-compat name; the current refinement is `brentq` with `xtol=crossing_tol`.
+`crossing_tol` is accepted for backward compatibility; the brentq refinement tolerance is fixed at `Mu2MidZM.analyze` time.
 
 **Returns**:
-- `subsets`: one `PointSubset` per real column of every M-1/M EventGroup component, plus one per boundary MR.
-- `charges`: one dict per subset — `charge` from the side-change rule (`+1/-1/0`) or `None` for tangent/MR.
+- `subsets`: one `PointSubset` per real column of every M-1/M EventGroup component.
+- `charges`: one dict per subset — `charge` from the side-change rule (`+1/-1/0`) or `None` for MR/tangent.
 
 ### 3.5 `detect_crossings_and_winding`
 
@@ -217,7 +245,6 @@ def detect_crossings_and_winding(
     poly: CharPoly,
     *,
     crossing_tol: float = 1e-10,
-    max_newton: int = 100,
     zm_run_kwargs: dict | None = None,
 ) -> tuple[list[PointSubset], float]
 ```
@@ -246,12 +273,10 @@ def solve_SGBZ_for_E(
     zero_tol: float = 1e-10,
     continuum_perturb: float = 1e-2,
     max_iter: int = 60,
-    xtol: float = 2e-12,
     zm_run_kwargs: Optional[dict] = None,
     *,
     continuum_tol: float = 1e-6,
     crossing_tol: float = 1e-10,
-    max_newton: int = 100,
 ) -> dict
 ```
 
@@ -265,7 +290,7 @@ Locate the winding-zero `μ₁` and return solve diagnostics. Uses bracket expan
 - `"_mu1_bracket"`: `(low, high)` bracket at convergence.
 - `"_winding_bracket"`: `(w_low, w_high)` at convergence, or the straddling left/right limits at a continuum boundary.
 - `"_w_limits"`: `(w_left, w_right)` — present only for continuum boundaries.
-- `"_exit_reason"`: one of `"w_zero"`, `"bracket_xtol"`, `"left_endpoint_zero"`, `"right_endpoint_zero"`, `"continuum_boundary"`, `"max_iter"`.
+- `"_exit_reason"`: one of `"w_zero"`, `"w_zero_continuum_edge"`, `"left_endpoint_zero"`, `"right_endpoint_zero"`, `"continuum_boundary"` (max-iteration exhaustion raises `RuntimeError` instead of returning a reason).
 
 ### 3.8 `collect_GBZ_subsets`
 
@@ -293,13 +318,12 @@ Main entry point. Builds the characteristic polynomial from `(coeffs, degs)`, so
   - `"zero_tol"` (1e-10)
   - `"continuum_perturb"` (1e-2)
   - `"max_iter"` (60)
-  - `"xtol"` (2e-12)
   - `"plateau_check"` (True)
   - `"plateau_probe_radius"` (None)
   - `"zm_run_kwargs"` ({})
   - `"continuum_tol"` (1e-6)
   - `"crossing_tol"` (1e-10)
-  - `"max_newton"` (100)
+  - obsolete `"N_points"` / `"xtol"` / `"max_newton"` are accepted and ignored
 
 **Returns**: `GBZResult` with connected subsets. `gbz.is_empty` means `E_ref` is outside the SGBZ spectrum. `gbz.is_continuum` means in-spectrum with 1D LineSubsets in `subsets` (`index == (0, n_1d)`). Otherwise `index == (n_0d, 0)` with `PointSubset`s.
 
@@ -327,14 +351,18 @@ Main entry point. Builds the characteristic polynomial from `(coeffs, degs)`, so
 | `min_direction_deriv` | 1e-12 | Minimum \|Re(V_a)−Re(V_b)\|; below → tangent/hard |
 | `CONTINUUM_TOL` | 1e-6 | Continuum / ItemView clustering threshold |
 | `CONTINUUM_FRAC` | 0.9 | Same-modulus vote fraction |
+| `refine_multi_crossings` | True | Enable pre-crossing multi-root mesh refinement |
+| `refine_max_rounds` | 3 | Maximum refinement rounds |
+| `refine_safety_factor` | 4.0 | Sub-intervals per narrowest predicted root gap (ρ) |
+| `refine_max_subintervals` | 64 | Uniform sub-mesh cap per interval per round |
+| `refine_max_total_inserts` | 2000 | Total refinement insertion budget |
 
 ### Crossing Detection
 
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
 | `crossing_tol` | 1e-10 | brentq `xtol`; close-event merge gap |
-| `max_newton` | 100 | Backward-compat alias (unused by brentq) |
-| `_MR_PROXIMITY_TOL` | 1e-4 | θ₁ distance threshold for MR echo detection |
+| `MIN_DIRECTION_DERIV` | 1e-12 | Tangent-direction protection floor (hard boundary) |
 
 ### Bisection Solver
 
@@ -343,7 +371,6 @@ Main entry point. Builds the characteristic polynomial from `(coeffs, degs)`, so
 | `zero_tol` | 1e-10 | Winding zero threshold |
 | `continuum_perturb` | 1e-2 | μ₁ perturbation scale for continuum resolution (scales 1/2/4/8 tried) |
 | `max_iter` | 60 | Maximum bisection iterations |
-| `xtol` | 2e-12 | Minimum μ₁ bracket width for convergence |
 
 ### Plateau Detection
 

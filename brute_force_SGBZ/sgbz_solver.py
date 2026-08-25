@@ -349,9 +349,6 @@ def solve_SGBZ_for_E(
 
         w_mid, gbz_mid, zm_mid = winding_at(mu1_mid)
 
-        # DEBUG
-        print(f"mu1_mid={mu1_mid}, w_mid={w_mid}, gbz_mid={gbz_mid}")
-
         if w_mid is None:
             is_boundary, proxy, result = handle_continuum(
                 mu1_mid, zm_mid, (mu1_low, mu1_high))

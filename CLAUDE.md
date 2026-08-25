@@ -20,11 +20,15 @@ brute-force-non-hermitian/
 ├── brute_force_SGBZ/        # SGBZ / average major-axis winding formulation
 │   ├── __init__.py             # Whitelist exports (re-exports gbz_types classes)
 │   ├── mu2mid.py               # ItemView + Mu2Mid piecewise-Hermite path + Mu2MidZM
-│   │                           #   (ZeroManager subclass; analyze() = cluster + pairwise
-│   │                           #   + insert + finalize + μ₂_mid build; has_continuum)
-│   ├── pairwise.py             # THE crossing channel: collect_pair_events (touch/cross,
-│   │                           #   brentq refinement, is_mr marking), EventGroup merge,
-│   │                           #   insert_event_groups, finalize_event_groups (charges)
+│   │                           #   (ZeroManager subclass; analyze() = cluster +
+│   │                           #   multi-crossing mesh refinement + pairwise + insert
+│   │                           #   + finalize + μ₂_mid build; has_continuum)
+│   ├── pairwise.py             # THE crossing channel: refine_mesh_for_multiple_crossings
+│   │                           #   (pre-scan sub-mesh for intervals with ≥2 predicted roots),
+│   │                           #   collect_pair_events (touch/cross, brentq refinement,
+│   │                           #   is_mr marking), EventGroup merge, insert_event_groups
+│   │                           #   (regular separator rows between adjacent events),
+│   │                           #   finalize_event_groups (side-change charges)
 │   ├── continuum_lines.py      # Continuum LineSubset extraction (detect_continuum_simple,
 │   │                           #   extract_continuum_linesubsets, MR/seam joining)
 │   ├── winding.py              # W(E_ref, mu1) loop-winding + 0D PointSubset materialization
@@ -51,7 +55,8 @@ brute-force-non-hermitian/
 │                               #   test_interpolation.py, test_counterexamples.py
 │                               #   (slow: --run-slow), test_regressions.py, test_debug_tool.py
 ├── conftest.py                 # sys.path bootstrap + shared build_HN2D_polynomial + slow marker
-├── demos/                      # Runnable demo scripts (demo_unified.py shows the GBZResult API)
+├── demos/                      # Runnable demo scripts (demo_unified.py shows the GBZResult API;
+│                               #   Haldane-model-gainloss.py: sweeps, plots, recompute_failed_SGBZ)
 ├── debug_tool/                 # Fixed-(E_ref, mu1) debugging (see debug_tool/README.md):
 │                               #   gbz_debug.py — collect_debug_subsets (GBZDebugReport: subsets +
 │                               #   SGBZ charges of BOTH methods at a frozen mu1), compute_loop_windings

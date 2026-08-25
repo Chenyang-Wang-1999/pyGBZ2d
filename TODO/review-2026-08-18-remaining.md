@@ -12,12 +12,14 @@
       → eager；gbz_types 工具列表补 CharPoly/TWO_PI/circ_dist/
       probe_zero_plateau/is_mr_cluster_endpoint 等（引用文件存在性已
       脚本核验，20/20）。
-- [ ] README：引用不存在的 `demos/demo_amoeba.py`、`demo_solver.py`；
-      `pip install -e .` 指示必然失败（无 pyproject.toml/setup.py）。
+- [x] README（2026-08-25）：删除不存在的 `demos/demo_amoeba.py` /
+      `demo_solver.py` 引用；修正 `pip install -e .`（本项目无
+      pyproject.toml/setup.py，改为原地运行 + PYTHONPATH）；Quickstart
+      改用 `CharPoly(coeffs, degs)`；测试/演示命令与实际文件对齐。
 
 ## 工程卫生（第七节）
 
-- [ ] **提交未入库的核心源码**（最高优先）：`brute_force_SGBZ/pairwise.py`、
+- [x] **提交未入库的核心源码**（最高优先）：`brute_force_SGBZ/pairwise.py`、
       `continuation/interpolation.py`、`tests/test_interpolation.py`、
       `TODO/`、`paper/`、6 个 log 文件 untracked；另有 20+ 已跟踪文件
       +1339/−1775 未提交。建议按 log 条目拆分提交。
@@ -38,7 +40,10 @@
 - [ ] 4. `solve_roots_1d` padding 最多各补一个 0/inf，次数亏缺 >1 时
       返回数组短于 M+N，下游 K 形状校验会崩（gbz_types.py:166-170）。
 - [ ] 5. SGBZ "W 单调递增于 μ₁" 假设、boundary MR 邻近整组丢弃可能误删
-      合法 crossing、单网格区间双穿越漏检、padding 根进入 ItemView 排序。
+      合法 crossing、padding 根进入 ItemView 排序。
+      （单网格区间双穿越漏检已于 2026-08-25 由
+      `refine_mesh_for_multiple_crossings` 修复，见
+      `log/2026-08-25-multi-crossing-refinement.md`。）
 - [ ] 6. amoeba：`mu2_mid` 配对 `w_left` 的 ε 级偏移、continuum frac=0.9
       阈值脆性、`_is_cluster_endpoint` 值匹配错配风险、Newton clamp 到
       初始括区间。
@@ -51,4 +56,4 @@
 
 
 ## 新发现的 bug
-- [ ] Gain-loss Haldane model 在 E = 1.2890000000000001-0.4131j 时，在 mu1 从 -0.0002 变化到 0.0002 时，SGBZ 平均绕数有反常跳变。同时查看 mu2_mid，并没有经过应该经过的交点。
+- [x] Gain-loss Haldane model 在 E = 1.2890000000000001-0.4131j 时，在 mu1 从 -0.0002 变化到 0.0002 时，SGBZ 平均绕数有反常跳变。同时查看 mu2_mid，并没有经过应该经过的交点。

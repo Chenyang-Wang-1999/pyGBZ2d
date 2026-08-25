@@ -23,14 +23,16 @@ make _poly_tools_cc.cpython-39-x86_64-linux-gnu.so   # adjust suffix to your Pyt
 cp -r ../python/poly_tools /path/to/your/workdir/
 ```
 
-- (Optional) **BerryPy** — only needed for `MatWindingFun` in `brute_force_SGBZ.winding`.
+- (Optional) **BerryPy** — used by the Haldane demo (`demos/Haldane-model-gainloss.py`) and by Haldane counterexample tests; those tests skip automatically when BerryPy is absent.
 
 ## Installation
+
+The repository has no packaging metadata, so `pip install -e .` is not supported. Use it in-place:
 
 ```bash
 git clone <repo-url>
 cd brute-force-non-hermitian
-pip install -e .
+export PYTHONPATH="$(pwd):$PYTHONPATH"
 ```
 
 ## Quickstart
@@ -41,18 +43,17 @@ Polynomials use triplet encoding `[E_exponent, beta1_exponent, beta2_exponent]`.
 
 ```python
 import numpy as np
-import poly_tools as pt
+from gbz_types import CharPoly
 
-coeffs = pt.CScalarVec(np.array([1, -1, -1, -1, -1], dtype=complex))
-degs = pt.CLaurentIndexVec(np.array([
-    1, 0, 0,    # +E
-    0, 1, 0,    # -beta1
-    0,-1, 0,    # -beta1^{-1}
-    0, 0, 1,    # -beta2
-    0, 0,-1,    # -beta2^{-1}
-], dtype=np.int32))
-char_poly = pt.CLaurent(3)
-char_poly.set_Laurent_by_terms(coeffs, degs)
+coeffs = np.array([1, -1, -1, -1, -1], dtype=complex)
+degs = np.array([
+    [1, 0, 0],    # +E
+    [0, 1, 0],    # -beta1
+    [0,-1, 0],    # -beta1^{-1}
+    [0, 0, 1],    # -beta2
+    [0, 0,-1],    # -beta2^{-1}
+], dtype=int)
+poly = CharPoly(coeffs, degs)
 ```
 
 ### SGBZ Solver
@@ -60,10 +61,7 @@ char_poly.set_Laurent_by_terms(coeffs, degs)
 Find the critical $\mu_1$ where the average major-axis winding number vanishes:
 
 ```python
-from brute_force_SGBZ import collect_GBZ_subsets, CharPoly
-
-# Build characteristic polynomial
-poly = CharPoly(coeffs, degs)
+from brute_force_SGBZ import collect_GBZ_subsets
 
 # Check spectrum membership for a reference energy
 gbz = collect_GBZ_subsets(coeffs, degs, E_ref=1.0 + 0j)
@@ -77,7 +75,7 @@ Find the Ronkin function minimum $(\mu_1, \mu_2)$ where both average windings va
 ```python
 from brute_force_amoeba import bisect_amoeba_ronkin_min
 
-result = bisect_amoeba_ronkin_min(char_poly, 1.0 + 0j, -0.5, 0.5, -2.0, 2.0)
+result = bisect_amoeba_ronkin_min(poly, 1.0 + 0j, -0.5, 0.5, -2.0, 2.0)
 print(f"mu1 = {result['mu1']:.6f}, mu2 = {result['mu2']:.6f}")
 ```
 
@@ -89,10 +87,13 @@ print(f"mu1 = {result['mu1']:.6f}, mu2 = {result['mu2']:.6f}")
 |----------|-------------|
 | `collect_GBZ_subsets(coeffs, degs, E_ref)` | Main entry point — check SGBZ condition for reference energy |
 | `solve_SGBZ_for_E(poly, E_ref)` | Locate $\mu_1$ where average winding vanishes |
+| `Mu2MidZM(poly, E_ref, mu1)` | ZeroManager + ItemView analysis + pairwise crossing detection + μ₂_mid path |
 | `detect_continuum_simple(zm, poly)` | Continuum detection (presence only) |
 | `detect_crossings_simple(zm, poly)` | Crossing detection + charge classification |
-| `compute_average_winding(zm, poly, M, charges)` | Compute average major-axis winding number |
+| `compute_average_winding(zm, poly, charges)` | Compute average major-axis winding number |
 | `CharPoly(coeffs, degs)` | Characteristic polynomial wrapper |
+
+`Mu2MidZM.analyze()` runs a pre-crossing mesh refinement before the pairwise scan: intervals whose cubic-Hermite interpolants predict two or more crossings are sub-divided (disable with `refine_multi_crossings=False`).
 
 ### `brute_force_amoeba`
 
@@ -110,20 +111,25 @@ Detailed documentation is available in the `doc/` directory:
 
 - [doc/SGBZ.md](doc/SGBZ.md) — SGBZ formulation, architecture, API reference
 - [doc/amoeba.md](doc/amoeba.md) — Amoeba formulation, algorithm design, API reference
+- [doc/continuation.md](doc/continuation.md) — continuation module (arclength / multiple roots / ZeroManager)
 
 ## Running Tests
 
 ```bash
-pip install -e ".[dev]"
-pytest tests/ -v
+pip install pytest scipy numpy
+pytest tests/ -v            # slow tests are skipped by default
+pytest tests/ -v --run-slow # include BerryPy-dependent slow tests
 ```
 
 ## Running Demos
 
 ```bash
-python demos/demo_amoeba.py
-python demos/demo_solver.py
+python demos/demo_unified.py               # GBZResult API for both modules
+python demos/Haldane-model-gainloss.py     # Haldane sweeps / plots / failed-E recompute
+python demos/demo_zero_manager.py          # ZeroManager root tracking
 ```
+
+See `demos/` for the full set of runnable scripts.
 
 ## Spectrum Inclusion Relation
 
