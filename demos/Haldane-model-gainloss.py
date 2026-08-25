@@ -12,7 +12,7 @@ from BerryPy import TightBinding as tb
 import matplotlib.pyplot as plt
 import pickle
 from scipy import linalg as la
-from typing import Literal
+from typing import Literal, Optional
 import multiprocessing as mp
 import os
 from scipy import interpolate
@@ -309,6 +309,115 @@ def sweep_SGBZ_y():
         }, fp)
 
 
+def recompute_failed_SGBZ(
+    which: str = "y",
+    *,
+    fname: Optional[os.PathLike] = None,
+    out_fname: Optional[os.PathLike] = None,
+    n_procs: Optional[int] = None,
+    debug_mode: bool = False,
+    failed_predicate=None,
+):
+    """并行重算已存储 SGBZ sweep 中的失败 E，并写回结果列表。
+
+    从 ``data/Haldane-gain-loss-{which}-SGBZ.pkl`` 中按
+    ``failed_predicate``（默认 ``lambda res: not res.success``，与
+    :func:`plot_SGBZ` 的 Failed 判定一致）筛选出失败项，取出它们的
+    ``E_ref``，再用与 :func:`sweep_SGBZ_y` 相同的
+    ``mp.Pool.starmap(bfs.collect_GBZ_subsets, ...)`` 方式并行重算。
+    pkl 中已存储的 ``coeffs`` / ``degs`` 被直接复用，因此无需重新构造
+    BerryPy 模型，也保证重算对象与存储文件完全一致。
+
+    Parameters
+    ----------
+    which :
+        数据文件后缀，如 ``"y"``、``"x"``、``"a1"``、``"a2"``。
+    fname :
+        输入 pkl 路径；``None`` 时使用
+        ``data/Haldane-gain-loss-{which}-SGBZ.pkl``。
+    out_fname :
+        输出 pkl 路径；``None`` 时覆盖 *fname*。只想试算时请显式指定
+        一个其他路径。
+    n_procs :
+        并行进程数；``None`` 时使用 ``multiprocessing.cpu_count()``。
+    debug_mode :
+        传给 ``bfs.collect_GBZ_subsets`` 的 debug 开关。默认 ``False``，
+        重算失败会返回 ``success=False`` 的 GBZResult 而不是抛异常。
+    failed_predicate :
+        失败判定函数 ``(GBZResult) -> bool``；默认 ``not res.success``。
+
+    Returns
+    -------
+    data : dict
+        更新后的 pkl 数据 dict（``results`` 中仅失败项被替换）。
+    """
+    if failed_predicate is None:
+        failed_predicate = lambda res: (not res.is_gbz and not res.success)
+
+    fname = Path(fname) if fname is not None else Path(
+        "data/Haldane-gain-loss-%s-SGBZ.pkl" % which)
+    if out_fname is None:
+        out_fname = fname
+    else:
+        out_fname = Path(out_fname)
+
+    with open(fname, "rb") as fp:
+        data = pickle.load(fp)
+
+    results = list(data["results"])
+    coeffs = data["coeffs"]
+    degs = data["degs"]
+
+    failed_idx = [
+        i for i, res in enumerate(results) if failed_predicate(res)
+    ]
+    if not failed_idx:
+        print(f"{fname}: no failed entries ({len(results)} total)")
+        return data
+
+    failed_E = [results[i].E_ref for i in failed_idx]
+    n_total = len(results)
+    n_failed = len(failed_E)
+    print(f"{fname}: recomputing {n_failed}/{n_total} failed entries "
+          f"(which={which!r})")
+
+    n_procs = n_procs or mp.cpu_count()
+    tasks = [
+        (coeffs, degs, E, j / n_failed, debug_mode)
+        for j, E in enumerate(failed_E)
+    ]
+
+    with mp.Pool(n_procs) as pool:
+        new_results = pool.starmap(bfs.collect_GBZ_subsets, tasks)
+
+    if len(new_results) != n_failed:
+        raise RuntimeError(
+            f"parallel recompute returned {len(new_results)} results, "
+            f"expected {n_failed}"
+        )
+
+    for idx, new_res in zip(failed_idx, new_results):
+        results[idx] = new_res
+
+    still_failed = sum(
+        1 for i in failed_idx if failed_predicate(results[i])
+    )
+    data["results"] = results
+    data["recompute_info"] = {
+        "which": which,
+        "failed_indices": failed_idx,
+        "n_recomputed": n_failed,
+        "n_still_failed": still_failed,
+        "debug_mode": debug_mode,
+    }
+
+    with open(out_fname, "wb") as fp:
+        pickle.dump(data, fp)
+
+    print(f"saved -> {out_fname}; still failed: {still_failed}/{n_failed}")
+    return data
+
+
 def plot_amoebic_spectrum(suffix=""):
     with open("data/Haldane-gain-loss-amoeba%s.pkl" % (suffix), "rb") as fp:
         data = pickle.load(fp)
@@ -343,7 +452,8 @@ def plot_SGBZ(which="a1"):
     ind_not_amoeba = [i for i in range(len(res)) if not res[i].is_gbz and res[i].success]
 
     print("Failed:", ind_failed)
-    print(res[ind_failed[1]].error)
+    if len(ind_failed) > 0:
+        print(res[ind_failed[0]].error)
 
     # Plot
     plt.figure()
@@ -466,12 +576,17 @@ if __name__ == "__main__":
     # sweep_SGBZ_a2()
     # sweep_SGBZ_x()
     # sweep_SGBZ_y()
+    # recompute_failed_SGBZ("y")
+    # recompute_failed_SGBZ("y", out_fname="data/Haldane-gain-loss-y-SGBZ-recomputed.pkl")
+    # recompute_failed_SGBZ("x", out_fname="data/Haldane-gain-loss-x-SGBZ-recomputed.pkl")
+    # recompute_failed_SGBZ("a1", out_fname="data/Haldane-gain-loss-a1-SGBZ-recomputed.pkl")
+    # recompute_failed_SGBZ("a2", out_fname="data/Haldane-gain-loss-a2-SGBZ-recomputed.pkl")
     # plot_amoebic_spectrum()
     # plot_amoeba_mu()
     # plot_amoebic_spectrum("-xy")
-    # plot_SGBZ("a1")
-    # plot_SGBZ("a2")
-    # plot_SGBZ("x")
+    plot_SGBZ("a1")
+    plot_SGBZ("a2")
+    plot_SGBZ("x")
     plot_SGBZ("y")
     # plot_index_E("a1", kind="SGBZ")
     # plot_index_E("a2", kind="SGBZ")

@@ -460,6 +460,34 @@ class Mu2MidZM(ZeroManager):
             j_lo = sort_to_item[:, M - 1]
             j_hi = sort_to_item[:, M]
 
+            # Padding roots legitimately live at the outer sort positions
+            # (-∞ for β₂=0, +∞ for β₂=∞).  They may not, however, become the
+            # finite μ₂_mid boundary pair: that would make the SGBZ modulus
+            # itself 0 or ∞, for which the ±14 clamp is only an unphysical
+            # finite stand-in.  Fail explicitly instead of building such a
+            # path.
+            rows = np.arange(N)
+            lo_vals = item_logabs[rows, j_lo]
+            hi_vals = item_logabs[rows, j_hi]
+            bad_rows = np.flatnonzero(
+                ~np.isfinite(lo_vals) | ~np.isfinite(hi_vals))
+            if bad_rows.size:
+                details = []
+                for i in bad_rows[:3]:
+                    li, hi = int(j_lo[i]), int(j_hi[i])
+                    details.append(
+                        f"row={int(i)} items=({li},{hi}) "
+                        f"logabs=({float(lo_vals[i]):.6g},"
+                        f"{float(hi_vals[i]):.6g})")
+                more = f" (+{bad_rows.size - len(details)} more)" \
+                    if bad_rows.size > len(details) else ""
+                raise ValueError(
+                    f"padding β₂ root occupies the M-1/M boundary pair in "
+                    f"segment {s_idx}: {'; '.join(details)}{more}; the "
+                    f"SGBZ boundary is degenerate at |β₂|=0 or |β₂|=∞ and "
+                    f"cannot be represented by the finite μ₂_mid path"
+                )
+
             views.append(ItemView(
                 rep_cols_arr, mults_arr, item_logabs, item_tang_re,
                 sort_to_item, j_lo, j_hi,

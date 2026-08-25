@@ -156,23 +156,51 @@ class CharPoly:
         coeffs_ct = pt.CScalarVec([])
         degs_ct = pt.CIndexVec([])
         poly_1d.num.batch_get_data(coeffs_ct, degs_ct)
-        deg_M = poly_1d.denom_orders[0]
 
-        # Convert poly_tools containers → numpy for np.roots.
+        # Convert poly_tools containers → numpy for np.roots.  A completely
+        # vanished partial polynomial (all β₂ terms carried a parameter that
+        # became exactly 0) has no terms; its roots are entirely the padding
+        # roots below, so max() must not be attempted.  poly_tools keeps the
+        # global denominator order on that empty object, but for padding the
+        # *actual* denominator degree is zero.
         coeffs_list = list(coeffs_ct)
         degs_list = list(degs_ct)
-        max_deg = max(degs_list)
-        np_coeffs = np.zeros(max_deg + 1, dtype=complex)
-        for c, d in zip(coeffs_list, degs_list):
-            np_coeffs[max_deg - d] = c
-        curr_roots = np.roots(np_coeffs)
+        if degs_list:
+            deg_M = int(poly_1d.denom_orders[0])
+            max_deg = max(degs_list)
+            np_coeffs = np.zeros(max_deg + 1, dtype=complex)
+            for c, d in zip(coeffs_list, degs_list):
+                np_coeffs[max_deg - d] = c
+            curr_roots = np.roots(np_coeffs)
+        else:
+            deg_M = 0
+            max_deg = 0
+            curr_roots = np.array([], dtype=complex)
 
-        # Pad with 0 / inf for deficient root count.
-        if len(curr_roots) < M + N:
-            if deg_M < M:
-                curr_roots = np.append(curr_roots, 0)
-            if len(curr_roots) - deg_M < N:
-                curr_roots = np.append(curr_roots, np.inf)
+        # A parameter value can cancel more than one leading/trailing term.
+        # Count, rather than merely detect, the deficiency:
+        #   * cancelled low-side terms → roots at β₂ = 0;
+        #   * cancelled high-side terms → roots at β₂ = ∞.
+        # After clearing the β₂ denominator, the finite polynomial degree is
+        # max_deg, while deg_M + N is the degree of the uncancellated
+        # Laurent numerator.  Their difference is the ∞-root count, and
+        # M - deg_M is the 0-root count.
+        target_count = M + N
+        n_zero = max(0, int(M) - deg_M)
+        n_inf = max(0, deg_M + int(N) - int(max_deg))
+        if len(curr_roots) + n_zero + n_inf != target_count:
+            raise RuntimeError(
+                f"root padding failed: polynomial degree {max_deg}, "
+                f"denominator degree {deg_M}, M={M}, N={N} give "
+                f"{len(curr_roots)} finite + {n_zero} zero + {n_inf} "
+                f"infinite roots (expected {target_count})"
+            )
+
+        if n_zero:
+            curr_roots = np.append(curr_roots, np.zeros(n_zero, dtype=complex))
+        if n_inf:
+            curr_roots = np.append(
+                curr_roots, np.full(n_inf, np.inf, dtype=complex))
         return curr_roots
 
 
@@ -330,22 +358,23 @@ class JoinableLinePiece(LineSubset):
         self.mr = mr
 
 
-def is_mr_cluster_endpoint(zm, seg, side: str, root: complex) -> bool:
-    """Whether an endpoint root *value* is part of the boundary MR cluster.
+def is_mr_cluster_endpoint(zm, seg, side: str, col: int) -> bool:
+    """Whether endpoint track *col* belongs to the boundary MR cluster.
 
-    A segment boundary is an MR, but only the roots listed in
+    A segment boundary is an MR, but only the tracks listed in
     ``multiple_roots[mr].cluster_indices`` are genuinely multiple there; every
-    other root is a regular root passing straight through.  ``mr`` is the
-    segment's ``left_mr`` / ``right_mr``; ``mr < 0`` is the only "no MR" case —
-    it marks the θ₁=0/2π circle seam (segment 0's left / last segment's right,
-    set to -1 by ``ZeroManager.run``).  When ``has_boundary_mr`` is *False* there
-    is no boundary MR at θ₁=0, so interior MRs are indexed starting from 0 and
-    MR index 0 is a genuine interior MR, not the seam.
+    other track is regular and passes straight through.  ``mr`` is the
+    segment's ``left_mr`` / ``right_mr``; ``mr < 0`` is the only "no MR" case
+    — it marks the θ₁=0/2π circle seam (segment 0's left / last segment's
+    right, set to -1 by ``ZeroManager.run``).
 
-    Matching is by *value* against ``multiple_roots[mr].roots``: this is
-    frame-independent, so it works whether that row is modulus-sorted (the
-    boundary MR at θ₁=0) or track-ordered (an interior MR), since
-    ``cluster_indices`` is always an index into that same row.
+    Membership is decided by COLUMN IDENTITY, not by a nearest-value match.
+    Interior MR records share the track frame of both adjacent boundary rows.
+    The one exception is the θ=0 boundary MR reused as the final segment's
+    right boundary at θ=2π: its cluster indices use the θ=0 modulus-sorted
+    frame, while ``col`` indexes the final segment's track frame.  The class
+    convention ``roots_right[boundary_perm] == roots_left`` translates left
+    column ``k`` to right column ``boundary_perm[k]`` there.
     """
     mr = seg.left_mr if side == 'left' else seg.right_mr
     if mr < 0:
@@ -353,9 +382,19 @@ def is_mr_cluster_endpoint(zm, seg, side: str, root: complex) -> bool:
     cluster = zm.multiple_roots[mr].cluster_indices
     if not cluster:
         return False
-    mr_roots = zm.multiple_roots[mr].roots
-    j_mod = int(np.argmin(np.abs(mr_roots - root)))
-    return any(j_mod in c for c in cluster)
+
+    out_col = int(col)
+    if (side == 'right' and mr == 0 and zm.has_boundary_mr):
+        if not hasattr(zm, "boundary_perm"):
+            raise RuntimeError(
+                "cannot test the θ=2π boundary MR cluster before "
+                "boundary_perm is set"
+            )
+        inv_perm = np.empty(zm.K, dtype=int)
+        inv_perm[zm.boundary_perm] = np.arange(zm.K)
+        out_col = int(inv_perm[out_col])
+
+    return any(out_col in c for c in cluster)
 
 
 # ---- shared utility functions ----

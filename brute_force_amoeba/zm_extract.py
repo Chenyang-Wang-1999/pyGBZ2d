@@ -136,11 +136,10 @@ def _join_continuum_across_mrs(
     the expected continuation is absent (a topology inconsistency).
 
     Each original segment's left boundary is matched against the previous
-    segment's right boundary, for every continuum track.  Matching is by root
-    *value* (frame-independent), so it holds whether a boundary row is
-    modulus-sorted (interior MR) or track-ordered (the ``completed`` branch
-    closing row at the θ₁=0/2π seam).  Iterated to a fixpoint so chains and the
-    cyclic seam (segment 0 ↔ last segment) both converge.
+    segment's right boundary by COLUMN IDENTITY.  Interior MR rows share one
+    track frame; the first/last-segment seam is translated through
+    ``boundary_perm``.  Iterated to a fixpoint so chains and the cyclic seam
+    (segment 0 ↔ last segment) both converge.
     """
     n_seg = len(zm.segments)
     if n_seg <= 1:
@@ -166,6 +165,13 @@ def _join_continuum_across_mrs(
                 return idx
         return None
 
+    def _match_column_right(cur_s: int, prev_s: int, col: int) -> int:
+        # The only frame change is the cyclic first/last-segment seam.  Its
+        # documented monodromy is roots_right[boundary_perm] == roots_left.
+        if cur_s == 0 and prev_s == n_seg - 1:
+            return int(zm.boundary_perm[int(col)])
+        return int(col)
+
     for _ in range(n_seg):
         changed = False
         for s in range(n_seg):
@@ -188,7 +194,7 @@ def _join_continuum_across_mrs(
 
             for j_l in np.where(continuum_masks[s])[0]:
                 root = left_b[j_l]
-                if _is_cluster_endpoint(zm, seg, 'left', root):
+                if _is_cluster_endpoint(zm, seg, 'left', int(j_l)):
                     continue  # genuine LineSubset terminator at the MR
                 li_idx = find_by_left(s, root)
                 if li_idx is None:
@@ -196,11 +202,12 @@ def _join_continuum_across_mrs(
                     # boundary is already interior to a merged piece (the
                     # continuum was joined here in an earlier pass).
                     continue
-                # Match the continuation root on the previous segment's right
-                # boundary by value (frame-independent).
-                j_prev = int(np.argmin(np.abs(right_b - root)))
+                # Match the continuation column on the previous segment's
+                # right boundary by track identity (or boundary_perm at the
+                # cyclic seam), then read its exact root value.
+                j_prev = _match_column_right(s, prev, int(j_l))
                 root_prev = right_b[j_prev]
-                if _is_cluster_endpoint(zm, prev_seg, 'right', root_prev):
+                if _is_cluster_endpoint(zm, prev_seg, 'right', j_prev):
                     # Non-cluster on one side, cluster on the other — the track
                     # ends here in one segment but not the other: inconsistent.
                     raise ValueError(

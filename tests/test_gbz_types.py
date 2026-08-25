@@ -209,34 +209,59 @@ class TestClusteredOnTorus:
 
 
 class TestIsMrClusterEndpoint:
-    def _mk(self, cluster):
+    def _mk(self, cluster=(1, 2), *, has_boundary_mr=True,
+            with_perm=True, left_mr=0, right_mr=-1):
         from types import SimpleNamespace
         from continuation.multiple_roots import MultipleRootInfo
         mr = MultipleRootInfo(
-            theta1=1.0, cluster_indices=cluster,
-            roots=np.array([1.0 + 0j, 2.0 + 0j, 3.0 + 0j]),
+            theta1=1.0, cluster_indices=[tuple(cluster)],
+            roots=np.array([1.0 + 0j, 2.0 + 0j, 3.0 + 0j, 4.0 + 0j]),
         )
-        seg = SimpleNamespace(left_mr=0, right_mr=-1)
-        zm = SimpleNamespace(multiple_roots=[mr])
+        seg = SimpleNamespace(left_mr=left_mr, right_mr=right_mr)
+        zm = SimpleNamespace(
+            multiple_roots=[mr], K=4, has_boundary_mr=has_boundary_mr)
+        if with_perm:
+            zm.boundary_perm = np.array([2, 0, 3, 1])
         return zm, seg
 
-    def test_cluster_member_matches_by_value(self):
-        zm, seg = self._mk([(0, 1)])
-        assert is_mr_cluster_endpoint(zm, seg, 'left', 1.0 + 0j) is True
-        assert is_mr_cluster_endpoint(zm, seg, 'left', 2.0 + 0j) is True
+    def test_left_cluster_member_matches_by_column(self):
+        zm, seg = self._mk((1, 2))
+        assert is_mr_cluster_endpoint(zm, seg, 'left', 1) is True
+        assert is_mr_cluster_endpoint(zm, seg, 'left', 2) is True
 
-    def test_regular_root_passes(self):
-        zm, seg = self._mk([(0, 1)])
-        assert is_mr_cluster_endpoint(zm, seg, 'left', 3.0 + 0j) is False
+    def test_left_regular_column_passes(self):
+        zm, seg = self._mk((1, 2))
+        assert is_mr_cluster_endpoint(zm, seg, 'left', 0) is False
+        assert is_mr_cluster_endpoint(zm, seg, 'left', 3) is False
 
     def test_no_mr_side_is_false(self):
-        zm, seg = self._mk([(0, 1)])
-        # right side has right_mr = -1 → seam, never a cluster endpoint
-        assert is_mr_cluster_endpoint(zm, seg, 'right', 1.0 + 0j) is False
+        zm, seg = self._mk((1, 2), left_mr=-1)
+        assert is_mr_cluster_endpoint(zm, seg, 'left', 1) is False
 
     def test_empty_cluster_is_false(self):
-        zm, seg = self._mk([])
-        assert is_mr_cluster_endpoint(zm, seg, 'left', 1.0 + 0j) is False
+        zm, seg = self._mk(())
+        assert is_mr_cluster_endpoint(zm, seg, 'left', 1) is False
+
+    def test_boundary_mr_right_columns_translate(self):
+        # Convention: roots_right[boundary_perm] == roots_left.  Left-frame
+        # cluster columns (1, 2) are right-frame columns (0, 3).
+        zm, seg = self._mk((1, 2), right_mr=0)
+        assert is_mr_cluster_endpoint(zm, seg, 'right', 0) is True
+        assert is_mr_cluster_endpoint(zm, seg, 'right', 3) is True
+        assert is_mr_cluster_endpoint(zm, seg, 'right', 1) is False
+        assert is_mr_cluster_endpoint(zm, seg, 'right', 2) is False
+
+    def test_interior_mr_index_zero_right_is_not_translated(self):
+        zm, seg = self._mk(
+            (1, 2), has_boundary_mr=False, right_mr=0)
+        assert is_mr_cluster_endpoint(zm, seg, 'right', 1) is True
+        assert is_mr_cluster_endpoint(zm, seg, 'right', 2) is True
+        assert is_mr_cluster_endpoint(zm, seg, 'right', 0) is False
+
+    def test_boundary_mr_right_requires_perm(self):
+        zm, seg = self._mk((1, 2), right_mr=0, with_perm=False)
+        with pytest.raises(RuntimeError, match="boundary_perm"):
+            is_mr_cluster_endpoint(zm, seg, 'right', 0)
 
 
 class TestCharPolyMinorDegrees:
@@ -249,3 +274,70 @@ class TestCharPolyMinorDegrees:
         assert poly.get_minor_degrees(2) == (1, 1)
         assert poly.get_minor_degrees(1) == (1, 1)
         assert get_minor_degrees(poly) == (1, 1)
+
+
+class TestCharPolyRootPadding:
+    """Degree-deficient partial polynomials must still return M+N roots."""
+
+    @staticmethod
+    def _roots(coeffs, degs, beta1=1.0 + 0j):
+        poly = CharPoly(np.asarray(coeffs, dtype=complex),
+                        np.asarray(degs, dtype=int))
+        return poly, np.asarray(poly.solve_roots_1d(
+            (0, 1), (0j, beta1), (2,)))
+
+    def test_high_degree_deficiency_pads_all_infinite_roots(self):
+        # β₁ β₂² + β₂ − 3 β₂⁻¹: M=1, N=2.  At β₁=0 both high-degree terms
+        # implied by N=2 vanish except β₂; the finite polynomial degenerates
+        # from degree 3 to degree 1, so two roots are at infinity.
+        coeffs = [1, 1, -3]
+        degs = [[0, 1, 2], [0, 0, 0], [0, 0, -1]]
+        poly, roots = self._roots(coeffs, degs, beta1=0j)
+        assert (poly.M, poly.N) == (1, 2)
+        assert len(roots) == poly.M + poly.N
+        assert np.count_nonzero(np.isinf(roots)) == 2
+        assert np.count_nonzero(np.isfinite(roots)) == 1
+
+    def test_low_degree_deficiency_pads_all_zero_roots(self):
+        # β₁ β₂⁻² + β₂ − 3: M=2, N=1.  At β₁=0 the two denominator roots
+        # vanish with the β₂⁻² term, leaving one finite root and two β₂=0
+        # padding roots.
+        coeffs = [1, 1, -3]
+        degs = [[0, 1, -2], [0, 0, 0], [0, 0, 1]]
+        poly, roots = self._roots(coeffs, degs, beta1=0j)
+        assert (poly.M, poly.N) == (2, 1)
+        assert len(roots) == poly.M + poly.N
+        assert np.count_nonzero(roots == 0) == 2
+        assert np.count_nonzero(np.isinf(roots)) == 0
+        assert np.count_nonzero((roots != 0) & np.isfinite(roots)) == 1
+
+    def test_both_sides_deficient_pads_multiple_zero_and_infinite(self):
+        # β₁ β₂³ + 1 + β₁ β₂⁻³: at β₁=0 both the three denominator roots and
+        # three numerator roots disappear.  The old code appended only one 0
+        # and one ∞, returning 2 roots instead of K=6.
+        coeffs = [1, 1, 1]
+        degs = [[0, 1, 3], [0, 0, 0], [0, 1, -3]]
+        poly, roots = self._roots(coeffs, degs, beta1=0j)
+        assert (poly.M, poly.N) == (3, 3)
+        assert len(roots) == poly.M + poly.N
+        assert np.count_nonzero(roots == 0) == 3
+        assert np.count_nonzero(np.isinf(roots)) == 3
+
+    def test_completely_vanished_partial_polynomial(self):
+        # β₁(β₂³ + β₂⁻³): at β₁=0 the partial polynomial has no terms at
+        # all.  It must still return the fixed K=6 track array, not crash on
+        # max([]), and the padding is M zeros + N infinities.
+        coeffs = [1, 1]
+        degs = [[0, 1, 3], [0, 1, -3]]
+        poly, roots = self._roots(coeffs, degs, beta1=0j)
+        assert (poly.M, poly.N) == (3, 3)
+        assert len(roots) == poly.M + poly.N
+        assert np.count_nonzero(roots == 0) == 3
+        assert np.count_nonzero(np.isinf(roots)) == 3
+
+    def test_undepleted_polynomial_is_not_padded(self):
+        coeffs = [1, 1, 1]
+        degs = [[0, 1, 3], [0, 0, 0], [0, 1, -3]]
+        poly, roots = self._roots(coeffs, degs, beta1=1.0 + 0j)
+        assert len(roots) == poly.M + poly.N
+        assert np.all(np.isfinite(roots))

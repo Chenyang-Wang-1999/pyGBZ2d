@@ -95,6 +95,9 @@ class TestH2JoinBudget:
         )
         zm = SimpleNamespace(
             segments=[seg0, seg1], K=3, _event_groups=[],
+            # This synthetic seam has identity monodromy: each final-row root
+            # is already the corresponding first-row root.
+            boundary_perm=np.array([0, 1, 2]),
             multiple_roots=[MultipleRootInfo(
                 theta1=float(np.pi), cluster_indices=[],
                 roots=seg0.tracked_roots[-1])],

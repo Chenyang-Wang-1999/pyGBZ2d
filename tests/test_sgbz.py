@@ -884,31 +884,157 @@ class TestPairwiseAnalysis:
         assert np.all(np.diff(th_refined) > 0.0)
 
 
-# ---- 0/∞ root truncation ----
+class TestItemViewBoundaryPadding:
+    """Padding roots may sort externally, but must not become μ₂_mid."""
+
+    @staticmethod
+    def _zm(M, roots):
+        from types import SimpleNamespace
+
+        seg = SimpleNamespace(
+            theta1_arr=np.arange(len(roots), dtype=float),
+            tracked_roots=np.asarray(roots, dtype=complex),
+            tangents=np.zeros((len(roots), len(roots[0])), dtype=complex),
+        )
+        return SimpleNamespace(M=M, K=roots.shape[1], segments=[seg])
+
+    def test_outer_padding_root_is_allowed(self):
+        roots = np.array([
+            [0.5 + 0j, 1.5 + 0j, np.inf + 0j],
+            [0.6 + 0j, 1.4 + 0j, np.inf + 0j],
+        ])
+        zm = self._zm(M=1, roots=roots)
+        views = bfs.Mu2MidZM._build_item_views(zm, [[]])
+        assert len(views) == 1
+        assert np.all(np.isfinite(views[0].item_logabs[:, views[0].j_lo]))
+        assert np.all(np.isfinite(views[0].item_logabs[:, views[0].j_hi]))
+
+    def test_padding_root_in_boundary_pair_raises(self):
+        # M=2 selects sorted positions 1 and 2; the ∞ root occupies position 2.
+        roots = np.array([
+            [0.5 + 0j, 1.5 + 0j, np.inf + 0j],
+            [0.6 + 0j, 1.4 + 0j, np.inf + 0j],
+        ])
+        zm = self._zm(M=2, roots=roots)
+        with pytest.raises(ValueError, match="padding β₂ root occupies"):
+            bfs.Mu2MidZM._build_item_views(zm, [[]])
+
+
+class TestEventGroupColumnKind:
+    def test_finalize_classifies_each_component(self, monkeypatch):
+        """finalize_event_groups writes MR/ordinary kind per connected
+        component, rather than letting one MR event harden the whole group."""
+        from types import SimpleNamespace
+
+        mr_event = sgbz_pairwise.PairEvent(
+            seg_idx=0, i=0, ia=0, ib=1, cols_a=(0,), cols_b=(1,),
+            rep_a=0, rep_b=1, kind='touch', pair_kind='multi',
+            theta_star=0.25, direction=None, is_mr=True)
+        ordinary_event = sgbz_pairwise.PairEvent(
+            seg_idx=0, i=0, ia=2, ib=3, cols_a=(2,), cols_b=(3,),
+            rep_a=2, rep_b=3, kind='cross', pair_kind='M-1_M',
+            theta_star=0.25, direction=+1, is_mr=False)
+        g = sgbz_pairwise.EventGroup(
+            seg_idx=0, theta=0.25,
+            events=(mr_event, ordinary_event),
+            item_components=((0, 1), (2, 3)),
+            column_components=((0, 1), (2, 3)),
+            is_mr=True, row=1,
+        )
+        zm = SimpleNamespace(
+            segments=[SimpleNamespace(
+                theta1_arr=np.array([0.0, 0.25, 0.5]),
+                left_mr=-1, right_mr=-1)],
+            M=1, K=4, boundary_perm=np.arange(4), _item_views=[None],
+        )
+
+        def fake_regular_side(zm, event_rows, s_idx, row, n, step):
+            return (0, 0 if step < 0 else 2, None)
+
+        def fake_item_pair(zm, group_seg, group_row, side, inv_perm):
+            return (0, 1) if side[1] == 0 else (2, 3)
+
+        def fake_component_positions(
+                zm, group_seg, group_row, col_comp, side, inv_perm):
+            return {0, 1}
+
+        def fake_side_of_column(zm, group_seg, group_row, col, side, inv_perm, M):
+            return -1 if side[1] == 0 else +1
+
+        monkeypatch.setattr(sgbz_pairwise, '_regular_side', fake_regular_side)
+        monkeypatch.setattr(sgbz_pairwise, '_item_pair', fake_item_pair)
+        monkeypatch.setattr(
+            sgbz_pairwise, '_component_positions', fake_component_positions)
+        monkeypatch.setattr(
+            sgbz_pairwise, '_side_of_column', fake_side_of_column)
+
+        sgbz_pairwise.finalize_event_groups(zm, [g])
+        assert g.column_kind == {
+            0: 'mr', 1: 'mr', 2: 'ordinary', 3: 'ordinary'}
+        assert g.column_q[0] is None and g.column_q[1] is None
+        assert g.column_q[2] == +1 and g.column_q[3] == +1
+
+    def test_materialization_uses_component_granular_kind(self, monkeypatch):
+        """An MR component and an ordinary component in one EventGroup keep
+        their own hard/soft classification instead of inheriting g.is_mr."""
+        from types import SimpleNamespace
+
+        g = sgbz_pairwise.EventGroup(
+            seg_idx=0, theta=0.25,
+            events=(),
+            is_mr=True,
+            row=0,
+            point_columns=(0, 1),
+            column_q={0: None, 1: +1},
+            column_kind={0: 'mr', 1: 'ordinary'},
+        )
+        seg = SimpleNamespace(
+            theta1_arr=np.array([0.25]),
+            tracked_roots=np.array([[0.5 + 0j, 1.5 + 0j]]),
+        )
+        m = SimpleNamespace(
+            E_ref=1.0 + 0j, mu1=0.1,
+            segments=[seg], _event_groups=[g],
+        )
+        monkeypatch.setattr(sgbz_winding, 'ensure_mu2mid', lambda zm: m)
+
+        subsets, charges = sgbz_winding.detect_crossings_simple(
+            SimpleNamespace(), SimpleNamespace(M=1, N=1))
+        assert len(subsets) == 2
+        assert [c['kind'] for c in charges] == ['mr', 'ordinary']
+        assert charges[0]['charge'] is None
+        assert charges[1]['charge'] == +1
+
+
+# ---- μ₂_mid log-modulus clamp ----
 
 def test_logabs_clamped_keeps_mu2_mid_finite():
-    """A 0/∞ root in the boundary pair must not make μ₂_mid ±∞.
+    """Extreme finite boundary-pair log-moduli are clamped by μ₂_mid.
 
-    ``solve_roots_1d`` pads 0/∞ roots into a degree-deficient 1-D
-    polynomial; if such a padded root lands at sorted position M-1 or M the
-    naive ``np.log|β|`` gives ±∞ and μ₂_mid = mean → ±∞, overflowing the
-    winding loop.  ``logabs_clamped`` clamps to ±14 (aligned with
-    arclength.INF_THRESHOLD=1e6) so every consumer sees a finite curve.
+    Padding roots themselves are rejected earlier when they occupy M-1/M
+    (see TestItemViewBoundaryPadding), but a finite root can legitimately
+    have |β₂| outside exp(∓14).  ``logabs_clamped`` keeps the Hermite path
+    bounded in that regime.
 
-    Directly unit-tested because the HN models used elsewhere never produce a
-    0/∞ boundary root; a synthetic root array is the honest fixture.
+    Directly unit-tested because the HN models used elsewhere stay well
+    inside the band; a synthetic root array is the honest fixture.
     """
     from brute_force_SGBZ.mu2mid import logabs_clamped, _LOGABS_CLAMP_L
 
-    # one finite root, one 0, one ∞ — the 0/∞ would be ±∞ unclamped.
-    roots = np.array([1.5 + 0.3j, 0.0 + 0.0j, np.inf + 0j])
+    # one ordinary finite root, one very small finite root, one very large
+    # finite root — the latter two lie outside the ±14 log-modulus band.
+    roots = np.array([
+        1.5 + 0.3j,
+        np.exp(-20.0) + 0j,
+        np.exp(20.0) + 0j,
+    ])
     la = logabs_clamped(roots)
     assert np.all(np.isfinite(la))
-    assert la[1] == -_LOGABS_CLAMP_L          # 0 root → −L
-    assert la[2] == _LOGABS_CLAMP_L           # ∞ root → +L
-    assert la[0] == pytest.approx(np.log(abs(1.5 + 0.3j)))  # finite root untouched
+    assert la[1] == -_LOGABS_CLAMP_L
+    assert la[2] == _LOGABS_CLAMP_L
+    assert la[0] == pytest.approx(np.log(abs(1.5 + 0.3j)))  # inside band
 
-    # μ₂_mid = mean of the M-1/M boundary pair stays finite even when one is 0/∞
+    # μ₂_mid = mean of a finite boundary pair stays finite outside the band.
     mu2_mid = (la[1] + la[0]) / 2.0
     assert np.isfinite(mu2_mid)
 

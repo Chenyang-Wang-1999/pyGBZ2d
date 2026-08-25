@@ -132,9 +132,10 @@ def _join_runs_across_mrs(
 
     Event terminators never reach this join (they are interior rows or were
     excluded by ``_find_boundary_runs``).  At an MR the track terminates if
-    its endpoint root is in the MR's cluster; otherwise it continues and is
-    matched by root value.  At the θ=0≡2π seam the last segment's right end
-    matches segment 0's left end via ``boundary_perm``.
+    its endpoint track column is in the MR's cluster; otherwise it continues.
+    Interior MR boundaries share one track frame, while the first/last-segment
+    seam is translated through ``boundary_perm`` — no nearest-value root
+    matching is used for cluster membership or track continuation.
     """
     n_seg = len(zm.segments)
     if n_seg <= 1:
@@ -163,10 +164,13 @@ def _join_runs_across_mrs(
                 return idx
         return None
 
-    def _match_root_right(prev_seg, root: complex) -> tuple[int, complex] | None:
-        right_b = prev_seg.tracked_roots[-1, :]
-        j_prev = int(np.argmin(np.abs(right_b - root)))
-        return j_prev, complex(right_b[j_prev])
+    def _match_column_right(cur_s: int, prev_s: int, col: int) -> int:
+        # Interior MR rows share one track frame.  The only frame change is
+        # the cyclic first/last-segment seam, where the documented monodromy
+        # is roots_right[boundary_perm] == roots_left.
+        if cur_s == 0 and prev_s == n_seg - 1:
+            return int(zm.boundary_perm[int(col)])
+        return int(col)
 
     # Restart the scan after every merge: a merge invalidates the piece
     # indices (the list is rebuilt in place), so a plain nested loop would
@@ -195,13 +199,14 @@ def _join_runs_across_mrs(
 
             for j_l in range(zm.K):
                 root = complex(left_b[j_l])
-                if _is_cluster_endpoint(zm, seg, 'left', root):
+                if _is_cluster_endpoint(zm, seg, 'left', int(j_l)):
                     continue
                 li_idx = find_by_left(s, root)
                 if li_idx is None:
                     continue
-                j_prev, root_prev = _match_root_right(prev_seg, root)
-                if _is_cluster_endpoint(zm, prev_seg, 'right', root_prev):
+                j_prev = _match_column_right(s, prev, int(j_l))
+                root_prev = complex(prev_seg.tracked_roots[-1, j_prev])
+                if _is_cluster_endpoint(zm, prev_seg, 'right', j_prev):
                     raise ValueError(
                         f"Continuum track {j_l} of segment {s} ends at the MR "
                         f"at θ₁={seg.theta1_arr[0]:.4f} as a non-cluster root, "

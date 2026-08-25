@@ -446,12 +446,13 @@ def detect_crossings_simple(
             beta2 = complex(seg.tracked_roots[g.row, col])
             theta2 = float(np.angle(beta2)) % (TWO_PI)
             q = g.column_q.get(col)
-            if g.is_mr:
-                kind = 'mr'
-            elif q is not None:
-                kind = 'ordinary'
-            else:
-                kind = 'tangent'
+            try:
+                kind = g.column_kind[col]
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"EventGroup at θ₁={theta1} has no kind for column "
+                    f"{col}; was finalize_event_groups skipped?"
+                ) from exc
             subsets.append(PointSubset(
                 E=E_ref, beta1=exp(mu1 + 1j * theta1), beta2=beta2))
             charges.append(dict(

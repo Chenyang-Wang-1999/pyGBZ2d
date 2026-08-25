@@ -5,10 +5,12 @@ import pytest
 from math import pi
 from cmath import exp
 from collections import defaultdict
+from types import SimpleNamespace
 
 from gbz_types import (CharPoly, hungarian_match_indices, to_sphere_r3,
                        cost_from_sphere_r3, TWO_PI)
 from continuation.zero_manager import ZeroManager, SegmentData
+from continuation.multiple_roots import MultipleRootInfo
 
 
 # ===========================================================================
@@ -303,6 +305,71 @@ class TestBoundaryPermConvention:
         # violate the convention — this is what makes the test a regression
         # guard for the boundary_perm_set flag.
         assert not np.allclose(roots_right[np.argsort(bp)], roots_left)
+
+
+class TestBoundaryMrTangentFrame:
+    """MR 0's θ=0 modulus-sorted columns must be translated at θ=2π.
+
+    ``boundary_perm`` obeys ``roots_right[boundary_perm] == roots_left``:
+    left/MR-record column ``k`` is closing-row track column
+    ``boundary_perm[k]``.  Without this translation a nontrivial monodromy
+    marks the wrong columns ``inf`` on the final boundary-MR row.
+    """
+
+    @staticmethod
+    def _zm(has_boundary_mr=True, with_perm=True):
+        mr = MultipleRootInfo(
+            theta1=0.0,
+            cluster_indices=[(1, 2)],
+            roots=np.array([1.0 + 0j, 2.0 + 0j, 3.0 + 0j, 4.0 + 0j]),
+            cluster_stds=(0.0,),
+        )
+        zm = SimpleNamespace(
+            multiple_roots=[mr],
+            has_boundary_mr=has_boundary_mr,
+        )
+        if with_perm:
+            # left columns (1, 2) -> right columns (0, 3)
+            zm.boundary_perm = np.array([2, 0, 3, 1])
+        return zm
+
+    def test_right_boundary_mr_columns_translate(self):
+        zm = self._zm()
+        tangents = np.zeros((3, 4), dtype=complex)
+        out = ZeroManager._mark_mr_tangents_inf(
+            zm, tangents, left_mr=-1, right_mr=0)
+
+        assert np.all(np.isfinite(out[:-1, :]))
+        assert np.all(np.isinf(out[-1, [0, 3]].real))
+        assert np.all(np.isfinite(out[-1, [1, 2]].real))
+
+    def test_left_boundary_mr_columns_are_not_translated(self):
+        zm = self._zm()
+        tangents = np.zeros((3, 4), dtype=complex)
+        out = ZeroManager._mark_mr_tangents_inf(
+            zm, tangents, left_mr=0, right_mr=-1)
+
+        assert np.all(np.isinf(out[0, [1, 2]].real))
+        assert np.all(np.isfinite(out[0, [0, 3]].real))
+        assert np.all(np.isfinite(out[1:, :]))
+
+    def test_interior_mr_index_zero_is_not_translated(self):
+        # When has_boundary_mr=False, MR index 0 is an ordinary interior MR
+        # whose cluster_indices already use its own boundary-row track frame.
+        zm = self._zm(has_boundary_mr=False)
+        tangents = np.zeros((3, 4), dtype=complex)
+        out = ZeroManager._mark_mr_tangents_inf(
+            zm, tangents, left_mr=-1, right_mr=0)
+
+        assert np.all(np.isinf(out[-1, [1, 2]].real))
+        assert np.all(np.isfinite(out[-1, [0, 3]].real))
+
+    def test_right_boundary_mr_requires_perm(self):
+        zm = self._zm(with_perm=False)
+        tangents = np.zeros((3, 4), dtype=complex)
+        with pytest.raises(RuntimeError, match="boundary_perm"):
+            ZeroManager._mark_mr_tangents_inf(
+                zm, tangents, left_mr=-1, right_mr=0)
 
 
 # ===========================================================================

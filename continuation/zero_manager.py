@@ -630,17 +630,13 @@ class ZeroManager:
                         new_seg_theta1 = np.concatenate([
                             new_seg_theta1[:-1], [TWO_PI]
                         ])
-                        self._append_segment(
-                            new_seg_theta1, new_seg_tracked_roots, left_mr, 0
-                        )
                         # Same convention as 'completed': predict at 2π and
-                        # match onto left_boundary_roots.  The boundary MR at
-                        # θ₁_mr ≈ 2π is degenerate (closing row is the snapped
-                        # cluster), so the bracket endpoint carrying it has a
-                        # divergent (inf) tangent and the Hermite degrades
-                        # toward lerp / hold-fixed — no regression versus a
-                        # bare match, and the cluster↔cluster correspondence
-                        # stays ambiguous.
+                        # match onto left_boundary_roots BEFORE appending the
+                        # segment.  MR 0 was recorded in the θ=0 modulus-sorted
+                        # frame, while this closing row is in the final
+                        # segment's track frame; _append_segment needs
+                        # boundary_perm to translate MR-cluster columns before
+                        # marking their tangents inf.
                         predicted_2pi = self._predict_roots_at_2pi(
                             new_seg_theta1, new_seg_tracked_roots,
                         )
@@ -648,6 +644,14 @@ class ZeroManager:
                             predicted_2pi
                         )
                         boundary_perm_set = True
+                        self._append_segment(
+                            new_seg_theta1, new_seg_tracked_roots, left_mr, 0
+                        )
+                        # The boundary MR at θ₁_mr ≈ 2π is degenerate (the
+                        # closing row is the snapped cluster), so the Hermite
+                        # prediction degrades toward lerp / hold-fixed — no
+                        # regression versus a bare match, and the
+                        # cluster↔cluster correspondence stays ambiguous.
                         break
                     else:
                         right_mr = len(self.multiple_roots)
@@ -1161,14 +1165,37 @@ class ZeroManager:
         MANUALLY SET during segment finalization, not returned by
         ``compute_tangent`` — do not remove it under the assumption that it
         was computed analytically.
+
+        Frame rule: every interior MR record shares the track frame of its
+        boundary row.  The one exception is the θ=0 boundary MR reused as the
+        last segment's RIGHT boundary at θ=2π: its ``cluster_indices`` index
+        the θ=0 modulus-sorted ``left_boundary_roots``, while the closing row
+        is in that segment's track frame.  The class convention
+        ``roots_right[boundary_perm] == roots_left`` means left column ``k``
+        is right column ``boundary_perm[k]`` there, so the columns must be
+        translated before being marked.
         """
         n = tangents.shape[0]
         for row, mr_idx in ((0, left_mr), (n - 1, right_mr)):
             if mr_idx < 0:
                 continue
+            seam_translate = (
+                row == n - 1
+                and mr_idx == 0
+                and self.has_boundary_mr
+            )
+            if seam_translate and not hasattr(self, "boundary_perm"):
+                raise RuntimeError(
+                    "cannot mark the θ=2π boundary MR tangents before "
+                    "boundary_perm is set; compute the right→left root "
+                    "monodromy before appending the final segment"
+                )
+
             for cluster in self.multiple_roots[mr_idx].cluster_indices:
                 for col in cluster:
-                    tangents[row, int(col)] = np.inf + 0j
+                    out_col = (int(self.boundary_perm[int(col)])
+                               if seam_translate else int(col))
+                    tangents[row, out_col] = np.inf + 0j
         return tangents
 
     def _append_segment(

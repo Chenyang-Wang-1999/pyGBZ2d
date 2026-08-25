@@ -50,7 +50,7 @@ In general the SGBZ spectrum is a subset of the amoeba spectrum. For uniform ban
 
 **Unified Hermite interpolation** (2026-08-15): cubic-Hermite polynomial construction goes through `continuation.interpolation` — `cubic_hermite_poly` / `hermite_interp_poly` (automatic linear fallback for non-finite endpoint derivatives). The new `Mu2Mid` path uses it per smooth piece; crossing refinement itself is purely linear + `brentq`.
 
-**0/∞ clamp policy**: the clamp to `±_LOGABS_CLAMP_L = ±14` applies **only when building μ₂_mid values** (`Mu2Mid` knots). Everywhere else — ItemView clustering, pairwise `d` scanning and brentq refinement — reads the **raw** `ln|β₂|`. A 0/∞ padding root therefore stays ±∞ outside μ₂_mid: its pair differences never sign-change (no crossing), and NaN/±∞ modulus differences fail the cluster test. Only μ₂_mid itself maps a 0/∞ boundary root's `ln|β|` to the band edge and averages it with the other boundary value.
+**0/∞ clamp policy**: ItemView sorting and pairwise `d` scanning read the **raw** `ln|β₂|`, so 0/∞ padding roots stay `∓∞` at the outer sort positions. They must not become the M-1/M boundary pair: `_build_item_views` raises explicitly in that case, because the SGBZ modulus would be exactly 0 or ∞. The clamp to `±_LOGABS_CLAMP_L = ±14` applies only to finite boundary-pair knot values while building μ₂_mid, not to padding roots.
 
 > **⚠ Warning — M = 0 or N = 0 is NOT solvable.** When the characteristic polynomial has `M = 0` or `N = 0` (check `CharPoly.get_minor_degrees()`), the SGBZ boundary pair necessarily includes padding roots at `β₂ = 0` or `β₂ = ∞`, i.e. **the SGBZ modulus itself must be 0 or ∞**. This code cannot solve such models: the clamped μ₂_mid (band edge ±14) is only a finite stand-in, not the true boundary, and the crossing/winding on a degenerate 0/∞ boundary is unreliable. Callers must exclude `M = 0` / `N = 0` models before invoking `collect_GBZ_subsets`, or treat any result as unphysical.
 
@@ -64,7 +64,7 @@ Continuum detection is folded into the μ₂_mid build (`Mu2MidZM.has_continuum`
 
 - `_find_boundary_runs`: split each segment's `j_lo == j_hi == item` rows into maximal contiguous runs (multiple runs per segment are possible — the same continuum pair can drop out of the boundary and re-enter later).
 - `_runs_to_pieces`: one `_LinePiece` per run per continuum track (each cluster column is a distinct β₂ curve at the same `|β₂|`).
-- `_join_runs_across_mrs`: join pieces whose endpoints touch a segment edge (MR / θ₁=0≡2π seam). An endpoint strictly inside a segment is a sort-change terminator — no join. At an MR, if the endpoint root is in the MR's cluster the track terminates; otherwise it continues into the adjacent segment and is matched by root value. Iterated to a fixpoint so chains and the cyclic seam converge.
+- `_join_runs_across_mrs`: join pieces whose endpoints touch a segment edge (MR / θ₁=0≡2π seam). An endpoint strictly inside a segment is a sort-change terminator — no join. At an MR, if the endpoint track column is in the MR's cluster the track terminates; otherwise it continues into the adjacent segment by column identity (`boundary_perm` at the cyclic seam). Iterated to a fixpoint so chains and the cyclic seam converge.
 
 ### 2.3 PointSubset Materialization (in `winding.py`; formerly `crossings.py`)
 
@@ -94,6 +94,9 @@ column. Charge is the side-change rule
 `-1` for positions < M; q may be 0 for merged events.
 
 **Charge classification** (in the materialized charge dicts):
+- Classification is stored per REAL column in `EventGroup.column_kind`, so
+  one merged θ can simultaneously contain an MR component and an unrelated
+  ordinary component.
 - **Ordinary** (charge ±1/0): the side-change charge `q` computed by
   `pairwise.finalize_event_groups`.
 - **Hard boundaries — MR / tangent**: the charge is **unknown**. The charge

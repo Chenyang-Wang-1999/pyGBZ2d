@@ -136,6 +136,9 @@ class EventGroup:
     changes_boundary: bool = False
     point_columns: tuple[int, ...] = ()
     column_q: dict[int, int | None] = field(default_factory=dict)
+    # Hard/soft classification at component granularity.  A merged group can
+    # contain an MR component and an unrelated ordinary crossing at the same θ.
+    column_kind: dict[int, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -1097,12 +1100,17 @@ def finalize_event_groups(zm: Mu2MidZM, groups: list[EventGroup]) -> None:
                     or {M - 1, M} <= positions_right):
                 continue
 
-            hard = any(
+            comp = (g.item_components[comp_idx]
+                    if comp_idx < len(g.item_components) else ())
+            component_mr = any(
+                e.is_mr
+                for e in g.events
+                if e.ia in comp or e.ib in comp
+            )
+            hard = component_mr or any(
                 e.direction is None
                 for e in g.events
-                if (comp_idx < len(g.item_components)
-                    and (e.ia in g.item_components[comp_idx]
-                         or e.ib in g.item_components[comp_idx]))
+                if e.ia in comp or e.ib in comp
             )
             for c in sorted(col_comp):
                 if hard:
@@ -1116,6 +1124,11 @@ def finalize_event_groups(zm: Mu2MidZM, groups: list[EventGroup]) -> None:
                         zm, s_idx, row, c, right, inv_perm, M)
                     q = int((side_right - side_left) / 2)
                 g.column_q.setdefault(c, q)
+                g.column_kind[c] = (
+                    'mr' if component_mr
+                    else 'tangent' if q is None
+                    else 'ordinary'
+                )
                 if c not in g.point_columns:
                     g.point_columns += (c,)
         g.point_columns = tuple(sorted(g.point_columns))

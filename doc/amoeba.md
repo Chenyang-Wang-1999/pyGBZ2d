@@ -169,8 +169,8 @@ Given E, bisect μ₁ so that w1 = 0 while maintaining w2 = 0:
 - Non-continuum tracks → record `hits` as `(seg_idx, i, j, kind)` with `kind ∈ {'zero', 'cross'}`, deferred to a second pass for boundary dedup.
 
 **Continuum join across MRs** (`_join_continuum_across_mrs`, zm_extract.py:157): a segment boundary is an MR, but only the roots listed in `multiple_roots[mr].cluster_indices` are genuinely multiple there; every other root passes straight through. A continuum track whose endpoint root is **not** in the cluster continues into the adjacent segment on the matched track. The join:
-- Matches by root **value** (frame-independent) — works whether the boundary row is modulus-sorted (the boundary MR at $\theta_1=0$) or track-ordered (an interior MR).
-- `_is_cluster_endpoint` (zm_extract.py:127) tests whether an endpoint root value is part of the MR cluster; `mr < 0` marks the $\theta_1=0/2\pi$ circle seam (no MR there).
+- Matches continuation by **column identity**: interior MR rows share one track frame, while the cyclic first/last-segment seam is translated through `boundary_perm` (`roots_right[boundary_perm] == roots_left`).
+- `_is_cluster_endpoint` (zm_extract.py:127) tests whether an endpoint track column is part of the MR cluster; `mr < 0` marks the $\theta_1=0/2\pi$ circle seam (no MR there). At the θ=2π reuse of boundary MR 0, the right-frame column is translated back through `boundary_perm` before checking MR 0's θ=0-frame `cluster_indices`.
 - `_merge_two` (zm_extract.py:263) concatenates as `[prev, cur[1:]]` — drops the shared MR row, keeps $\theta_1$ monotonic. For the cyclic seam ($\theta_1=0 \equiv 2\pi$), `prev` is the last segment and `cur` is segment 0; the seam lands inside the array so the array's two ends fall on the real terminators.
 - Iterated to a fixpoint so chains and the cyclic seam converge. Raises `ValueError` on a topology inconsistency (a track ends as a non-cluster root in one segment but the matched track is a cluster root in the other).
 
@@ -379,7 +379,7 @@ coeffs.append(-1.0);  degs.extend([ 0,  0, -1])   # -beta2^{-1}
 | `extract_amoeba_subsets` | Full GBZ subset output (LineSubset + PointSubset) with Rule 1/Rule 2 boundary dedup. |
 | `_finalize_crossing` | Turn a recorded hit into `(θ₁, β₂)` per `mode` (linear / fsolve-refined). |
 | `_zero_identity_key` | Identity key for exact-touch dedup: `(endpoint, track)`, never `θ₁`. |
-| `_is_cluster_endpoint` | Whether an endpoint root value is part of the boundary MR cluster (frame-independent value match). |
+| `_is_cluster_endpoint` | Whether an endpoint track column is part of the boundary MR cluster (column identity; `boundary_perm` translation at the cyclic boundary-MR seam). |
 | `_join_continuum_across_mrs` | Join per-segment continuum LineSubsets passing through MRs as non-cluster roots; iterated to fixpoint. |
 | `_merge_two` | Concatenate two `_LinePiece`s, dropping the shared MR row; cyclic-seam variant puts the seam inside the array. |
 | `_LinePiece` | Per-segment continuum LineSubset being joined; carries `ml`/`mr` (outermost segment indices spanned). |
