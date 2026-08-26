@@ -373,125 +373,151 @@ class Mu2MidZM(ZeroManager):
     # ItemView construction (unchanged semantics)
     # ------------------------------------------------------------------
 
+    def _detect_continuum_clusters_for_segment(
+        self, seg, tie_tol: float,
+    ) -> list:
+        """Same-modulus column clusters of ONE segment.
+
+        Per-segment kernel of :meth:`_detect_continuum_clusters_internal`;
+        extracted so the multi-crossing refinement loop can rebuild a single
+        segment's clusters after inserting rows there, without paying for
+        the untouched segments again.
+        """
+        K = self.K
+        N = len(seg.theta1_arr)
+        if N == 0:
+            return []
+        logabs = np.log(np.abs(seg.tracked_roots))
+        same = np.zeros((K, K), dtype=bool)
+        for j in range(K):
+            for k in range(j + 1, K):
+                frac_in_band = np.mean(
+                    np.abs(logabs[:, j] - logabs[:, k]) < tie_tol)
+                if frac_in_band > CONTINUUM_FRAC:
+                    same[j, k] = same[k, j] = True
+        visited = [False] * K
+        clusters: list[tuple] = []
+        for j in range(K):
+            if visited[j]:
+                continue
+            cluster: list[int] = []
+            stack = [j]
+            visited[j] = True
+            while stack:
+                c = stack.pop()
+                cluster.append(c)
+                for k in range(K):
+                    if not visited[k] and same[c, k]:
+                        visited[k] = True
+                        stack.append(k)
+            if len(cluster) > 1:
+                clusters.append(tuple(cluster))
+        return clusters
+
     def _detect_continuum_clusters_internal(self, tie_tol: float) -> list:
         """Per-segment same-modulus clusters of zero-curve COLUMNS."""
-        clusters_per_seg: list[list] = []
-        for seg in self.segments:
-            K = self.K
-            N = len(seg.theta1_arr)
-            if N == 0:
-                clusters_per_seg.append([])
-                continue
-            logabs = np.log(np.abs(seg.tracked_roots))
-            same = np.zeros((K, K), dtype=bool)
-            for j in range(K):
-                for k in range(j + 1, K):
-                    frac_in_band = np.mean(
-                        np.abs(logabs[:, j] - logabs[:, k]) < tie_tol)
-                    if frac_in_band > CONTINUUM_FRAC:
-                        same[j, k] = same[k, j] = True
-            visited = [False] * K
-            clusters: list[tuple] = []
-            for j in range(K):
-                if visited[j]:
-                    continue
-                cluster: list[int] = []
-                stack = [j]
-                visited[j] = True
-                while stack:
-                    c = stack.pop()
-                    cluster.append(c)
-                    for k in range(K):
-                        if not visited[k] and same[c, k]:
-                            visited[k] = True
-                            stack.append(k)
-                if len(cluster) > 1:
-                    clusters.append(tuple(cluster))
-            clusters_per_seg.append(clusters)
-        return clusters_per_seg
+        return [
+            self._detect_continuum_clusters_for_segment(seg, tie_tol)
+            for seg in self.segments
+        ]
+
+    def _build_item_view_for_segment(
+        self, s_idx: int, seg, clusters: list,
+    ) -> ItemView:
+        """ItemView of ONE segment from its (optional) continuum clusters.
+
+        Per-segment kernel of :meth:`_build_item_views`; *clusters* must
+        already be resolved for this segment (no index-based fallback here).
+        """
+        M = self.M
+        K = self.K
+        N = len(seg.theta1_arr)
+        if N == 0:
+            return ItemView(
+                np.array([], dtype=int), np.array([], dtype=int),
+                np.empty((0, 0)), np.empty((0, 0)),
+                np.empty((0, K), dtype=int),
+                np.array([], dtype=int), np.array([], dtype=int),
+            )
+        logabs = np.log(np.abs(seg.tracked_roots))
+        tang_re = seg.tangents.real
+
+        cluster_cols: set[int] = set()
+        for c in clusters:
+            cluster_cols.update(c)
+
+        rep_cols: list[int] = []
+        mults: list[int] = []
+        for c in clusters:
+            rep_cols.append(int(c[0]))
+            mults.append(len(c))
+        for j in range(K):
+            if j not in cluster_cols:
+                rep_cols.append(j)
+                mults.append(1)
+        rep_cols_arr = np.array(rep_cols, dtype=int)
+        mults_arr = np.array(mults, dtype=int)
+
+        item_logabs = logabs[:, rep_cols_arr]
+        item_tang_re = tang_re[:, rep_cols_arr]
+
+        sort_to_item = np.empty((N, K), dtype=int)
+        order = np.argsort(item_logabs, axis=1)
+        for i in range(N):
+            sort_to_item[i] = np.repeat(order[i], mults_arr[order[i]])
+
+        j_lo = sort_to_item[:, M - 1]
+        j_hi = sort_to_item[:, M]
+
+        # Padding roots legitimately live at the outer sort positions
+        # (-∞ for β₂=0, +∞ for β₂=∞).  They may not, however, become the
+        # finite μ₂_mid boundary pair: that would make the SGBZ modulus
+        # itself 0 or ∞, for which the ±14 clamp is only an unphysical
+        # finite stand-in.  Fail explicitly instead of building such a
+        # path.
+        rows = np.arange(N)
+        lo_vals = item_logabs[rows, j_lo]
+        hi_vals = item_logabs[rows, j_hi]
+        bad_rows = np.flatnonzero(
+            ~np.isfinite(lo_vals) | ~np.isfinite(hi_vals))
+        if bad_rows.size:
+            details = []
+            for i in bad_rows[:3]:
+                li, hi = int(j_lo[i]), int(j_hi[i])
+                details.append(
+                    f"row={int(i)} items=({li},{hi}) "
+                    f"logabs=({float(lo_vals[i]):.6g},"
+                    f"{float(hi_vals[i]):.6g})")
+            more = f" (+{bad_rows.size - len(details)} more)" \
+                if bad_rows.size > len(details) else ""
+            raise ValueError(
+                f"padding β₂ root occupies the M-1/M boundary pair in "
+                f"segment {s_idx}: {'; '.join(details)}{more}; the "
+                f"SGBZ boundary is degenerate at |β₂|=0 or |β₂|=∞ and "
+                f"cannot be represented by the finite μ₂_mid path"
+            )
+
+        return ItemView(
+            rep_cols_arr, mults_arr, item_logabs, item_tang_re,
+            sort_to_item, j_lo, j_hi,
+        )
 
     def _build_item_views(
         self, continuum_clusters: list | None,
     ) -> list[ItemView]:
-        """Per-segment ItemView from the (optional) continuum clusters."""
-        M = self.M
-        K = self.K
+        """Per-segment ItemView from the (optional) continuum clusters.
+
+        Dispatches through the CLASS so unbound calls with a duck-typed
+        ``zm`` (SimpleNamespace in tests) keep working — only ``self.M`` /
+        ``self.K`` are read, never instance methods.
+        """
         views: list[ItemView] = []
         for s_idx, seg in enumerate(self.segments):
-            N = len(seg.theta1_arr)
-            if N == 0:
-                views.append(ItemView(
-                    np.array([], dtype=int), np.array([], dtype=int),
-                    np.empty((0, 0)), np.empty((0, 0)),
-                    np.empty((0, K), dtype=int),
-                    np.array([], dtype=int), np.array([], dtype=int),
-                ))
-                continue
-            logabs = np.log(np.abs(seg.tracked_roots))
-            tang_re = seg.tangents.real
-
             clusters = (continuum_clusters[s_idx]
                         if continuum_clusters and s_idx < len(continuum_clusters)
                         else [])
-            cluster_cols: set[int] = set()
-            for c in clusters:
-                cluster_cols.update(c)
-
-            rep_cols: list[int] = []
-            mults: list[int] = []
-            for c in clusters:
-                rep_cols.append(int(c[0]))
-                mults.append(len(c))
-            for j in range(K):
-                if j not in cluster_cols:
-                    rep_cols.append(j)
-                    mults.append(1)
-            rep_cols_arr = np.array(rep_cols, dtype=int)
-            mults_arr = np.array(mults, dtype=int)
-
-            item_logabs = logabs[:, rep_cols_arr]
-            item_tang_re = tang_re[:, rep_cols_arr]
-
-            sort_to_item = np.empty((N, K), dtype=int)
-            order = np.argsort(item_logabs, axis=1)
-            for i in range(N):
-                sort_to_item[i] = np.repeat(order[i], mults_arr[order[i]])
-
-            j_lo = sort_to_item[:, M - 1]
-            j_hi = sort_to_item[:, M]
-
-            # Padding roots legitimately live at the outer sort positions
-            # (-∞ for β₂=0, +∞ for β₂=∞).  They may not, however, become the
-            # finite μ₂_mid boundary pair: that would make the SGBZ modulus
-            # itself 0 or ∞, for which the ±14 clamp is only an unphysical
-            # finite stand-in.  Fail explicitly instead of building such a
-            # path.
-            rows = np.arange(N)
-            lo_vals = item_logabs[rows, j_lo]
-            hi_vals = item_logabs[rows, j_hi]
-            bad_rows = np.flatnonzero(
-                ~np.isfinite(lo_vals) | ~np.isfinite(hi_vals))
-            if bad_rows.size:
-                details = []
-                for i in bad_rows[:3]:
-                    li, hi = int(j_lo[i]), int(j_hi[i])
-                    details.append(
-                        f"row={int(i)} items=({li},{hi}) "
-                        f"logabs=({float(lo_vals[i]):.6g},"
-                        f"{float(hi_vals[i]):.6g})")
-                more = f" (+{bad_rows.size - len(details)} more)" \
-                    if bad_rows.size > len(details) else ""
-                raise ValueError(
-                    f"padding β₂ root occupies the M-1/M boundary pair in "
-                    f"segment {s_idx}: {'; '.join(details)}{more}; the "
-                    f"SGBZ boundary is degenerate at |β₂|=0 or |β₂|=∞ and "
-                    f"cannot be represented by the finite μ₂_mid path"
-                )
-
-            views.append(ItemView(
-                rep_cols_arr, mults_arr, item_logabs, item_tang_re,
-                sort_to_item, j_lo, j_hi,
-            ))
+            views.append(Mu2MidZM._build_item_view_for_segment(
+                self, s_idx, seg, clusters))
         return views
 
     # ------------------------------------------------------------------
@@ -634,6 +660,31 @@ def _split_piece_at_clamp(
     h = t1 - t0
     poly = hermite_interp_poly(h, v0, dv0, v1, dv1)
     deriv = np.polyder(poly)
+
+    # Amplitude guard before the two root solves: the Bernstein control
+    # points bound the piece's whole value range (convex hull property),
+    # so a piece whose hull stays inside the clamp band can never cross
+    # ±14 and both np.roots calls would provably find nothing.  The band
+    # only matters next to MRs where a boundary root's ln|β₂| diverges
+    # (|β₂| = e^14 ≈ 1.2e6); ordinary pieces sit at O(1) and skip both
+    # solves.  Divergent endpoint slopes degrade the piece to linear,
+    # whose hull is just its two endpoint values.  Closed inequalities
+    # are safe: a tangential interior touch of the bound is an output
+    # no-op — splitting there and refitting from the split endpoint
+    # values/derivatives reproduces the same cubic (cubic-Hermite
+    # uniqueness), so missing such a root changes nothing.
+    if np.isfinite(dv0) and np.isfinite(dv1):
+        hull = (v0, v1, v0 + h * dv0 / 3.0, v1 - h * dv1 / 3.0)
+    else:
+        hull = (v0, v1)
+    if max(hull) <= _LOGABS_CLAMP_L and min(hull) >= -_LOGABS_CLAMP_L:
+        # Bit-identical to the unguarded no-crossing path below (same
+        # _make_piece refit over the full interval).
+        return [_make_piece(
+            t0, t1,
+            float(np.polyval(poly, 0.0)), float(np.polyval(deriv, 0.0)),
+            float(np.polyval(poly, h)), float(np.polyval(deriv, h)),
+        )]
 
     xs = [0.0, h]
     for bound in (-_LOGABS_CLAMP_L, _LOGABS_CLAMP_L):

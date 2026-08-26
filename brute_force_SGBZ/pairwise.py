@@ -245,6 +245,7 @@ def _find_refinement_plans(
     *,
     tie_tol: float,
     crossing_tol: float,
+    seg_filter=None,
 ) -> list[_RefinementPlan]:
     """Cheap logabs-distance screen + cubic-Hermite root prediction.
 
@@ -256,9 +257,17 @@ def _find_refinement_plans(
     (the Hermite anchor is unreliable there, so be conservative).  The
     predicted roots of all suspicious pairs are merged per interval; a plan
     is emitted only when at least two well-separated roots survive.
+
+    *seg_filter* (iterable of segment indices) restricts the scan to those
+    segments; ``None`` scans all.  Used by the refinement loop to rescan
+    only the segments whose mesh actually changed.
     """
+    if seg_filter is not None:
+        seg_filter = set(seg_filter)
     plans: list[_RefinementPlan] = []
     for s_idx, seg in enumerate(zm.segments):
+        if seg_filter is not None and s_idx not in seg_filter:
+            continue
         th = seg.theta1_arr
         n = len(th)
         if n < 2:
@@ -299,6 +308,24 @@ def _find_refinement_plans(
                         or mr_adjacent
                     )
                     if (not suspicious and d0 * d1 > 0.0):
+                        # Amplitude guard before the numeric dip test: the
+                        # cubic's Bernstein control points bound its whole
+                        # value range (convex hull property), so a same-sign
+                        # pair whose hull stays clear of the ±tie_tol band
+                        # cannot dip near zero and needs no root solve.
+                        # Non-finite slopes make hermite_interp_poly degrade
+                        # to the linear [slope, d0] poly, which cannot dip
+                        # between same-sign endpoints either — skip both.
+                        if math.isfinite(m0) and math.isfinite(m1):
+                            c1 = d0 + h * m0 / 3.0
+                            c2 = d1 - h * m1 / 3.0
+                            if d0 > 0.0:
+                                if min(d0, d1, c1, c2) >= tie_tol:
+                                    continue
+                            elif max(d0, d1, c1, c2) <= -tie_tol:
+                                continue
+                        else:
+                            continue
                         poly = hermite_interp_poly(h, d0, m0, d1, m1)
                         suspicious = _hermite_dips_near_zero(
                             poly, d0, tie_tol=tie_tol, h=h)
@@ -371,13 +398,20 @@ def _insert_refinement_grids(
     safety_factor: float,
     max_subintervals: int,
     max_total_inserts: int | None,
-) -> int:
-    """Insert every plan's sub-mesh (descending θ per segment)."""
+) -> tuple[int, set[int]]:
+    """Insert every plan's sub-mesh (descending θ per segment).
+
+    Returns ``(inserted_total, modified_segs)`` — the number of rows
+    actually inserted and the set of segment indices whose mesh changed.
+    The refinement loop uses *modified_segs* to rebuild clusters / ItemView
+    / plans for exactly those segments on the next round.
+    """
     by_seg: dict[int, list[_RefinementPlan]] = {}
     for p in plans:
         by_seg.setdefault(p.seg_idx, []).append(p)
 
     inserted_total = 0
+    modified_segs: set[int] = set()
     for s_idx, seg_plans in sorted(by_seg.items()):
         seg = zm.segments[s_idx]
         th = np.asarray(seg.theta1_arr, dtype=float)
@@ -407,7 +441,7 @@ def _insert_refinement_grids(
         for theta in sorted(deduped, reverse=True):
             if (max_total_inserts is not None
                     and inserted_total >= max_total_inserts):
-                return inserted_total
+                return inserted_total, modified_segs
             try:
                 _, changed = zm.insert_solution(
                     theta, seg_idx=s_idx, interp='hermite')
@@ -419,7 +453,29 @@ def _insert_refinement_grids(
                 continue
             if changed:
                 inserted_total += 1
-    return inserted_total
+                modified_segs.add(s_idx)
+    return inserted_total, modified_segs
+
+
+def _views_in_sync_with_mesh(zm) -> bool:
+    """Whether ``zm._item_views`` / ``_continuum_clusters`` match the mesh.
+
+    Row-count check per segment is sufficient: the views are a pure
+    function of ``(tracked_roots, tangents, mesh)`` and the row count is
+    the only quantity the refinement insertion changes.  A stale or absent
+    pair forces the caller into a full rebuild.
+    """
+    segs = zm.segments
+    views = getattr(zm, "_item_views", None)
+    clusters = getattr(zm, "_continuum_clusters", None)
+    if not isinstance(views, list) or len(views) != len(segs):
+        return False
+    if not isinstance(clusters, list) or len(clusters) != len(segs):
+        return False
+    for seg, view in zip(segs, views):
+        if view.item_logabs.shape[0] != len(seg.theta1_arr):
+            return False
+    return True
 
 
 def refine_mesh_for_multiple_crossings(
@@ -435,32 +491,66 @@ def refine_mesh_for_multiple_crossings(
     """Refine mesh intervals holding two or more close crossings.
 
     Runs between ``ZeroManager.run()`` and :func:`collect_pair_events`: every
-    round rebuilds ItemView on the current mesh, re-predicts multi-root
-    intervals with cubic Hermite, inserts the sub-mesh, and repeats.  Returns
-    the number of inserted rows.  The final EventGroup pass is unchanged —
-    it simply sees one crossing per sub-interval.
+    round re-predicts multi-root intervals with cubic Hermite, inserts the
+    sub-mesh, and repeats.  Returns the number of inserted rows.  The final
+    EventGroup pass is unchanged — it simply sees one crossing per
+    sub-interval.
+
+    Cost model: clusters / ItemView / plans are per-segment pure functions
+    of the mesh, and an insertion only touches ONE segment.  So the first
+    round reuses the caller's views when they are still in sync with the
+    mesh (``analyze()`` builds them right before calling this — rebuilding
+    them here would duplicate that work on an unchanged mesh), and every
+    later round rebuilds and rescans ONLY the segments that received rows.
+    Plans of unrescanned segments carry over unchanged (their mesh did not
+    move, so a rescan would reproduce them deterministically).
     """
     if max_rounds <= 0:
         return 0
+
+    n_seg = len(zm.segments)
+    if _views_in_sync_with_mesh(zm):
+        # analyze() builds the views right before calling this — reuse them
+        # instead of duplicating that work on an unchanged mesh.
+        clusters_cache: list = list(zm._continuum_clusters)
+        views_cache: list = list(zm._item_views)
+        rebuild_segs: set[int] = set()
+    else:
+        clusters_cache = [None] * n_seg
+        views_cache = [None] * n_seg
+        rebuild_segs = set(range(n_seg))
 
     total = 0
     last_plans: list[_RefinementPlan] = []
     force_final_insert = False
 
-    for _ in range(max_rounds):
-        # Rebuild the ItemView on the CURRENT (possibly refined) mesh.
-        clusters = zm._detect_continuum_clusters_internal(tie_tol)
-        zm._continuum_clusters = clusters
-        zm._item_views = zm._build_item_views(clusters)
+    for round_idx in range(max_rounds):
+        for s_idx in rebuild_segs:
+            clusters_cache[s_idx] = \
+                zm._detect_continuum_clusters_for_segment(
+                    zm.segments[s_idx], tie_tol)
+            views_cache[s_idx] = zm._build_item_view_for_segment(
+                s_idx, zm.segments[s_idx], clusters_cache[s_idx])
+        zm._continuum_clusters = clusters_cache
+        zm._item_views = views_cache
 
-        last_plans = _find_refinement_plans(
-            zm, tie_tol=tie_tol, crossing_tol=crossing_tol)
+        # Round 1 scans everything (first prediction pass); later rounds
+        # rescan only the segments whose mesh received rows.
+        scan_segs = (set(range(n_seg)) if round_idx == 0 else rebuild_segs)
+        new_plans = _find_refinement_plans(
+            zm, tie_tol=tie_tol, crossing_tol=crossing_tol,
+            seg_filter=scan_segs or None,
+        )
+        # Carry over plans of segments NOT rescanned: their mesh is
+        # unchanged, so a rescan would reproduce them bit-for-bit.
+        last_plans = [p for p in last_plans if p.seg_idx not in scan_segs]
+        last_plans.extend(new_plans)
         if not last_plans:
             break
 
         budget = (None if max_total_inserts is None
                   else max(0, max_total_inserts - total))
-        inserted = _insert_refinement_grids(
+        inserted, modified = _insert_refinement_grids(
             zm, last_plans,
             safety_factor=safety_factor,
             max_subintervals=max_subintervals,
@@ -481,6 +571,7 @@ def refine_mesh_for_multiple_crossings(
                 f"unbudgeted insertion pass"
             )
             break
+        rebuild_segs = modified
     else:
         force_final_insert = True
 
@@ -494,7 +585,7 @@ def refine_mesh_for_multiple_crossings(
             safety_factor=safety_factor,
             max_subintervals=max_subintervals,
             max_total_inserts=None,
-        )
+        )[0]
     return total
 
 
