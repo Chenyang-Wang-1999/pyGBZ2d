@@ -97,8 +97,9 @@ brute-force-non-hermitian/
 │   ├── sn-main.tex             # Simplified paper for SGBZ, main text
 │   └── sn-supp.tex             # Simplified paper for SGBZ, supplementary information. Amoeba GBZ is discussed in section{Comparison with reported frameworks}
 ├── TODO/                       # Optimization checklists + engineering plans
-│                               #   (charpoly-pluggable-backend.md — DONE;
-│                               #   exact-degeneracy-boundary-behavior.md — open)
+│                               #   (exact-degeneracy-boundary-behavior.md — open;
+│                               #   warm-start ZM — open; resolved items are
+│                               #   archived as meeting records in log/)
 └── README.md
 ```
 
