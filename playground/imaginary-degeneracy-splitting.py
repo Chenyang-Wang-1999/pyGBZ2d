@@ -13,7 +13,7 @@ from scipy import linalg as la
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import brute_force_amoeba as bfa
+import bfgbz2d.amoeba as bfa
 print(bfa.__file__)
 
 

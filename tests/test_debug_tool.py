@@ -19,7 +19,7 @@ matplotlib.use("Agg")
 
 from conftest import build_HN2D_polynomial
 
-from gbz_types import CharPoly, PointSubset, LineSubset, TWO_PI
+from bfgbz2d.core import CharPoly, PointSubset, LineSubset, TWO_PI
 
 from debug_tool import (
     MethodDebug, GBZDebugReport, LoopWinding, GapCheck, MethodLoops,
@@ -244,7 +244,7 @@ class TestHaldaneDebugPoint:
         from pathlib import Path
         root = Path(__file__).resolve().parents[1]
         spec = importlib.util.spec_from_file_location(
-            "haldane", root / "demos" / "Haldane-model-gainloss.py")
+            "haldane", root / "playground" / "Haldane-model-gainloss.py")
         h = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(h)
         model = h.Haldane_non_Hermitian_phase(*h.ALL_PARAMS)

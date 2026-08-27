@@ -20,7 +20,7 @@ from typing import NamedTuple, Optional
 import warnings
 
 
-from gbz_types import (
+from bfgbz2d.core import (
     TWO_PI,
     CharPoly,
     hungarian_match_indices,

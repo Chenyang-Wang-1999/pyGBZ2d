@@ -9,7 +9,7 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 import numpy as np
 from typing import Optional, NamedTuple
 from cmath import exp
-from gbz_types import (
+from bfgbz2d.core import (
     TWO_PI,
     CharPoly,
     hungarian_match_indices,

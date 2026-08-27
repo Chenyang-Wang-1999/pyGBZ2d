@@ -5,8 +5,8 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 
 Fixed-(E_ref, mu1) GBZ + winding-loop debugging tools.
 
-The solver entry points (:func:`brute_force_SGBZ.collect_GBZ_subsets` /
-:func:`brute_force_amoeba.collect_GBZ_subsets`) *solve* for mu1, so when a
+The solver entry points (:func:`bfgbz2d.sgbz.collect_GBZ_subsets` /
+:func:`bfgbz2d.amoeba.collect_GBZ_subsets`) *solve* for mu1, so when a
 result looks wrong there is no way to inspect what the machinery sees at the
 candidate mu1.  This module freezes mu1 instead and exposes, per method
 ("sgbz" / "amoeba"):
@@ -24,7 +24,7 @@ candidate mu1.  This module freezes mu1 instead and exposes, per method
 
        * SGBZ  : ``beta2 = exp(mu2_mid(theta1) + i*theta2)`` — the same
          piecewise-smooth boundary-pair mean the solver integrates over
-         (reuses ``brute_force_SGBZ.winding._loop_winding_quad`` /
+         (reuses ``bfgbz2d.sgbz.winding._loop_winding_quad`` /
          ``_loop_min_f``, so the numbers here are bit-comparable with the
          solver's own winding evaluation).
        * amoeba: ``beta2 = exp(mu2 + i*theta2)`` fixed (mu2 = the w2=0
@@ -57,24 +57,24 @@ from typing import Optional, Sequence, Union
 
 import numpy as np
 
-from gbz_types import (
+from bfgbz2d.core import (
     CharPoly, PointSubset, LineSubset, TWO_PI, circ_dist,
 )
 
-from brute_force_SGBZ import (
+from bfgbz2d.sgbz import (
     Mu2MidZM, detect_crossings_simple, compute_average_winding,
     extract_continuum_linesubsets, CONTINUUM_TOL,
 )
 # Private winding helpers imported deliberately: the debug tool must show the
 # SAME loop-winding evaluation the solver uses, not a re-implementation that
 # could silently diverge from it.
-from brute_force_SGBZ.winding import (
+from bfgbz2d.sgbz.winding import (
     _loop_winding_quad, _loop_min_f, WindingFun, get_winding_number,
 )
-from brute_force_SGBZ.mu2mid import _CROSSING_TOL
-from brute_force_amoeba.bisect import _find_mu2_for_w2_zero
-from brute_force_amoeba.zm_extract import AmoebaZeroManager, extract_amoeba_subsets
-from brute_force_amoeba.ronkin_winding import _get_average_winding_from_zeros
+from bfgbz2d.sgbz.mu2mid import _CROSSING_TOL
+from bfgbz2d.amoeba.bisect import _find_mu2_for_w2_zero
+from bfgbz2d.amoeba.zm_extract import AmoebaZeroManager, extract_amoeba_subsets
+from bfgbz2d.amoeba.ronkin_winding import _get_average_winding_from_zeros
 
 
 __all__ = [
@@ -437,7 +437,7 @@ def auto_theta2_grid(
 
     Midpoints maximize the distance from every profile jump, which is where
     the loop stays farthest from the zeros of f (the same "safest seed"
-    idea as ``brute_force_SGBZ.winding._pick_seed_theta2``).  The *widest*
+    idea as ``bfgbz2d.sgbz.winding._pick_seed_theta2``).  The *widest*
     gaps are preferred (capped at *max_loops*) so a densely sampled
     continuum line does not flood the plot with dozens of loops.
 

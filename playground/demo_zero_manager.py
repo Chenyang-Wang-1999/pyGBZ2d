@@ -11,8 +11,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import gbz_types
-import continuation
+import bfgbz2d.core as gbz_types
+import bfgbz2d.continuation as continuation
 
 def test_winding_around_0():
     mu1 = 0.2

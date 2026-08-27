@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 import networkx as nx
 
-from gbz_types import LineSubset, to_sphere_r3, TWO_PI
+from bfgbz2d.core import LineSubset, to_sphere_r3, TWO_PI
 from demo_nexus import build_nexus, nexus_info
 from demo_fku import fku_triangulate
 
@@ -60,7 +60,7 @@ def _torus_point(theta1, theta2):
 
 def _solve_nexus_at_E(coeffs, degs, E):
     """Re-solve GBZ at energy E via amoeba, build and return the nexus."""
-    import brute_force_amoeba as bfa
+    import bfgbz2d.amoeba as bfa
 
     res = bfa.collect_GBZ_subsets(coeffs, degs, E, 0.0, debug_mode=False)
     if not res.success or res.index == (0, 0):

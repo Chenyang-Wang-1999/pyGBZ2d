@@ -7,7 +7,7 @@ first), so the tests verify them through ``np.polyval`` / ``np.polyder``.
 import numpy as np
 import pytest
 
-from continuation.interpolation import cubic_hermite_poly, hermite_interp_poly
+from bfgbz2d.continuation.interpolation import cubic_hermite_poly, hermite_interp_poly
 
 
 def test_cubic_hermite_poly_reproduces_cubic():

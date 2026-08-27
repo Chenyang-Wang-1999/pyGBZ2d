@@ -45,8 +45,8 @@ import numpy as np
 from cmath import exp
 from scipy import integrate
 
-from gbz_types import CharPoly, PointSubset, TWO_PI
-from continuation import ZeroManager
+from bfgbz2d.core import CharPoly, PointSubset, TWO_PI
+from bfgbz2d.continuation import ZeroManager
 
 from .mu2mid import Mu2MidZM, ensure_mu2mid, _CROSSING_TOL
 

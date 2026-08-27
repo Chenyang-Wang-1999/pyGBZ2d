@@ -1,13 +1,13 @@
-"""Tests for brute_force_amoeba module using 2D HN model analytic solution."""
+"""Tests for bfgbz2d.amoeba module using 2D HN model analytic solution."""
 
 import numpy as np
 import pytest
 from cmath import exp
 
-import brute_force_amoeba as bfa
-from brute_force_amoeba.bisect import _resolve_continuum
-from brute_force_amoeba.zm_extract import AmoebaZeroManager
-from gbz_types import PointSubset, LineSubset, GBZResult, CharPoly, TWO_PI
+import bfgbz2d.amoeba as bfa
+from bfgbz2d.amoeba.bisect import _resolve_continuum
+from bfgbz2d.amoeba.zm_extract import AmoebaZeroManager
+from bfgbz2d.core import PointSubset, LineSubset, GBZResult, CharPoly, TWO_PI
 
 from conftest import build_HN2D_polynomial
 
@@ -120,8 +120,8 @@ def _build_two_segment_zm(mu2, cont_on_seg1=True, cluster_tracks=(0, 1),
     cluster terminator and the only joinable boundary is the interior MR).
     """
     from cmath import exp, pi
-    from continuation.zero_manager import SegmentData
-    from continuation.multiple_roots import MultipleRootInfo
+    from bfgbz2d.continuation.zero_manager import SegmentData
+    from bfgbz2d.continuation.multiple_roots import MultipleRootInfo
     from types import SimpleNamespace
 
     K = 3
@@ -206,7 +206,7 @@ class TestContinuumThroughMR:
         (A 2-segment full-circle continuum has no genuine endpoint anywhere, so
         it is a closed loop; we open it at the interior MR and keep the seam
         interior rather than fabricating endpoints at θ₁=0/2π.)"""
-        from brute_force_amoeba.zm_extract import (
+        from bfgbz2d.amoeba.zm_extract import (
             _join_continuum_across_mrs, _LinePiece,
         )
         zm, masks, mu1, E = _build_two_segment_zm(mu2=0.3)
@@ -255,7 +255,7 @@ class TestContinuumThroughMR:
         would splice segment 0's right end (θ=π) onto the last segment's
         second point — a different physical point — and break β₂ continuity.
         """
-        from brute_force_amoeba.zm_extract import (
+        from bfgbz2d.amoeba.zm_extract import (
             _join_continuum_across_mrs, _LinePiece,
         )
         # Track 2 in the interior-MR cluster → interior boundary does not join.
@@ -296,7 +296,7 @@ class TestContinuumThroughMR:
         """If a non-cluster endpoint has no matching continuum in the adjacent
         segment, the join must raise (topology inconsistency), not silently
         truncate."""
-        from brute_force_amoeba.zm_extract import (
+        from bfgbz2d.amoeba.zm_extract import (
             _join_continuum_across_mrs, _LinePiece,
         )
         zm, masks, mu1, E = _build_two_segment_zm(
@@ -321,7 +321,7 @@ class TestContinuumThroughMR:
         only joinable boundary is the interior MR at θ₁=π.  Track 2 outside
         the cluster → joins (1 piece); track 2 inside the cluster → does not
         (2 pieces)."""
-        from brute_force_amoeba.zm_extract import (
+        from bfgbz2d.amoeba.zm_extract import (
             _join_continuum_across_mrs, _LinePiece,
         )
 
@@ -462,7 +462,7 @@ class TestResolveContinuum:
 
 @pytest.fixture
 def nnc_char_poly():
-    """Build the next-nearest-coupling model from demos/imaginary-degeneracy-splitting.py."""
+    """Build the next-nearest-coupling model from playground/imaginary-degeneracy-splitting.py."""
     # README lists BerryPy as OPTIONAL; skip (not error) when it is absent.
     tb = pytest.importorskip("BerryPy").TightBinding
 
@@ -521,8 +521,8 @@ class TestPlateauEdge:
         fixed-grid behaviour, which produced 4 canceling spurious zeros at
         the edge; the functional outcome (edge → non-GBZ) is unchanged."""
         char_poly, coeffs, degs = nnc_char_poly
-        from brute_force_amoeba.bisect import bisect_amoeba_ronkin_min
-        from brute_force_amoeba.ronkin_winding import _get_average_winding_from_zeros
+        from bfgbz2d.amoeba.bisect import bisect_amoeba_ronkin_min
+        from bfgbz2d.amoeba.ronkin_winding import _get_average_winding_from_zeros
 
         res = bisect_amoeba_ronkin_min(char_poly, self.E_PLATEAU_EDGE)
         zeros = res["zeros"]
@@ -548,7 +548,7 @@ class TestPlateauEdge:
         crossings, so the net jump count is trivially 0 — the point is a
         uniform zero-w2 plateau, not a genuine GBZ with canceling jumps."""
         char_poly, coeffs, degs = nnc_char_poly
-        from brute_force_amoeba.bisect import bisect_amoeba_ronkin_min
+        from bfgbz2d.amoeba.bisect import bisect_amoeba_ronkin_min
 
         res = bisect_amoeba_ronkin_min(char_poly, self.E_PLATEAU_EDGE)
         zeros = res["zeros"]

@@ -7,7 +7,7 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 from typing import Optional
 import numpy as np
 
-from gbz_types import (
+from bfgbz2d.core import (
     PointSubset, LineSubset, GBZResult, CharPoly,
     check_points_clustered_on_torus, probe_zero_plateau,
 )
@@ -30,7 +30,7 @@ def _check_zeros_are_clustered(
     """Whether every amoeba zero has a neighbour within *tol_normalized*.
 
     Thin amoeba adapter over
-    :func:`gbz_types.check_points_clustered_on_torus`: amoeba zeros carry a
+    :func:`bfgbz2d.core.check_points_clustered_on_torus`: amoeba zeros carry a
     trailing ``jump`` component, so only the first two are forwarded as
     ``(θ₁, θ₂)``.
 
@@ -86,7 +86,7 @@ def _probe_zero_plateau_near_mu1(
         bracket_width = abs(float(mu1_bracket[1]) - float(mu1_bracket[0]))
 
     def evaluator(mu1_probe: float) -> dict:
-        # The shared ladder protocol (gbz_types.probe_zero_plateau) reads
+        # The shared ladder protocol (bfgbz2d.core.probe_zero_plateau) reads
         # "success" to skip failed probes and keep walking the ladder.  The
         # inner μ₂ bisection legitimately fails on the out-of-spectrum side
         # of a band edge (w2 has no sign change → range-expansion error) —

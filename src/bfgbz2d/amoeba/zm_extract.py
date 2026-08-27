@@ -30,14 +30,14 @@ from typing import Literal, Optional
 
 import numpy as np
 
-from gbz_types import (
+from bfgbz2d.core import (
     TWO_PI,
     CharPoly, PointSubset, LineSubset,
     JoinableLinePiece, is_mr_cluster_endpoint,
 )
 
 from .ronkin_winding import _find_exact_crossing, _get_average_winding_from_zeros
-from continuation.zero_manager import SegmentData, ZeroManager
+from bfgbz2d.continuation.zero_manager import SegmentData, ZeroManager
 
 
 # A genuine continuum is constant-modulus to ~1e-9; a transversal crossing
@@ -112,8 +112,8 @@ def _continuum_mask(zm: AmoebaZeroManager, mu2: float, tol: float, frac: float) 
 # MR-boundary joining for continuum LineSubsets
 # ---------------------------------------------------------------------------
 #
-# _LinePiece / _is_cluster_endpoint live in gbz_types (as JoinableLinePiece /
-# is_mr_cluster_endpoint) — they are shared with brute_force_SGBZ's continuum
+# _LinePiece / _is_cluster_endpoint live in bfgbz2d.core (as JoinableLinePiece /
+# is_mr_cluster_endpoint) — they are shared with bfgbz2d.sgbz's continuum
 # extractor.  The old underscore names remain as aliases for the in-module
 # call sites and the tests that construct pieces directly.
 

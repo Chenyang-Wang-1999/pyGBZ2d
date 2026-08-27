@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 import importlib.util
 
 import numpy as np
-import brute_force_SGBZ as bfs
+import bfgbz2d.sgbz as bfs
 
 _spec = importlib.util.spec_from_file_location(
     "haldane_gainloss", ROOT / "demos" / "Haldane-model-gainloss.py")

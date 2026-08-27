@@ -22,7 +22,7 @@ import numpy as np
 from cmath import exp
 from scipy.optimize import fsolve
 
-from gbz_types import CharPoly, TWO_PI
+from bfgbz2d.core import CharPoly, TWO_PI
 
 
 def _find_exact_crossing(

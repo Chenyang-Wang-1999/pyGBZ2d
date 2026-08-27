@@ -36,7 +36,7 @@ def build_haldane_polynomial():
     """Haldane gain-loss 2-cell supercell characteristic polynomial."""
     import importlib.util
     spec = importlib.util.spec_from_file_location(
-        "haldane", ROOT / "demos" / "Haldane-model-gainloss.py")
+        "haldane", ROOT / "playground" / "Haldane-model-gainloss.py")
     h = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(h)
     model = h.Haldane_non_Hermitian_phase(*h.ALL_PARAMS)
@@ -85,7 +85,7 @@ def main(argv=None):
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt  # noqa: F401  (backend fixed above)
 
-    from gbz_types import CharPoly
+    from bfgbz2d.core import CharPoly
     from debug_tool import collect_debug_subsets, plot_winding_debug
 
     builder, E_default, mu1_default = MODELS[args.model]

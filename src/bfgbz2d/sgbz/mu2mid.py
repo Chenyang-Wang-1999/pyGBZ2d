@@ -22,7 +22,7 @@ outside the band become constant ``v=±14, dv=0`` pieces.  No post-hoc clip
 exists anywhere downstream.
 
 ``Mu2MidZM.analyze()`` runs the pairwise intersection pipeline
-(:mod:`brute_force_SGBZ.pairwise`) and then builds this path.
+(:mod:`bfgbz2d.sgbz.pairwise`) and then builds this path.
 '''
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ from typing import NamedTuple
 
 import numpy as np
 
-from continuation import ZeroManager
-from continuation.interpolation import hermite_interp_poly
+from bfgbz2d.continuation import ZeroManager
+from bfgbz2d.continuation.interpolation import hermite_interp_poly
 
 from .pairwise import (
     EventGroup,
@@ -277,7 +277,7 @@ class Mu2MidZM(ZeroManager):
         clustering source).  ``None`` runs the internal whole-segment vote.
 
         ``refine_multi_crossings`` enables the pre-crossing mesh refinement
-        pass (:func:`brute_force_SGBZ.pairwise.refine_mesh_for_multiple_crossings`)
+        pass (:func:`bfgbz2d.sgbz.pairwise.refine_mesh_for_multiple_crossings`)
         that isolates intervals with two or more close crossings before the
         sign-change scan runs.
         """

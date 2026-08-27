@@ -14,7 +14,7 @@ PointSubsets and the loop-winding path ``μ₂_mid(θ₁)`` is the independent
 piecewise-smooth ``Mu2Mid`` object.
 '''
 
-from gbz_types import (
+from bfgbz2d.core import (
     PointSubset, LineSubset, GBZResult, ConnectedSubset, CharPoly,
     get_minor_degrees,
 )

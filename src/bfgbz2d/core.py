@@ -335,8 +335,8 @@ ConnectedSubset = Union[PointSubset, LineSubset]
 # Cross-module LineSubset joining helpers
 # ---------------------------------------------------------------------------
 #
-# Both the amoeba extractor (brute_force_amoeba.zm_extract) and the SGBZ
-# continuum extractor (brute_force_SGBZ.continuum_lines) join per-segment
+# Both the amoeba extractor (bfgbz2d.amoeba.zm_extract) and the SGBZ
+# continuum extractor (bfgbz2d.sgbz.continuum_lines) join per-segment
 # continuum LineSubsets across MR boundaries into closed curves.  The join
 # unit and the MR-cluster endpoint test are module-agnostic (they only need
 # the ZeroManager protocol: segments with left_mr/right_mr, multiple_roots),

@@ -52,9 +52,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.optimize import brentq
 
-from gbz_types import TWO_PI
-from continuation import ZeroManager
-from continuation.interpolation import hermite_interp_poly
+from bfgbz2d.core import TWO_PI
+from bfgbz2d.continuation import ZeroManager
+from bfgbz2d.continuation.interpolation import hermite_interp_poly
 
 if TYPE_CHECKING:
     from .mu2mid import Mu2MidZM

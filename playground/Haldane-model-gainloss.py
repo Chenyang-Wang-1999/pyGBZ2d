@@ -19,8 +19,8 @@ from scipy import interpolate
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import brute_force_SGBZ as bfs
-import brute_force_amoeba as bfa
+import bfgbz2d.sgbz as bfs
+import bfgbz2d.amoeba as bfa
 print("Using ", bfs.__file__)
 
 ALL_PARAMS = (
@@ -430,6 +430,8 @@ def plot_amoebic_spectrum(suffix=""):
     ind_amoeba = [i for i in range(len(res)) if res[i].is_gbz]
     ind_not_amoeba = [i for i in range(len(res)) if not res[i].is_gbz and res[i].success]
 
+    print("Failed:", ind_failed)
+
     # Plot
     plt.figure()
     plt.plot(E_list[ind_amoeba].real, E_list[ind_amoeba].imag, '.', label="SGBZ")
@@ -570,24 +572,24 @@ def debug_y_SGBZ():
 
 
 if __name__ == "__main__":
-    sweep_amoeba()
-    sweep_amoeba_multiband()
-    sweep_SGBZ_a1()
-    sweep_SGBZ_a2()
-    sweep_SGBZ_x()
-    sweep_SGBZ_y()
+    # sweep_amoeba()
+    # sweep_amoeba_multiband()
+    # sweep_SGBZ_a1()
+    # sweep_SGBZ_a2()
+    # sweep_SGBZ_x()
+    # sweep_SGBZ_y()
     # recompute_failed_SGBZ("y")
     # recompute_failed_SGBZ("y", out_fname="data/Haldane-gain-loss-y-SGBZ-recomputed.pkl")
     # recompute_failed_SGBZ("x", out_fname="data/Haldane-gain-loss-x-SGBZ-recomputed.pkl")
     # recompute_failed_SGBZ("a1", out_fname="data/Haldane-gain-loss-a1-SGBZ-recomputed.pkl")
     # recompute_failed_SGBZ("a2", out_fname="data/Haldane-gain-loss-a2-SGBZ-recomputed.pkl")
-    # plot_amoebic_spectrum()
+    plot_amoebic_spectrum()
     # plot_amoeba_mu()
-    # plot_amoebic_spectrum("-xy")
-    # plot_SGBZ("a1")
-    # plot_SGBZ("a2")
-    # plot_SGBZ("x")
-    # plot_SGBZ("y")
+    plot_amoebic_spectrum("-xy")
+    plot_SGBZ("a1")
+    plot_SGBZ("a2")
+    plot_SGBZ("x")
+    plot_SGBZ("y")
     # plot_index_E("a1", kind="SGBZ")
     # plot_index_E("a2", kind="SGBZ")
     # plot_index_E("x", kind="SGBZ")

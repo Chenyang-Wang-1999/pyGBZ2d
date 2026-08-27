@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from gbz_types import CharPoly, LineSubset
-from continuation import ZeroManager
+from bfgbz2d.core import CharPoly, LineSubset
+from bfgbz2d.continuation import ZeroManager
 
 from .mu2mid import ensure_mu2mid
 from .mu2mid import Mu2MidZM, CONTINUUM_TOL
-from gbz_types import JoinableLinePiece as _LinePiece, is_mr_cluster_endpoint as _is_cluster_endpoint
+from bfgbz2d.core import JoinableLinePiece as _LinePiece, is_mr_cluster_endpoint as _is_cluster_endpoint
 
 
 # ---------------------------------------------------------------------------

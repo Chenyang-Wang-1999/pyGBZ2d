@@ -1,11 +1,19 @@
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+try:
+    import bfgbz2d  # noqa: F401  — prefer the installed package when present
+except ModuleNotFoundError:
+    # Fallback for running tests from a source checkout without
+    # ``pip install -e .`` (src layout): prepend src/ so ``import bfgbz2d``
+    # resolves to the same files the installed package would provide.
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 import pytest
 
-# Shared HN-2D test models — previously duplicated (with drift) across
-# test_amoeba / test_continuation / test_sgbz / test_zero_manager.
+# NOTE: tests import ``bfgbz2d`` (installed package preferred, src/ fallback).
+# Shared HN-2D test models below were previously duplicated (with drift)
+# across test files.
 from cmath import exp as _exp
 
 import numpy as np

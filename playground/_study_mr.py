@@ -4,8 +4,8 @@ Study nexus structure + MR positions. Trace MR evolution across E=0.
 import sys, numpy as np, networkx as nx
 sys.path.insert(0, '.')
 sys.path.insert(0, 'demos')
-from gbz_types import CharPoly, LineSubset, TWO_PI
-from continuation import ZeroManager
+from bfgbz2d.core import CharPoly, LineSubset, TWO_PI
+from bfgbz2d.continuation import ZeroManager
 from trivial_model import get_model, DEFAULT_PARAMS
 from demo_nexus import build_nexus, nexus_info
 from demo_build_mesh import _solve_nexus_at_E

@@ -48,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from gbz_types import LineSubset, to_sphere_r3
+from bfgbz2d.core import LineSubset, to_sphere_r3
 
 
 def _oriented(line: LineSubset):

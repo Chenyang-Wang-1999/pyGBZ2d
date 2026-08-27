@@ -9,7 +9,7 @@ triangulation demos (advancing-front and edge-collapse).
 Pickles a list of GBZResults along a real E grid so the two demos don't each
 re-run collect_GBZ_subsets (~1.5 s per E point).  Run once to (re)build:
 
-    python demos/trivial_line_cache.py
+    python playground/trivial_line_cache.py
 '''
 
 import sys
@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pickle
 import numpy as np
 
-import brute_force_amoeba as bfa
+import bfgbz2d.amoeba as bfa
 from trivial_model import get_model, DEFAULT_PARAMS
 
 CACHE_PATH = Path(__file__).resolve().parent / "trivial_line_cache.pkl"

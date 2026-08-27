@@ -16,13 +16,13 @@ import pytest
 from math import pi
 from types import SimpleNamespace
 
-from gbz_types import CharPoly, JoinableLinePiece
+from bfgbz2d.core import CharPoly, JoinableLinePiece
 from conftest import build_HN2D_polynomial
 
-import brute_force_SGBZ as bfs
-from brute_force_SGBZ import pairwise as sgbz_pairwise
-from brute_force_SGBZ.mu2mid import Mu2MidZM
-from continuation.multiple_roots import solve_multiple_roots_iterative
+import bfgbz2d.sgbz as bfs
+from bfgbz2d.sgbz import pairwise as sgbz_pairwise
+from bfgbz2d.sgbz.mu2mid import Mu2MidZM
+from bfgbz2d.continuation.multiple_roots import solve_multiple_roots_iterative
 
 
 # ===========================================================================
@@ -33,7 +33,7 @@ def _haldane_gainloss_poly():
     """f(E, β₁, β₂) of the gain-loss Haldane model (γ on sublattice B).
 
     Built via BerryPy's TightBindingModel with the ALL_PARAMS of
-    demos/Haldane-model-gainloss.py: t1=1, t2=0.5, phi=π/3, M=0.5j,
+    playground/Haldane-model-gainloss.py: t1=1, t2=0.5, phi=π/3, M=0.5j,
     gamma=0 (γ enters as v1=v2=t2·e^{iγ} and the on-site ±M).
     """
     tb = pytest.importorskip("BerryPy").TightBinding
@@ -152,9 +152,9 @@ class TestSgbzPlateauProbe:
         should complete and report not_found (winding non-zero off the
         boundary), demonstrating the SGBZ-side probe path executes.
         """
-        from brute_force_SGBZ.plateau import _probe_zero_plateau_near_mu1
-        from brute_force_SGBZ.mu2mid import CONTINUUM_TOL, _CROSSING_TOL
-        from brute_force_SGBZ.sgbz_solver import solve_SGBZ_for_E
+        from bfgbz2d.sgbz.plateau import _probe_zero_plateau_near_mu1
+        from bfgbz2d.sgbz.mu2mid import CONTINUUM_TOL, _CROSSING_TOL
+        from bfgbz2d.sgbz.sgbz_solver import solve_SGBZ_for_E
 
         coeffs, degs = build_HN2D_polynomial(
             J1=1.0, J2=1.0, gamma_1=0.2, gamma_2=0.3,

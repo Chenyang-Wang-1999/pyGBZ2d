@@ -14,7 +14,7 @@ import networkx as nx
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gbz_types import LineSubset, to_sphere_r3, TWO_PI
+from bfgbz2d.core import LineSubset, to_sphere_r3, TWO_PI
 from demo_nexus import build_nexus, nexus_info
 from demo_fku import fku_triangulate
 from demo_build_mesh import (

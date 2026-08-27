@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import numpy as np
-from gbz_types import LineSubset
+from bfgbz2d.core import LineSubset
 
 
 def _oriented(line: LineSubset):
@@ -57,7 +57,7 @@ def _chordal(a: complex, b: complex) -> float:
     """Chordal distance between two complex β values (Riemann sphere)."""
     # Local chordal distance via stereographic projection; reuse the shared
     # helper for consistency with the matching demos.
-    from gbz_types import to_sphere_r3
+    from bfgbz2d.core import to_sphere_r3
     p = to_sphere_r3(np.array([a, b]))
     return float(np.linalg.norm(p[0] - p[1]))
 

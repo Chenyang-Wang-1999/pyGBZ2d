@@ -15,7 +15,7 @@ for the Ronkin minimum.
 """
 
 from typing import Optional
-from gbz_types import CharPoly
+from bfgbz2d.core import CharPoly
 
 from .ronkin_winding import _get_average_winding_from_zeros
 from .zm_extract import AmoebaZeroManager, amoeba_windings, CONTINUUM_FRAC

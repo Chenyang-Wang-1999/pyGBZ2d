@@ -23,7 +23,7 @@ from cmath import exp
 from dataclasses import dataclass
 from typing import Optional, NamedTuple
 
-from gbz_types import (
+from bfgbz2d.core import (
     CharPoly,
     hungarian_match_indices,
     to_sphere_r3,

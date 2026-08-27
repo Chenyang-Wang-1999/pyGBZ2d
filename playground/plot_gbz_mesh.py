@@ -2,14 +2,14 @@
 Standalone PyVista script to visualise the GBZ mesh saved by demo_build_mesh.py.
 
 Usage:
-    python demos/plot_gbz_mesh.py
+    python playground/plot_gbz_mesh.py
 '''
 
 import pickle
 from pathlib import Path
 import numpy as np
 
-from gbz_types import TWO_PI
+from bfgbz2d.core import TWO_PI
 import pyvista as pv
 
 HERE = Path(__file__).resolve().parent

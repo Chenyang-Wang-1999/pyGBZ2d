@@ -3,3 +3,8 @@ __pycache__
 .vscode
 *.pkl
 *.prof
+src/bfgbz2d.egg-info/
+build/
+dist/
+*.egg-info/
+.pytest_cache/

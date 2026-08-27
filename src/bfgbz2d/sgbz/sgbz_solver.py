@@ -21,7 +21,7 @@ from typing import Optional
 
 import numpy as np
 
-from gbz_types import (
+from bfgbz2d.core import (
     PointSubset, LineSubset, GBZResult, CharPoly,
 )
 

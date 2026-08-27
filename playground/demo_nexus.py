@@ -118,7 +118,7 @@ import numpy as np
 import networkx as nx
 from scipy.spatial import KDTree
 
-from gbz_types import (LineSubset, PointSubset, GBZResult, to_sphere_r3,
+from bfgbz2d.core import (LineSubset, PointSubset, GBZResult, to_sphere_r3,
                        chordal_cost_matrix, TWO_PI)
 
 

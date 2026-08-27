@@ -20,7 +20,7 @@ import numpy as np
 import networkx as nx
 from scipy.spatial import Delaunay
 
-from gbz_types import LineSubset, to_sphere_r3, TWO_PI
+from bfgbz2d.core import LineSubset, to_sphere_r3, TWO_PI
 from demo_nexus import build_nexus, nexus_info
 from demo_build_mesh import (
     _solve_nexus_at_E, _cycle_vertex_order, _torus_point,

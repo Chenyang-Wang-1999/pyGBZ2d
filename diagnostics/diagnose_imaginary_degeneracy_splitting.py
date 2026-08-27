@@ -1,5 +1,5 @@
 '''
-Diagnostic experiment for demos/imaginary-degeneracy-splitting.py.
+Diagnostic experiment for playground/imaginary-degeneracy-splitting.py.
 
 This script intentionally does not modify the amoeba implementation.  It
 measures the a1 winding curve obtained after solving a2(mu1, mu2) = 0, then
@@ -20,7 +20,7 @@ import sys
 from dataclasses import dataclass
 from math import pi
 
-from gbz_types import TWO_PI
+from bfgbz2d.core import TWO_PI
 from pathlib import Path
 from typing import Iterable
 
@@ -30,8 +30,8 @@ if str(ROOT) not in sys.path:
 
 import numpy as np
 
-import brute_force_amoeba.amoeba as amo
-from gbz_types import CharPoly
+import bfgbz2d.amoeba.amoeba as amo
+from bfgbz2d.core import CharPoly
 
 
 DEMO_PATH = ROOT / "demos" / "imaginary-degeneracy-splitting.py"
