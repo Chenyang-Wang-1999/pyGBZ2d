@@ -19,7 +19,7 @@ from bfgbz2d.core import (
     get_minor_degrees,
 )
 
-from bfgbz2d.config import CONTINUUM_TOL, CONTINUUM_FRAC
+from bfgbz2d.core import CONTINUUM_TOL, CONTINUUM_FRAC
 from .mu2mid import (
     Mu2MidZM, Mu2Mid, Mu2MidPiece,
     ItemView,

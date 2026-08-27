@@ -9,8 +9,14 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 import numpy as np
 from typing import Optional, NamedTuple
 from cmath import exp
-from bfgbz2d import config
-from bfgbz2d.config import live_defaults
+# Chordal-distance threshold for detect_cluster — the single cluster
+# predicate of the MR machinery (unified 2026-08 to the ZeroManager.run
+# side value; the old direct-call default 1e-6 is retired).
+CLUSTER_TOL: float = 1e-4
+#: Closest-pair distance below which the MR interval trigger arms.
+MIN_DIST_THRESHOLD: float = 0.1
+
+from bfgbz2d.core import live_defaults
 from bfgbz2d.core import (
     TWO_PI,
     CharPoly,
@@ -105,10 +111,11 @@ def snap_clusters_to_mean(
 # bisection + refine).
 
 
+@live_defaults(min_dtheta="continuation.zero_manager:MIN_DTHETA")
 def multiple_root_point_trigger(
     dtheta: float,
     *,
-    min_dtheta: float = 1e-10,
+    min_dtheta: Optional[float] = None,
 ) -> bool:
     """Trigger when the arclength step size has collapsed below *min_dtheta*.
 
@@ -142,7 +149,9 @@ class MultipleRootIntervalTrigger:
                 bisect(*interval)  # MR candidate in [interval[0], interval[1]]
     """
 
-    def __init__(self, min_dist_threshold: float = 0.1) -> None:
+    def __init__(self, min_dist_threshold: Optional[float] = None) -> None:
+        if min_dist_threshold is None:
+            min_dist_threshold = MIN_DIST_THRESHOLD
         self._min_dist_threshold = min_dist_threshold
         self._prev_deriv: int = 0          # −1=approaching, 0=unset, +1=separating
         self._prev_pair: tuple[int, int] | None = None
@@ -206,7 +215,7 @@ class MultipleRootIntervalTrigger:
         self._prev_V = None
 
 
-@live_defaults(cluster_tol="MR_CLUSTER_TOL")
+@live_defaults(cluster_tol="continuation.multiple_roots:CLUSTER_TOL")
 def detect_cluster(
     roots: np.ndarray,
     *,

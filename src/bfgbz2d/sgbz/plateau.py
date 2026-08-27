@@ -19,8 +19,8 @@ import math
 import cmath
 from typing import Optional
 
-from bfgbz2d import config
-from bfgbz2d.config import live_defaults
+from bfgbz2d import core
+from bfgbz2d.core import live_defaults
 from bfgbz2d.core import (
     TWO_PI,
     CharPoly, GBZResult, PointSubset,
@@ -33,9 +33,10 @@ from .winding import detect_crossings_and_winding
 
 # ---- clustering pre-check ----
 
+@live_defaults(tol_normalized="core:PLATEAU_CLUSTER_TOL")
 def _check_pmgbz_points_clustered(
     gbz: GBZResult,
-    tol_normalized: float = 1e-2,
+    tol_normalized: Optional[float] = None,
 ) -> bool:
     """Whether every PMGBZ point has a neighbour within *tol_normalized*.
 
@@ -108,7 +109,7 @@ def _is_zero_plateau_probe(point: dict, zero_tol: float) -> bool:
     )
 
 
-@live_defaults(zero_tol="ZERO_TOL", continuum_perturb="CONTINUUM_PERTURB")
+@live_defaults(zero_tol="core:WINDING_ZERO_TOL", continuum_perturb="core:CONTINUUM_PERTURB")
 def _probe_zero_plateau_near_mu1(
     poly: CharPoly,
     E_ref: complex,

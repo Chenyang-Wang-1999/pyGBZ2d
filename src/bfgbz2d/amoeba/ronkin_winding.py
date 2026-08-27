@@ -22,7 +22,11 @@ import numpy as np
 from cmath import exp
 from scipy.optimize import fsolve
 
-from bfgbz2d import config
+# fsolve refinement settings for amoeba (θ₁, θ₂) crossings.
+FSOLVE_XTOL: float = 1e-12
+FSOLVE_MAXFEV: int = 500
+#: Residual gate that accepts a refined crossing.
+CROSSING_RESIDUAL_TOL: float = 1e-10
 from bfgbz2d.core import CharPoly, TWO_PI
 
 
@@ -67,12 +71,12 @@ def _find_exact_crossing(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         sol = fsolve(func, [theta1_guess, theta2_guess], fprime=jac,
-                     xtol=config.FSOLVE_XTOL, maxfev=config.FSOLVE_MAXFEV)
+                     xtol=FSOLVE_XTOL, maxfev=FSOLVE_MAXFEV)
     t1, t2 = sol
     beta1 = exp(mu1 + 1j * t1)
     beta2 = exp(mu2 + 1j * t2)
     residual = abs(poly.eval_val((E_ref, beta1, beta2)))
-    if residual < config.FSOLVE_RESIDUAL_TOL:
+    if residual < CROSSING_RESIDUAL_TOL:
         return (float(t1 % (TWO_PI)), float(t2 % (TWO_PI)))
     return None
 

@@ -40,8 +40,13 @@ from .ronkin_winding import _find_exact_crossing, _get_average_winding_from_zero
 from bfgbz2d.continuation.zero_manager import SegmentData, ZeroManager
 
 
-from bfgbz2d import config
-from bfgbz2d.config import live_defaults
+from bfgbz2d import core
+from bfgbz2d.core import live_defaults
+
+#: Amoeba seam-snap radius (θ₁ scale).
+SNAP_TOL: float = 1e-3
+#: Amoeba root-deduplication radius (β₂-value scale).
+ROOT_TOL: float = 1e-9
 ExtractMode = Literal['coarse', 'fine', 'solve']
 
 
@@ -138,17 +143,17 @@ def _join_continuum_across_mrs(
     def find_by_left(seg_s: int, root: complex) -> int | None:
         # Piece whose leftmost spanned segment is seg_s and whose leftmost
         # β₂ ≈ root (continuum tracks on one segment are distinct roots).
-        # config.ROOT_TOL: the same root-value scale used by the Rule 1 screen —
+        # ROOT_TOL: the same root-value scale used by the Rule 1 screen —
         # continuum tracks are separated by O(1), so 1e-9 cleanly separates
         # "same track" from "adjacent track".
         for idx, p in enumerate(line_pieces):
-            if p.ml == seg_s and np.abs(p.beta2_arr[0] - root) < config.ROOT_TOL:
+            if p.ml == seg_s and np.abs(p.beta2_arr[0] - root) < ROOT_TOL:
                 return idx
         return None
 
     def find_by_right(seg_s: int, root: complex) -> int | None:
         for idx, p in enumerate(line_pieces):
-            if p.mr == seg_s and np.abs(p.beta2_arr[-1] - root) < config.ROOT_TOL:
+            if p.mr == seg_s and np.abs(p.beta2_arr[-1] - root) < ROOT_TOL:
                 return idx
         return None
 
@@ -264,7 +269,7 @@ def _merge_two(
 # Subset extraction (3 modes)
 # ---------------------------------------------------------------------------
 
-@live_defaults(tol="CONTINUUM_TOL", frac="CONTINUUM_FRAC", snap_tol="SNAP_TOL")
+@live_defaults(tol="core:CONTINUUM_TOL", frac="core:CONTINUUM_FRAC", snap_tol="amoeba.zm_extract:SNAP_TOL")
 def extract_amoeba_subsets(
     zm: AmoebaZeroManager,
     poly: CharPoly,
@@ -293,7 +298,7 @@ def extract_amoeba_subsets(
     Boundary dedup (after snap-to-mean, MR endpoints are exactly degenerate):
       - Rule 1 — drop any crossing within ``snap_tol`` of a continuum LineSubset
         endpoint (continuum/MR edge, not a genuine discrete zero), provided its
-        β₂ matches an in-band endpoint root within ``config.ROOT_TOL`` — the crossing
+        β₂ matches an in-band endpoint root within ``ROOT_TOL`` — the crossing
         is then the line's own endpoint curve.  A same-θ₁ crossing on a
         different, unconnected root is a genuine discrete zero and survives.
       - Rule 2 — ``d == 0`` exact touches are deduplicated by zero-point
@@ -396,7 +401,7 @@ def extract_amoeba_subsets(
             )
             in_band = d_circ < snap_tol
             if np.any(in_band) and np.any(
-                np.abs(cont_endpoint_roots[in_band] - b2) < config.ROOT_TOL
+                np.abs(cont_endpoint_roots[in_band] - b2) < ROOT_TOL
             ):
                 continue
 
@@ -516,7 +521,7 @@ def _finalize_crossing(
 # Winding (for the μ₂-bisection) — RAW crossing detection, no boundary rules
 # ---------------------------------------------------------------------------
 
-@live_defaults(tol="CONTINUUM_TOL", frac="CONTINUUM_FRAC")
+@live_defaults(tol="core:CONTINUUM_TOL", frac="core:CONTINUUM_FRAC")
 def amoeba_windings(
     zm: AmoebaZeroManager,
     poly: CharPoly,

@@ -25,8 +25,14 @@ from bfgbz2d.core import (
     PointSubset, LineSubset, GBZResult, CharPoly,
 )
 
-from bfgbz2d import config
-from bfgbz2d.config import live_defaults
+from bfgbz2d import core
+from bfgbz2d.core import live_defaults
+from . import pairwise as _pairwise
+
+#: Iteration budget of the μ₁ bisection.
+MU1_MAX_ITER: int = 60
+#: Cap on μ₁ bracket-expansion steps.
+MAX_BRACKET_EXPANSIONS: int = 10
 from .continuum_lines import (
     extract_continuum_linesubsets,
 )
@@ -39,7 +45,7 @@ from .mu2mid import Mu2MidZM
 # max_range_expansions=10).  The expansion loop only guards against runaway
 # cases (unsolvable models, non-monotonic winding); a normal winding crosses
 # zero within 1-2 steps of the default guess.
-config.MAX_BRACKET_EXPANSIONS = 10
+MAX_BRACKET_EXPANSIONS = 10
 
 
 # ---------------------------------------------------------------------------
@@ -129,14 +135,16 @@ def _resolve_continuum_winding(
 # μ₁ bisection (bracket expansion + plain midpoint with continuum interception)
 # ---------------------------------------------------------------------------
 
-@live_defaults(zero_tol="ZERO_TOL", continuum_perturb="CONTINUUM_PERTURB", continuum_tol="CONTINUUM_TOL", crossing_tol="CROSSING_TOL")
+@live_defaults(zero_tol="core:WINDING_ZERO_TOL", continuum_perturb="core:CONTINUUM_PERTURB",
+    continuum_tol="core:CONTINUUM_TOL", crossing_tol="sgbz.pairwise:CROSSING_TOL",
+    max_iter="sgbz.sgbz_solver:MU1_MAX_ITER")
 def solve_SGBZ_for_E(
     poly: CharPoly,
     E_ref: complex,
     mu1_guess: tuple[float, float] = (-1, 1),
     zero_tol: Optional[float] = None,
     continuum_perturb: Optional[float] = None,
-    max_iter: int = 60,
+    max_iter: Optional[int] = None,
     zm_run_kwargs: Optional[dict] = None,
     *,
     continuum_tol: Optional[float] = None,
@@ -145,7 +153,7 @@ def solve_SGBZ_for_E(
     """Locate the winding-zero mu1 and return solve diagnostics.
 
     Uses bracket expansion + plain bisection (midpoint).  Each side of the
-    bracket expansion is capped at ``config.MAX_BRACKET_EXPANSIONS`` steps (raise
+    bracket expansion is capped at ``MAX_BRACKET_EXPANSIONS`` steps (raise
     ``RuntimeError`` instead of looping forever on unsolvable / anomalous
     winding).  When a continuum-degenerate mu1 is encountered,
     ``_resolve_continuum_winding`` resolves the left/right winding limits;
@@ -254,7 +262,7 @@ def solve_SGBZ_for_E(
     w_high = None
     mu1_ext_right = None
 
-    for _ in range(config.MAX_BRACKET_EXPANSIONS):
+    for _ in range(MAX_BRACKET_EXPANSIONS):
         w_low, gbz_low, zm_low = winding_at(mu1_low)
         if w_low is None:
             is_boundary, proxy, result = handle_continuum(
@@ -281,7 +289,7 @@ def solve_SGBZ_for_E(
         mu1_low -= 1
     else:
         raise RuntimeError(
-            f"left bracket expansion exceeded {config.MAX_BRACKET_EXPANSIONS} steps: "
+            f"left bracket expansion exceeded {MAX_BRACKET_EXPANSIONS} steps: "
             f"E_ref={E_ref}, mu1={mu1_low}, winding={w_low}"
         )
 
@@ -306,7 +314,7 @@ def solve_SGBZ_for_E(
     if mu1_ext_right is None:
         mu1_ext_right = mu1_guess[1]
 
-    for _ in range(config.MAX_BRACKET_EXPANSIONS):
+    for _ in range(MAX_BRACKET_EXPANSIONS):
         w_high, gbz_high, zm_high = winding_at(mu1_ext_right)
         if w_high is None:
             is_boundary, proxy, result = handle_continuum(
@@ -324,7 +332,7 @@ def solve_SGBZ_for_E(
         mu1_ext_right += 1
     else:
         raise RuntimeError(
-            f"right bracket expansion exceeded {config.MAX_BRACKET_EXPANSIONS} steps: "
+            f"right bracket expansion exceeded {MAX_BRACKET_EXPANSIONS} steps: "
             f"E_ref={E_ref}, mu1={mu1_ext_right}, winding={w_high}"
         )
 
@@ -488,8 +496,8 @@ def collect_GBZ_subsets(
     zm_run_kwargs = solver_options.pop("zm_run_kwargs", {})
 
     # Continuum / crossing tunables (rarely overridden).
-    continuum_tol = solver_options.pop("continuum_tol", config.CONTINUUM_TOL)
-    crossing_tol = solver_options.pop("crossing_tol", config.CROSSING_TOL)
+    continuum_tol = solver_options.pop("continuum_tol", core.CONTINUUM_TOL)
+    crossing_tol = solver_options.pop("crossing_tol", _pairwise.CROSSING_TOL)
 
     # Obsolete knobs, accepted silently for API compatibility with older
     # callers: N_points (fixed mesh, replaced by the adaptive ZeroManager)

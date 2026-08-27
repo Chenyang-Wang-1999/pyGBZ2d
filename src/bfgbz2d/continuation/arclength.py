@@ -8,7 +8,7 @@ approximately constant.
 
 Adaptive step-size control follows the pattern of scipy's RK45 integrator:
 error between tangent-predicted roots and np.roots-actual roots drives the PI
-step-size controller with config.SAFETY, config.MIN_FACTOR, config.MAX_FACTOR, and error_exponent.
+step-size controller with SAFETY, MIN_FACTOR, MAX_FACTOR, and error_exponent.
 
 References
 ----------
@@ -23,7 +23,22 @@ from cmath import exp
 from dataclasses import dataclass
 from typing import Optional, NamedTuple
 
-from bfgbz2d import config
+# RK45-style step controller knobs — single consumer (this module).
+# StepControl fields left as None resolve from these at construction, so
+# ``arclength.SAFETY = 0.95`` reaches every controller built afterwards.
+SAFETY: float = 0.9
+MIN_FACTOR: float = 0.2
+MAX_FACTOR: float = 10.0
+#: -1/(p+1) for the first-order tangent predictor (p=1).
+ERROR_EXPONENT: float = -0.5
+STEP_ATOL: float = 1e-12
+STEP_RTOL: float = 1e-3
+STEP_MAX_ITER: int = 20
+MAX_STEP: float = 0.5
+MIN_STEP: float = 1e-12
+#: |β₂| below/above which a root is a singular 0/∞ padding root.
+ZERO_THRESHOLD: float = 1e-6
+INF_THRESHOLD: float = 1e6
 from bfgbz2d.core import (
     CharPoly,
     hungarian_match_indices,
@@ -36,14 +51,14 @@ from .interpolation import hermite_interp_poly
 class StepControl:
     """Tolerances and factors for the adaptive pseudo-arclength step controller.
 
-    Bundles the RK45-style PI controller knobs (config.SAFETY / config.MIN_FACTOR /
-    config.MAX_FACTOR / config.ERROR_EXPONENT) and the arclength step bounds so that
+    Bundles the RK45-style PI controller knobs (SAFETY / MIN_FACTOR /
+    MAX_FACTOR / ERROR_EXPONENT) and the arclength step bounds so that
     ``arclength_step``, ``integrate_segment`` and ``ZeroManager.run`` don't
     each re-declare nine parameters.  Add a knob here once; all three layers
     carry the same ``StepControl`` instance.
 
-    Fields left as ``None`` (the default) resolve from :mod:`bfgbz2d.config`
-    at CONSTRUCTION time, so a global ``config.SAFETY = ...`` override
+    Fields left as ``None`` (the default) resolve from this module's constants
+    at CONSTRUCTION time, so a global ``SAFETY = ...`` override
     reaches every subsequently created controller.
     """
     max_step: Optional[float] = None
@@ -71,7 +86,7 @@ class StepControl:
     def __post_init__(self):
         for fname, ckey in self._FIELDS_TO_CONFIG.items():
             if getattr(self, fname) is None:
-                object.__setattr__(self, fname, getattr(config, ckey))
+                object.__setattr__(self, fname, globals()[ckey])
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +112,7 @@ def _is_singular_root(beta2: complex) -> bool:
     so they are held fixed during prediction.
     """
     abs_b2 = np.abs(beta2)
-    return (abs_b2 < config.ZERO_THRESHOLD or abs_b2 > config.INF_THRESHOLD
+    return (abs_b2 < ZERO_THRESHOLD or abs_b2 > INF_THRESHOLD
             or not np.isfinite(beta2))
 
 
@@ -259,8 +274,8 @@ def predict_roots_hermite(
 def estimate_error(
     roots_predicted: np.ndarray,
     roots_actual: np.ndarray,
-    atol: float = config.STEP_ATOL,
-    rtol: float = config.STEP_RTOL,
+    atol: float = STEP_ATOL,
+    rtol: float = STEP_RTOL,
 ) -> float:
     """Compute error norm between tangent-predicted and np.roots-actual roots.
 

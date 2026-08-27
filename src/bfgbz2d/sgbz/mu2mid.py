@@ -37,8 +37,11 @@ import numpy as np
 from bfgbz2d.continuation import ZeroManager
 from bfgbz2d.continuation.interpolation import hermite_interp_poly
 
-from bfgbz2d import config
-from bfgbz2d.config import live_defaults
+from bfgbz2d import core
+from bfgbz2d.core import live_defaults
+
+#: Clamp band for ln|β₂| when building the μ₂_mid path (|β₂| = e^±14).
+LOGABS_CLAMP: float = 14.0
 from .pairwise import (
     EventGroup,
     collect_pair_events,
@@ -50,8 +53,8 @@ from .pairwise import (
 
 
 def logabs_clamped(roots: np.ndarray) -> np.ndarray:
-    """``np.log(np.abs(roots))`` with ±∞ clamped to ``±config.LOGABS_CLAMP``."""
-    return np.clip(np.log(np.abs(roots)), -config.LOGABS_CLAMP, config.LOGABS_CLAMP)
+    """``np.log(np.abs(roots))`` with ±∞ clamped to ``±LOGABS_CLAMP``."""
+    return np.clip(np.log(np.abs(roots)), -LOGABS_CLAMP, LOGABS_CLAMP)
 
 
 def ensure_mu2mid(zm: ZeroManager, **run_kwargs) -> "Mu2MidZM":
@@ -59,7 +62,7 @@ def ensure_mu2mid(zm: ZeroManager, **run_kwargs) -> "Mu2MidZM":
 
     A plain ``ZeroManager`` cannot be analyzed in place, so a fresh
     ``Mu2MidZM`` is constructed from its ``(poly, E_ref, mu1)``, run and
-    analyzed with ``tie_tol=config.CONTINUUM_TOL``.  This is the single bootstrap
+    analyzed with ``tie_tol=core.CONTINUUM_TOL``.  This is the single bootstrap
     every consumer (winding, continuum extraction) goes through, kept next
     to the class it builds.
     """
@@ -72,7 +75,7 @@ def ensure_mu2mid(zm: ZeroManager, **run_kwargs) -> "Mu2MidZM":
         return zm
     m = Mu2MidZM(zm.poly, zm.E_ref, zm.mu1)
     m.run(**run_kwargs)
-    m.analyze(tie_tol=config.CONTINUUM_TOL)
+    m.analyze(tie_tol=core.CONTINUUM_TOL)
     return m
 
 
@@ -241,7 +244,12 @@ class Mu2MidZM(ZeroManager):
     # Public entry point
     # ------------------------------------------------------------------
 
-    @live_defaults(tie_tol="CONTINUUM_TOL", crossing_tol="CROSSING_TOL", min_direction_deriv="MIN_DIRECTION_DERIV")
+    @live_defaults(tie_tol="core:CONTINUUM_TOL", crossing_tol="sgbz.pairwise:CROSSING_TOL",
+                     min_direction_deriv="sgbz.pairwise:MIN_DIRECTION_DERIV",
+                     refine_max_rounds="sgbz.pairwise:REFINE_MAX_ROUNDS",
+                     refine_safety_factor="sgbz.pairwise:REFINE_SAFETY_FACTOR",
+                     refine_max_subintervals="sgbz.pairwise:REFINE_MAX_SUBINTERVALS",
+                     refine_max_total_inserts="sgbz.pairwise:REFINE_MAX_TOTAL_INSERTS")
     def analyze(
         self,
         continuum_clusters: list | None = None,
@@ -251,10 +259,10 @@ class Mu2MidZM(ZeroManager):
         min_direction_deriv: Optional[float] = None,
         verbose: bool = False,
         refine_multi_crossings: bool = True,
-        refine_max_rounds: int = 3,
-        refine_safety_factor: float = 4.0,
-        refine_max_subintervals: int = 64,
-        refine_max_total_inserts: int = 2000,
+        refine_max_rounds: Optional[int] = None,
+        refine_safety_factor: Optional[float] = None,
+        refine_max_subintervals: Optional[int] = None,
+        refine_max_total_inserts: Optional[int] = None,
     ) -> None:
         """Run pairwise crossing analysis and build the μ₂_mid path.
 
@@ -326,7 +334,12 @@ class Mu2MidZM(ZeroManager):
         self.mu2_mid = build_mu2_mid(self, groups)
         self._sync_compat_arrays()
 
-    @live_defaults(tie_tol="CONTINUUM_TOL", crossing_tol="CROSSING_TOL", min_direction_deriv="MIN_DIRECTION_DERIV")
+    @live_defaults(tie_tol="core:CONTINUUM_TOL", crossing_tol="sgbz.pairwise:CROSSING_TOL",
+                     min_direction_deriv="sgbz.pairwise:MIN_DIRECTION_DERIV",
+                     refine_max_rounds="sgbz.pairwise:REFINE_MAX_ROUNDS",
+                     refine_safety_factor="sgbz.pairwise:REFINE_SAFETY_FACTOR",
+                     refine_max_subintervals="sgbz.pairwise:REFINE_MAX_SUBINTERVALS",
+                     refine_max_total_inserts="sgbz.pairwise:REFINE_MAX_TOTAL_INSERTS")
     def build_mu2_mid(
         self,
         continuum_clusters: list | None = None,
@@ -336,10 +349,10 @@ class Mu2MidZM(ZeroManager):
         min_direction_deriv: Optional[float] = None,
         verbose: bool = False,
         refine_multi_crossings: bool = True,
-        refine_max_rounds: int = 3,
-        refine_safety_factor: float = 4.0,
-        refine_max_subintervals: int = 64,
-        refine_max_total_inserts: int = 2000,
+        refine_max_rounds: Optional[int] = None,
+        refine_safety_factor: Optional[float] = None,
+        refine_max_subintervals: Optional[int] = None,
+        refine_max_total_inserts: Optional[int] = None,
     ) -> None:
         """Legacy-compatible alias for :meth:`analyze`."""
         self.analyze(
@@ -379,7 +392,7 @@ class Mu2MidZM(ZeroManager):
             for k in range(j + 1, K):
                 frac_in_band = np.mean(
                     np.abs(logabs[:, j] - logabs[:, k]) < tie_tol)
-                if frac_in_band > config.CONTINUUM_FRAC:
+                if frac_in_band > core.CONTINUUM_FRAC:
                     same[j, k] = same[k, j] = True
         visited = [False] * K
         clusters: list[tuple] = []
@@ -530,9 +543,9 @@ class Mu2MidZM(ZeroManager):
             rows = np.arange(N)
             mu = (
                 np.clip(view.item_logabs[rows, view.j_lo],
-                        -config.LOGABS_CLAMP, config.LOGABS_CLAMP)
+                        -LOGABS_CLAMP, LOGABS_CLAMP)
                 + np.clip(view.item_logabs[rows, view.j_hi],
-                          -config.LOGABS_CLAMP, config.LOGABS_CLAMP)
+                          -LOGABS_CLAMP, LOGABS_CLAMP)
             ) / 2.0
             dm = (view.item_tang_re[rows, view.j_lo]
                   + view.item_tang_re[rows, view.j_hi]) / 2.0
@@ -559,9 +572,9 @@ def _boundary_mean(
     item_hi: int,
 ) -> float:
     a = np.clip(float(view.item_logabs[row, item_lo]),
-                -config.LOGABS_CLAMP, config.LOGABS_CLAMP)
+                -LOGABS_CLAMP, LOGABS_CLAMP)
     b = np.clip(float(view.item_logabs[row, item_hi]),
-                -config.LOGABS_CLAMP, config.LOGABS_CLAMP)
+                -LOGABS_CLAMP, LOGABS_CLAMP)
     return float((a + b) / 2.0)
 
 
@@ -573,7 +586,7 @@ def _boundary_deriv(
 ) -> float:
     def contrib(item: int) -> float:
         raw = float(view.item_logabs[row, item])
-        if raw <= -config.LOGABS_CLAMP or raw >= config.LOGABS_CLAMP:
+        if raw <= -LOGABS_CLAMP or raw >= LOGABS_CLAMP:
             return 0.0  # clipped value is saturated → derivative zero
         d = float(view.item_tang_re[row, item])
         return d if np.isfinite(d) else float('inf')
@@ -663,7 +676,7 @@ def _split_piece_at_clamp(
         hull = (v0, v1, v0 + h * dv0 / 3.0, v1 - h * dv1 / 3.0)
     else:
         hull = (v0, v1)
-    if max(hull) <= config.LOGABS_CLAMP and min(hull) >= -config.LOGABS_CLAMP:
+    if max(hull) <= LOGABS_CLAMP and min(hull) >= -LOGABS_CLAMP:
         # Bit-identical to the unguarded no-crossing path below (same
         # _make_piece refit over the full interval).
         return [_make_piece(
@@ -673,7 +686,7 @@ def _split_piece_at_clamp(
         )]
 
     xs = [0.0, h]
-    for bound in (-config.LOGABS_CLAMP, config.LOGABS_CLAMP):
+    for bound in (-LOGABS_CLAMP, LOGABS_CLAMP):
         q = np.array(poly, dtype=complex)
         q[-1] -= bound
         for r in np.roots(q):
@@ -690,15 +703,15 @@ def _split_piece_at_clamp(
             continue
         mid = (a + b) / 2.0
         val_mid = float(np.polyval(poly, mid))
-        if -config.LOGABS_CLAMP <= val_mid <= config.LOGABS_CLAMP:
+        if -LOGABS_CLAMP <= val_mid <= LOGABS_CLAMP:
             va = float(np.polyval(poly, a))
             vb = float(np.polyval(poly, b))
             da = float(np.polyval(deriv, a))
             db = float(np.polyval(deriv, b))
             pieces.append(_make_piece(t0 + a, t0 + b, va, da, vb, db))
         else:
-            bound = (config.LOGABS_CLAMP if val_mid > config.LOGABS_CLAMP
-                     else -config.LOGABS_CLAMP)
+            bound = (LOGABS_CLAMP if val_mid > LOGABS_CLAMP
+                     else -LOGABS_CLAMP)
             pieces.append(_make_constant_piece(t0 + a, t0 + b, bound))
     return pieces
 

@@ -14,6 +14,9 @@ Provides:
 
 from __future__ import annotations
 
+import functools
+import importlib
+import inspect
 import math
 from cmath import exp, log
 from dataclasses import dataclass
@@ -29,6 +32,73 @@ from bfgbz2d.backend import make_laurent
 # (θ % 2π, circ_dist, closing-row θ=2π, boundary-MR tolerance) operate on
 # one bit-identical float.  Equal to math.tau; asserted in tests.
 TWO_PI: float = 2.0 * math.pi
+
+# ---------------------------------------------------------------------------
+# Cross-package numerical constants
+#
+# Only constants consumed by MORE THAN ONE subpackage live here (their
+# single-consumer relatives stay in their home modules — see
+# doc/constants.md for the full map).  All are plain module attributes:
+# assigning ``bfgbz2d.core.CONTINUUM_TOL = 1e-8`` takes effect
+# process-wide on the next read ("tune once per call → kwarg; tune for
+# the whole run → assign the constant").
+# ---------------------------------------------------------------------------
+
+#: Width of the continuum (degenerate-band) tolerance in μ-space; shared
+#: by the SGBZ tie detection and the amoeba band detection.
+CONTINUUM_TOL: float = 1e-6
+
+#: Vote fraction of in-band mesh rows above which an ItemView counts as
+#: a continuum cluster.
+CONTINUUM_FRAC: float = 0.9
+
+#: Base μ-perturbation used to escape a continuum band when probing the
+#: two winding limits (×1 member of ESCAPE_LADDER).
+CONTINUUM_PERTURB: float = 1e-4
+
+#: "|winding| counts as zero" predicate — SGBZ plateau probe (a₁) and
+#: the amoeba winding-tolerance floor share one threshold (they were two
+#: same-valued constants, zero_tol and winding_tol_floor, before 2026-08).
+WINDING_ZERO_TOL: float = 1e-10
+
+#: Torus-clustering radius for plateau probes (PMGBZ points) — shared by
+#: the SGBZ and amoeba probes (formerly tol_normalized vs
+#: plateau_cluster_tol, same value, same predicate).
+PLATEAU_CLUSTER_TOL: float = 1e-2
+
+#: Escape ladder: scale factors applied to CONTINUUM_PERTURB when a single
+#: step fails to leave a continuum band (was duplicated in three files).
+ESCAPE_LADDER: tuple = (1.0, 2.0, 4.0, 8.0)
+
+#: Step resolution of the probe stepper (generate_probe_steps).
+PROBE_XTOL: float = 1e-10
+
+
+def live_defaults(**param_to_key):
+    """Decorator: resolve ``None`` parameters from constants at CALL time.
+
+    Each key maps a parameter to its home constant as
+    ``"sub.module:CONST_NAME"`` (resolved against the ``bfgbz2d``
+    package).  This keeps public-entry keyword defaults live: assigning
+    the module constant takes effect on the next call, instead of being
+    frozen at ``def`` time.  Intended for top-level APIs; per-step hot
+    loops carry their knobs explicitly (e.g. ``StepControl``).
+    """
+    def decorator(fn):
+        sig = inspect.signature(fn)
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            bound = sig.bind(*args, **kwargs)
+            bound.apply_defaults()
+            for pname, ckey in param_to_key.items():
+                if bound.arguments[pname] is None:
+                    mod_name, const_name = ckey.split(":")
+                    module = importlib.import_module("bfgbz2d." + mod_name)
+                    bound.arguments[pname] = getattr(module, const_name)
+            return fn(*bound.args, **bound.kwargs)
+        return wrapper
+    return decorator
 
 # ---- characteristic polynomial wrapper ----
 
@@ -523,11 +593,12 @@ def get_minor_degrees(
     return poly.get_minor_degrees(direction)
 
 
+@live_defaults(xtol="core:PROBE_XTOL")
 def generate_probe_steps(
     bracket_width: float,
     probe_radius: float,
     zero_tol: float,
-    xtol: float = 1e-10,
+    xtol: Optional[float] = None,
 ) -> list[float]:
     """Generate probe step distances for zero-plateau detection.
 

@@ -71,7 +71,7 @@ from bfgbz2d.sgbz import (
 from bfgbz2d.sgbz.winding import (
     _loop_winding_quad, _loop_min_f, WindingFun, get_winding_number,
 )
-from bfgbz2d.config import CROSSING_TOL as _CROSSING_TOL
+from bfgbz2d.sgbz.pairwise import CROSSING_TOL as _CROSSING_TOL
 from bfgbz2d.amoeba.bisect import _find_mu2_for_w2_zero
 from bfgbz2d.amoeba.zm_extract import AmoebaZeroManager, extract_amoeba_subsets
 from bfgbz2d.amoeba.ronkin_winding import _get_average_winding_from_zeros

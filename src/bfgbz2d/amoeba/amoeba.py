@@ -7,8 +7,11 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 from typing import Optional
 import numpy as np
 
-from bfgbz2d import config
-from bfgbz2d.config import live_defaults
+from bfgbz2d import core
+from bfgbz2d.core import live_defaults
+
+#: Plateau-probe non-zero-winding area threshold.
+PLATEAU_AREA_THRESHOLD: float = 1e-2
 from bfgbz2d.core import (
     PointSubset, LineSubset, GBZResult, CharPoly,
     check_points_clustered_on_torus, probe_zero_plateau,
@@ -57,7 +60,10 @@ def _is_zero_plateau_probe(point: dict, winding_tol: float) -> bool:
     )
 
 
-@live_defaults(continuum_tol="CONTINUUM_TOL", continuum_perturb="CONTINUUM_PERTURB", max_iter="AMOEBA_MAX_ITER", xtol="AMOEBA_XTOL", max_range_expansions="AMOEBA_MAX_RANGE_EXPANSIONS")
+@live_defaults(continuum_tol="core:CONTINUUM_TOL", continuum_perturb="core:CONTINUUM_PERTURB",
+    max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL",
+    max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS",
+    range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR")
 def _probe_zero_plateau_near_mu1(
     char_poly: CharPoly,
     E_ref: complex,
@@ -70,7 +76,7 @@ def _probe_zero_plateau_near_mu1(
     max_iter: Optional[int] = None,
     xtol: Optional[float] = None,
     max_range_expansions: Optional[int] = None,
-    range_expand_factor: float = 2.0,
+    range_expand_factor: Optional[float] = None,
     winding_tol: Optional[float] = None,
     probe_radius: Optional[float] = None,
 ) -> dict:
@@ -80,7 +86,7 @@ def _probe_zero_plateau_near_mu1(
     mu1, w1 is zero and there are no a2-crossing zeros.
     """
     if winding_tol is None:
-        winding_tol = max(xtol, config.WINDING_TOL_FLOOR)
+        winding_tol = max(xtol, core.WINDING_ZERO_TOL)
     if probe_radius is None:
         probe_radius = continuum_perturb
 
@@ -168,13 +174,13 @@ def collect_GBZ_subsets(
     plateau_check = solver_options.pop("plateau_check", True)
     plateau_winding_tol = solver_options.pop("plateau_winding_tol", None)
     plateau_probe_radius = solver_options.pop("plateau_probe_radius", None)
-    plateau_area_threshold = solver_options.pop("plateau_area_threshold", config.PLATEAU_AREA_THRESHOLD)
+    plateau_area_threshold = solver_options.pop("plateau_area_threshold", PLATEAU_AREA_THRESHOLD)
     # Neighbour threshold for the torus-clustering pre-check, in units of
     # the 2π torus period.  Deliberately a SEPARATE knob from
     # plateau_area_threshold (a winding-area fraction): the two criteria
     # have different units, and sharing one value couples their tuning.
     # Defaults to the historical shared value for behaviour compatibility.
-    plateau_cluster_tol = solver_options.pop("plateau_cluster_tol", config.PLATEAU_CLUSTER_TOL)
+    plateau_cluster_tol = solver_options.pop("plateau_cluster_tol", core.PLATEAU_CLUSTER_TOL)
     # kwargs forwarded to ZeroManager.run() (h0, ctrl, min_dtheta,
     # cluster_tol, mr_jump, verbose).  Kept separate from the bisection
     # options, which ZeroManager.run does not accept.
@@ -233,7 +239,7 @@ def collect_GBZ_subsets(
                     amoeba_res.get("_mu1_bracket"),
                     mu2_low=solver_options.get("mu2_low", -1),
                     mu2_high=solver_options.get("mu2_high", 1),
-                    continuum_tol=solver_options.get("continuum_tol", config.CONTINUUM_TOL),
+                    continuum_tol=solver_options.get("continuum_tol", core.CONTINUUM_TOL),
                     continuum_perturb=solver_options.get("continuum_perturb", 1e-4),
                     max_iter=solver_options.get("max_iter", 60),
                     xtol=solver_options.get("xtol", 1e-10),

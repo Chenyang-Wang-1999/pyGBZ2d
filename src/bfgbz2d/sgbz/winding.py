@@ -49,8 +49,15 @@ from scipy import integrate
 from bfgbz2d.core import CharPoly, PointSubset, TWO_PI
 from bfgbz2d.continuation import ZeroManager
 
-from bfgbz2d import config
-from bfgbz2d.config import live_defaults
+from bfgbz2d.core import live_defaults
+
+# Loop-winding integral settings: every caller rounds the result to an
+# integer, so these stay loose on purpose.
+WINDING_QUAD_EPSABS: float = 1e-3
+WINDING_QUAD_EPSREL: float = 1e-3
+WINDING_QUAD_LIMIT: int = 200
+#: Samples per interval when picking the θ₂ loop-winding seed.
+SEED_N_PER_INTERVAL: int = 4
 from .mu2mid import Mu2MidZM, ensure_mu2mid
 
 
@@ -117,8 +124,8 @@ def get_winding_number(
     for i in range(len(bounds) - 1):
         total += integrate.quad(
             winding_fun, bounds[i], bounds[i + 1],
-            epsabs=config.WINDING_QUAD_EPSABS, epsrel=config.WINDING_QUAD_EPSREL,
-            limit=config.WINDING_QUAD_LIMIT,
+            epsabs=WINDING_QUAD_EPSABS, epsrel=WINDING_QUAD_EPSREL,
+            limit=WINDING_QUAD_LIMIT,
         )[0]
     return total / (TWO_PI)
 
@@ -206,12 +213,13 @@ def _loop_min_f(
     return float(worst) if math.isfinite(worst) else 0.0
 
 
+@live_defaults(n_per_interval="sgbz.winding:SEED_N_PER_INTERVAL")
 def _pick_seed_theta2(
     intervals: list[tuple[float, float]],
     zm: Mu2MidZM,
     poly: CharPoly,
     *,
-    n_per_interval: int = 4,
+    n_per_interval: Optional[int] = None,
 ) -> tuple[float, int]:
     """Pick the θ₂ maximizing ``min |f|`` along the loop over *intervals*.
 
@@ -393,7 +401,7 @@ def compute_average_winding(
 # proximity rule discarded legitimate dense events.
 
 
-@live_defaults(crossing_tol="CROSSING_TOL")
+@live_defaults(crossing_tol="sgbz.pairwise:CROSSING_TOL")
 def detect_crossings_simple(
     zm: ZeroManager,
     poly: CharPoly,
@@ -469,7 +477,7 @@ def detect_crossings_simple(
 # Convenience: detection + winding in one call
 # ---------------------------------------------------------------------------
 
-@live_defaults(crossing_tol="CROSSING_TOL")
+@live_defaults(crossing_tol="sgbz.pairwise:CROSSING_TOL")
 def detect_crossings_and_winding(
     zm: ZeroManager,
     poly: CharPoly,

@@ -52,8 +52,26 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.optimize import brentq
 
-from bfgbz2d import config
-from bfgbz2d.config import live_defaults
+from bfgbz2d import core
+from bfgbz2d.core import live_defaults
+
+# Crossing-channel constants (single consumers live in this module).
+#: brentq xtol when refining a pairwise ln|β₂| crossing.
+CROSSING_TOL: float = 1e-10
+#: Minimum |Re(V_a) − Re(V_b)| below which a crossing is a tangent touch
+#: (its direction is not trustworthy).
+MIN_DIRECTION_DERIV: float = 1e-12
+#: Multi-crossing mesh-refinement budget (rounds / factor / caps).
+REFINE_MAX_ROUNDS: int = 3
+REFINE_SAFETY_FACTOR: float = 4.0
+REFINE_MAX_SUBINTERVALS: int = 64
+REFINE_MAX_TOTAL_INSERTS: int = 2000
+#: Real-root / duplicate-θ filter, in units of max(1, interval length).
+REFINE_REL_TOL: float = 1e-12
+#: Exact-endpoint float comparison when reading mesh rows.
+THETA_EQ_TOL: float = 1e-15
+#: brentq iteration budget (the bracket is guaranteed by the sign scan).
+BRENTQ_MAXITER: int = 100
 from bfgbz2d.core import TWO_PI
 from bfgbz2d.continuation import ZeroManager
 from bfgbz2d.continuation.interpolation import hermite_interp_poly
@@ -63,25 +81,25 @@ if TYPE_CHECKING:
 
 # Minimum |Re(V_a) - Re(V_b)| below which a pair crossing is treated as a
 # tangent touch (hard boundary): the crossing direction is not trustworthy.
-config.MIN_DIRECTION_DERIV: float = 1e-12
+MIN_DIRECTION_DERIV: float = 1e-12
 
 # brentq extra iteration budget (the bracket is guaranteed by the sign scan).
-config.BRENTQ_MAXITER: int = 100
+BRENTQ_MAXITER: int = 100
 
 # Real-root filter for nothing here (brentq operates on the true function);
 # this tolerance only guards exact-endpoint float comparison.
-config.THETA_EQ_TOL: float = 1e-15
+THETA_EQ_TOL: float = 1e-15
 
 # Mesh refinement for multi-crossing intervals (runs after ZeroManager.run,
-# before collect_pair_events).  ``config.CONTINUUM_TOL`` must match
-# Mu2MidZM's config.CONTINUUM_TOL; ``analyze()`` passes the live value explicitly.
-config.CONTINUUM_TOL: float = 1e-6
-config.REFINE_MAX_ROUNDS: int = 3
-config.REFINE_SAFETY_FACTOR: float = 4.0
-config.REFINE_MAX_SUBINTERVALS: int = 64
-config.REFINE_MAX_TOTAL_INSERTS: int = 2000
+# before collect_pair_events).  ``core.CONTINUUM_TOL`` must match
+# Mu2MidZM's core.CONTINUUM_TOL; ``analyze()`` passes the live value explicitly.
+core.CONTINUUM_TOL: float = 1e-6
+REFINE_MAX_ROUNDS: int = 3
+REFINE_SAFETY_FACTOR: float = 4.0
+REFINE_MAX_SUBINTERVALS: int = 64
+REFINE_MAX_TOTAL_INSERTS: int = 2000
 # Real-root / duplicate-θ filter in units of max(1, interval length).
-config.REFINE_REL_TOL: float = 1e-12
+REFINE_REL_TOL: float = 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +184,7 @@ def _real_roots_in_open_interval(poly: np.ndarray, h: float) -> list[float]:
     """Real roots of *poly* strictly inside ``(0, h)``, sorted and deduped."""
     if poly.size < 2:
         return []
-    tol = config.REFINE_REL_TOL * max(1.0, float(h))
+    tol = REFINE_REL_TOL * max(1.0, float(h))
     roots: list[float] = []
     for r in np.roots(poly):
         if not np.isfinite(r.real) or not np.isfinite(r.imag):
@@ -422,7 +440,7 @@ def _insert_refinement_grids(
         # tolerance would erase the fine grid of a tiny near-tangent interval.
         entries: list[tuple[float, float]] = []
         for plan in seg_plans:
-            tol = config.REFINE_REL_TOL * max(1.0, float(plan.theta_b - plan.theta_a))
+            tol = REFINE_REL_TOL * max(1.0, float(plan.theta_b - plan.theta_a))
             for theta in _refinement_grid_points(
                 plan,
                 safety_factor=safety_factor,
@@ -480,12 +498,14 @@ def _views_in_sync_with_mesh(zm) -> bool:
     return True
 
 
-@live_defaults(tie_tol="CONTINUUM_TOL", max_rounds="REFINE_MAX_ROUNDS", safety_factor="REFINE_SAFETY_FACTOR", max_subintervals="REFINE_MAX_SUBINTERVALS", max_total_inserts="REFINE_MAX_TOTAL_INSERTS")
+@live_defaults(tie_tol="core:CONTINUUM_TOL", crossing_tol="sgbz.pairwise:CROSSING_TOL",
+    max_rounds="sgbz.pairwise:REFINE_MAX_ROUNDS", safety_factor="sgbz.pairwise:REFINE_SAFETY_FACTOR",
+    max_subintervals="sgbz.pairwise:REFINE_MAX_SUBINTERVALS", max_total_inserts="sgbz.pairwise:REFINE_MAX_TOTAL_INSERTS")
 def refine_mesh_for_multiple_crossings(
     zm,
     *,
     tie_tol: Optional[float] = None,
-    crossing_tol: float = 1e-10,
+    crossing_tol: Optional[float] = None,
     max_rounds: Optional[int] = None,
     safety_factor: Optional[float] = None,
     max_subintervals: Optional[int] = None,
@@ -665,11 +685,11 @@ def _normalize_theta(theta: float) -> float:
 # Event collection
 # ---------------------------------------------------------------------------
 
-@live_defaults(min_direction_deriv="MIN_DIRECTION_DERIV")
+@live_defaults(crossing_tol="sgbz.pairwise:CROSSING_TOL", min_direction_deriv="sgbz.pairwise:MIN_DIRECTION_DERIV")
 def collect_pair_events(
     zm: Mu2MidZM,
     *,
-    crossing_tol: float = 1e-10,
+    crossing_tol: Optional[float] = None,
     min_direction_deriv: Optional[float] = None,
 ) -> list[PairEvent]:
     """Scan every representative item pair on every segment.
@@ -779,10 +799,10 @@ def _refine_pair_crossing(
             return cache[t]
         seg = zm.segments[s_idx]
         th = seg.theta1_arr
-        if abs(t - float(th[i])) < config.THETA_EQ_TOL:
+        if abs(t - float(th[i])) < THETA_EQ_TOL:
             roots = seg.tracked_roots[i, :]
             V = seg.tangents[i, :]
-        elif abs(t - float(th[i + 1])) < config.THETA_EQ_TOL:
+        elif abs(t - float(th[i + 1])) < THETA_EQ_TOL:
             roots = seg.tracked_roots[i + 1, :]
             V = seg.tangents[i + 1, :]
         else:
@@ -807,7 +827,7 @@ def _refine_pair_crossing(
             lambda t: eval_point(t)[0],
             theta_lo, theta_hi,
             xtol=crossing_tol, rtol=4.0 * np.finfo(float).eps,
-            maxiter=config.BRENTQ_MAXITER,
+            maxiter=BRENTQ_MAXITER,
         )
         _, gp = eval_point(root)
         return float(root), _protected_direction(gp, min_direction_deriv), True

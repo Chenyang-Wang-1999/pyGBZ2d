@@ -20,7 +20,23 @@ from typing import NamedTuple, Optional
 import warnings
 
 
-from bfgbz2d import config
+# Run-level knobs of the ZeroManager loop.  The MR restart trio below is
+# ONE formula's parameters: effective restart distance past an MR =
+# max(MR_JUMP, MR_RESTART_FACTOR_H0*min_dtheta/h0,
+#     MR_RESTART_FACTOR_ABS*min_dtheta) — keep the three together.
+H0: float = 0.1
+MIN_DTHETA: float = 1e-10
+MR_JUMP: float = 1e-6
+MR_RESTART_FACTOR_H0: float = 10.0
+MR_RESTART_FACTOR_ABS: float = 100.0
+#: Refined MR θ₁ closer than this to the previous one = no forward progress.
+MR_STUCK_TOL: float = 1e-12
+#: |θ − 2π| below which a boundary MR is pinned to exactly 2π.
+BOUNDARY_THETA_TOL: float = 1e-6
+#: Warn when the iterative MR solver's θ₁ drifts more than this.
+MR_GAUGE_TOL: float = 0.1
+#: Hard cap on segment count (runaway protection).
+MAX_SEGMENTS: int = 10000
 from bfgbz2d.core import (
     TWO_PI,
     CharPoly,
@@ -34,6 +50,7 @@ from .arclength import (
     StepControl,
 )
 
+from . import multiple_roots
 from .multiple_roots import (
     MultipleRootInfo,
     multiple_root_point_trigger,
@@ -122,7 +139,7 @@ def integrate_segment(
     h0: Optional[float] = None,
     ctrl: Optional[StepControl] = None,
     min_dtheta: Optional[float] = None,
-    min_dist_threshold: float = 0.1,
+    min_dist_threshold: Optional[float] = None,
 ) -> SegmentResult:
     """Integrate β₂ roots from *theta_start* toward *theta_end*.
 
@@ -142,9 +159,11 @@ def integrate_segment(
     if ctrl is None:
         ctrl = StepControl()
     if h0 is None:
-        h0 = config.H0
+        h0 = H0
     if min_dtheta is None:
-        min_dtheta = config.MIN_DTHETA
+        min_dtheta = MIN_DTHETA
+    if min_dist_threshold is None:
+        min_dist_threshold = multiple_roots.MIN_DIST_THRESHOLD
     h = h0
     theta1 = theta_start
     roots = roots_start
@@ -375,7 +394,7 @@ class ZeroManager:
 
         self.multiple_roots: list[MultipleRootInfo] = []
         self.segments: list[SegmentData] = []
-        self._cluster_tol: float = config.MR_CLUSTER_TOL
+        self._cluster_tol: float = multiple_roots.CLUSTER_TOL
         # run() is single-shot: it appends to ``multiple_roots``/``segments``
         # instead of resetting them, so a second call would mix two topologies
         # into one half-built state.  Guard against that instead of silently
@@ -422,13 +441,13 @@ class ZeroManager:
         if ctrl is None:
             ctrl = StepControl()
         if h0 is None:
-            h0 = config.H0
+            h0 = H0
         if min_dtheta is None:
-            min_dtheta = config.MIN_DTHETA
+            min_dtheta = MIN_DTHETA
         if cluster_tol is None:
-            cluster_tol = config.CLUSTER_TOL
+            cluster_tol = multiple_roots.CLUSTER_TOL
         if mr_jump is None:
-            mr_jump = config.MR_JUMP
+            mr_jump = MR_JUMP
         if self._has_run:
             raise RuntimeError(
                 "ZeroManager.run() has already been called on this instance; "
@@ -438,13 +457,13 @@ class ZeroManager:
         self._cluster_tol = cluster_tol
 
         # Effective restart distance past an MR: never smaller than the
-        # branch-point-safe floors (see config.MR_RESTART_FACTOR_H0 / _ABS), or the
+        # branch-point-safe floors (see MR_RESTART_FACTOR_H0 / _ABS), or the
         # steps right after the restart collapse below min_dtheta and the
         # point trigger re-detects the SAME MR in an infinite ping-pong.
         mr_jump_eff = max(
             mr_jump,
-            config.MR_RESTART_FACTOR_H0 * min_dtheta / h0,
-            config.MR_RESTART_FACTOR_ABS * min_dtheta,
+            MR_RESTART_FACTOR_H0 * min_dtheta / h0,
+            MR_RESTART_FACTOR_ABS * min_dtheta,
         )
 
         # ---- Init at θ₁ = 0 ----
@@ -513,7 +532,7 @@ class ZeroManager:
         # `for` with a hard cap instead of `while theta < 2π`: the integrator
         # already advances θ to 2π (completed) or an MR; the cap only catches
         # a runaway refine loop that never converges to 2π.
-        for _ in range(config.MAX_SEGMENTS):
+        for _ in range(MAX_SEGMENTS):
             seg = integrate_segment(
                 self.poly, self.E_ref, self.mu1,
                 theta, roots, TWO_PI,
@@ -590,7 +609,7 @@ class ZeroManager:
                     # behind it means the restart landed before the MR again
                     # (ping-pong) — fail loudly instead of looping forever.
                     if (left_mr >= 0 and theta1_mr
-                            <= self.multiple_roots[left_mr].theta1 + config.MR_STUCK_TOL):
+                            <= self.multiple_roots[left_mr].theta1 + MR_STUCK_TOL):
                         raise RuntimeError(
                             f"Multiple-root refinement made no forward "
                             f"progress: refined θ₁={theta1_mr!r} is not past "
@@ -610,11 +629,11 @@ class ZeroManager:
                         roots_mr
                     ])
 
-                    if abs(theta1_mr - TWO_PI) < config.BOUNDARY_THETA_TOL:
+                    if abs(theta1_mr - TWO_PI) < BOUNDARY_THETA_TOL:
                         if verbose:
                             print("Boundary multiple root detected. right_mr = 0")
                         # Pin the closing row's θ to exactly 2π (the boundary
-                        # MR sits within config.BOUNDARY_THETA_TOL = 1e-6 of it):
+                        # MR sits within BOUNDARY_THETA_TOL = 1e-6 of it):
                         # leaving the refined θ_mr in the array opens a sliver
                         # gap (θ_mr, 2π) that locate() would refuse to cover.
                         new_seg_theta1 = np.concatenate([
@@ -684,7 +703,7 @@ class ZeroManager:
             # than silently producing a half-built topology.
             raise RuntimeError(
                 f"ZeroManager did not reach θ₁ = 2π within "
-                f"{config.MAX_SEGMENTS} segments; stuck near θ₁ = {theta}"
+                f"{MAX_SEGMENTS} segments; stuck near θ₁ = {theta}"
             )
 
         # A pending false-positive segment can survive only if the loop body
@@ -1269,7 +1288,7 @@ class ZeroManager:
 
             # Fix the 2π gauge to seg.mr_approx_theta.
             theta1_mr = np.angle(beta1 / exp(1j * seg.mr_approx_theta)) + seg.mr_approx_theta
-            if abs(theta1_mr - seg.mr_approx_theta) > config.MR_GAUGE_TOL:
+            if abs(theta1_mr - seg.mr_approx_theta) > MR_GAUGE_TOL:
                 warnings.warn(
                     f"Segment ends at {seg.mr_approx_theta}, "
                     f"but the iteration solver gives {theta1_mr}"

@@ -27,7 +27,8 @@ from bfgbz2d.continuation.arclength import (
     StepResult,
     StepControl,
 )
-from bfgbz2d.config import ZERO_THRESHOLD, INF_THRESHOLD
+from bfgbz2d.continuation import arclength as _arcl
+from bfgbz2d.continuation.arclength import ZERO_THRESHOLD, INF_THRESHOLD
 from bfgbz2d.continuation.multiple_roots import (
     multiple_root_point_trigger,
     MultipleRootIntervalTrigger,

@@ -18,8 +18,15 @@ from typing import Optional
 from bfgbz2d.core import CharPoly
 
 from .ronkin_winding import _get_average_winding_from_zeros
-from bfgbz2d import config
-from bfgbz2d.config import live_defaults
+from bfgbz2d import core
+from bfgbz2d.core import live_defaults
+
+# μ₂ bisection budget (the winding is monotonic in μ₂, so range
+# expansion guarantees a sign bracket eventually).
+BISECT_MAX_ITER: int = 60
+BISECT_XTOL: float = 1e-10
+MAX_RANGE_EXPANSIONS: int = 10
+RANGE_EXPAND_FACTOR: float = 2.0
 from .zm_extract import AmoebaZeroManager, amoeba_windings
 
 
@@ -103,7 +110,7 @@ def _refine_and_correct(
     }
 
 
-@live_defaults(continuum_tol="CONTINUUM_TOL", continuum_perturb="CONTINUUM_PERTURB", max_iter="AMOEBA_MAX_ITER", xtol="AMOEBA_XTOL", max_range_expansions="AMOEBA_MAX_RANGE_EXPANSIONS", range_expand_factor="AMOEBA_RANGE_EXPAND_FACTOR", frac="CONTINUUM_FRAC")
+@live_defaults(continuum_tol="core:CONTINUUM_TOL", continuum_perturb="core:CONTINUUM_PERTURB", max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL", max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS", range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR", frac="core:CONTINUUM_FRAC")
 def _find_mu2_for_w2_zero(
     char_poly: CharPoly,
     E_ref: complex,
@@ -186,7 +193,7 @@ def _find_mu2_for_w2_zero(
             # is O(continuum_tol), so continuum_perturb typically escapes it;
             # the ladder handles a wider band (mirrors _resolve_continuum Step 1).
             w_left = w_right = None
-            for scale in (1.0, 2.0, 4.0, 8.0):
+            for scale in core.ESCAPE_LADDER:
                 eps = continuum_perturb * scale
                 w_left, _, has_cont_left = _winding_at(mu2_mid - eps)
                 w_right, _, has_cont_right = _winding_at(mu2_mid + eps)
@@ -252,7 +259,7 @@ def _find_mu2_for_w2_zero(
     )
 
 
-@live_defaults(continuum_perturb="CONTINUUM_PERTURB", continuum_tol="CONTINUUM_TOL", max_iter="AMOEBA_MAX_ITER", xtol="AMOEBA_XTOL", max_range_expansions="AMOEBA_MAX_RANGE_EXPANSIONS", range_expand_factor="AMOEBA_RANGE_EXPAND_FACTOR", frac="CONTINUUM_FRAC")
+@live_defaults(continuum_perturb="core:CONTINUUM_PERTURB", continuum_tol="core:CONTINUUM_TOL", max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL", max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS", range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR", frac="core:CONTINUUM_FRAC")
 def _resolve_continuum(
     char_poly: CharPoly,
     E_ref: complex,
@@ -298,7 +305,7 @@ def _resolve_continuum(
     w2_right = None
     w2_opposite = False
 
-    for scale in (1.0, 2.0, 4.0, 8.0):
+    for scale in core.ESCAPE_LADDER:
         eps = continuum_perturb * scale
 
         w_left, _, has_cont_left, _ = amoeba_windings(
@@ -375,7 +382,7 @@ def _resolve_continuum(
     }
 
 
-@live_defaults(continuum_tol="CONTINUUM_TOL", continuum_perturb="CONTINUUM_PERTURB", max_iter="AMOEBA_MAX_ITER", xtol="AMOEBA_XTOL", max_range_expansions="AMOEBA_MAX_RANGE_EXPANSIONS", range_expand_factor="AMOEBA_RANGE_EXPAND_FACTOR", frac="CONTINUUM_FRAC")
+@live_defaults(continuum_tol="core:CONTINUUM_TOL", continuum_perturb="core:CONTINUUM_PERTURB", max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL", max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS", range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR", frac="core:CONTINUUM_FRAC")
 def bisect_amoeba_ronkin_min(
     char_poly: CharPoly,
     E_ref: complex,
