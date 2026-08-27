@@ -22,7 +22,7 @@ outside the band become constant ``v=±14, dv=0`` pieces.  No post-hoc clip
 exists anywhere downstream.
 
 ``Mu2MidZM.analyze()`` runs the pairwise intersection pipeline
-(:mod:`bfgbz2d.sgbz.pairwise`) and then builds this path.
+(:mod:`pygbz2d.sgbz.pairwise`) and then builds this path.
 '''
 
 from __future__ import annotations
@@ -34,11 +34,11 @@ from typing import NamedTuple
 
 import numpy as np
 
-from bfgbz2d.continuation import ZeroManager
-from bfgbz2d.continuation.interpolation import hermite_interp_poly
+from pygbz2d.continuation import ZeroManager
+from pygbz2d.continuation.interpolation import hermite_interp_poly
 
-from bfgbz2d import core
-from bfgbz2d.core import live_defaults
+from pygbz2d import core
+from pygbz2d.core import live_defaults
 
 #: Clamp band for ln|β₂| when building the μ₂_mid path (|β₂| = e^±14).
 LOGABS_CLAMP: float = 14.0
@@ -270,7 +270,7 @@ class Mu2MidZM(ZeroManager):
         clustering source).  ``None`` runs the internal whole-segment vote.
 
         ``refine_multi_crossings`` enables the pre-crossing mesh refinement
-        pass (:func:`bfgbz2d.sgbz.pairwise.refine_mesh_for_multiple_crossings`)
+        pass (:func:`pygbz2d.sgbz.pairwise.refine_mesh_for_multiple_crossings`)
         that isolates intervals with two or more close crossings before the
         sign-change scan runs.
         """

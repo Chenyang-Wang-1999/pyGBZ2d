@@ -41,11 +41,11 @@ from cmath import exp
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from BerryPy import TightBinding as tb
-from bfgbz2d.core import CharPoly
-from bfgbz2d.amoeba.bisect import bisect_amoeba_ronkin_min
-from bfgbz2d.amoeba.zm_extract import AmoebaZeroManager
-from bfgbz2d.amoeba.zm_extract import amoeba_windings
-import bfgbz2d.amoeba as bfa
+from pygbz2d.core import CharPoly
+from pygbz2d.amoeba.bisect import bisect_amoeba_ronkin_min
+from pygbz2d.amoeba.zm_extract import AmoebaZeroManager
+from pygbz2d.amoeba.zm_extract import amoeba_windings
+import pygbz2d.amoeba as bfa
 
 
 # Haldane gain-loss model, same params as playground/Haldane-model-gainloss.py

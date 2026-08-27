@@ -31,13 +31,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from BerryPy import TightBinding as tb
 
-from bfgbz2d.core import CharPoly, PointSubset, LineSubset
-import bfgbz2d.amoeba as bfa
-from bfgbz2d.amoeba.bisect import bisect_amoeba_ronkin_min
-from bfgbz2d.amoeba.zm_extract import AmoebaZeroManager
-from bfgbz2d.amoeba.zm_extract import amoeba_windings
-from bfgbz2d.amoeba.ronkin_winding import _get_average_winding_from_zeros
-from bfgbz2d.amoeba.amoeba import _check_zeros_are_clustered
+from pygbz2d.core import CharPoly, PointSubset, LineSubset
+import pygbz2d.amoeba as bfa
+from pygbz2d.amoeba.bisect import bisect_amoeba_ronkin_min
+from pygbz2d.amoeba.zm_extract import AmoebaZeroManager
+from pygbz2d.amoeba.zm_extract import amoeba_windings
+from pygbz2d.amoeba.ronkin_winding import _get_average_winding_from_zeros
+from pygbz2d.amoeba.amoeba import _check_zeros_are_clustered
 
 
 E_PLATEAU_EDGE = 1.648 + 0.0294j

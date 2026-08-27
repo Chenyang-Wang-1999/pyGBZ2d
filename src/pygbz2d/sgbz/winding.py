@@ -46,10 +46,10 @@ import numpy as np
 from cmath import exp
 from scipy import integrate
 
-from bfgbz2d.core import CharPoly, PointSubset, TWO_PI
-from bfgbz2d.continuation import ZeroManager
+from pygbz2d.core import CharPoly, PointSubset, TWO_PI
+from pygbz2d.continuation import ZeroManager
 
-from bfgbz2d.core import live_defaults
+from pygbz2d.core import live_defaults
 
 # Loop-winding integral settings: every caller rounds the result to an
 # integer, so these stay loose on purpose.

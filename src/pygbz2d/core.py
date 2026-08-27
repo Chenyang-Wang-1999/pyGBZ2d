@@ -25,7 +25,7 @@ from typing import Optional, Union
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from bfgbz2d.backend import make_laurent
+from pygbz2d.backend import make_laurent
 
 # The single 2π constant for the whole project.  Every module imports it
 # from here instead of spelling `2 * pi` locally, so all seam comparisons
@@ -39,7 +39,7 @@ TWO_PI: float = 2.0 * math.pi
 # Only constants consumed by MORE THAN ONE subpackage live here (their
 # single-consumer relatives stay in their home modules — see
 # doc/constants.md for the full map).  All are plain module attributes:
-# assigning ``bfgbz2d.core.CONTINUUM_TOL = 1e-8`` takes effect
+# assigning ``pygbz2d.core.CONTINUUM_TOL = 1e-8`` takes effect
 # process-wide on the next read ("tune once per call → kwarg; tune for
 # the whole run → assign the constant").
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ def live_defaults(**param_to_key):
     """Decorator: resolve ``None`` parameters from constants at CALL time.
 
     Each key maps a parameter to its home constant as
-    ``"sub.module:CONST_NAME"`` (resolved against the ``bfgbz2d``
+    ``"sub.module:CONST_NAME"`` (resolved against the ``pygbz2d``
     package).  This keeps public-entry keyword defaults live: assigning
     the module constant takes effect on the next call, instead of being
     frozen at ``def`` time.  Intended for top-level APIs; per-step hot
@@ -94,7 +94,7 @@ def live_defaults(**param_to_key):
             for pname, ckey in param_to_key.items():
                 if bound.arguments[pname] is None:
                     mod_name, const_name = ckey.split(":")
-                    module = importlib.import_module("bfgbz2d." + mod_name)
+                    module = importlib.import_module("pygbz2d." + mod_name)
                     bound.arguments[pname] = getattr(module, const_name)
             return fn(*bound.args, **bound.kwargs)
         return wrapper
@@ -107,7 +107,7 @@ class CharPoly:
 
     The single entry point for polynomial construction, evaluation, and
     root-solving.  Wraps a pluggable Laurent backend internally (see
-    :mod:`bfgbz2d.backend`) — no other file in the project touches a
+    :mod:`pygbz2d.backend`) — no other file in the project touches a
     backend directly.
 
     Parameters:
@@ -400,8 +400,8 @@ ConnectedSubset = Union[PointSubset, LineSubset]
 # Cross-module LineSubset joining helpers
 # ---------------------------------------------------------------------------
 #
-# Both the amoeba extractor (bfgbz2d.amoeba.zm_extract) and the SGBZ
-# continuum extractor (bfgbz2d.sgbz.continuum_lines) join per-segment
+# Both the amoeba extractor (pygbz2d.amoeba.zm_extract) and the SGBZ
+# continuum extractor (pygbz2d.sgbz.continuum_lines) join per-segment
 # continuum LineSubsets across MR boundaries into closed curves.  The join
 # unit and the MR-cluster endpoint test are module-agnostic (they only need
 # the ZeroManager protocol: segments with left_mr/right_mr, multiple_roots),

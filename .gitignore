@@ -3,7 +3,7 @@ __pycache__
 .vscode
 *.pkl
 *.prof
-src/bfgbz2d.egg-info/
+src/pygbz2d.egg-info/
 build/
 dist/
 *.egg-info/

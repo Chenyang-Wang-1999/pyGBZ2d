@@ -18,12 +18,12 @@ import pytest
 from math import pi
 from types import SimpleNamespace
 
-from bfgbz2d.core import CharPoly, TWO_PI
-from bfgbz2d.continuation.zero_manager import ZeroManager
-from bfgbz2d.continuation.multiple_roots import (
+from pygbz2d.core import CharPoly, TWO_PI
+from pygbz2d.continuation.zero_manager import ZeroManager
+from pygbz2d.continuation.multiple_roots import (
     MultipleRootIntervalTrigger, _closest_pair_deriv,
 )
-from bfgbz2d.continuation.arclength import estimate_error
+from pygbz2d.continuation.arclength import estimate_error
 
 
 def _make_pingpong_poly():
@@ -74,9 +74,9 @@ class TestH2JoinBudget:
     """_join_runs_across_mrs must not cap merges at n_seg."""
 
     def test_three_fold_continuum_closes(self):
-        from bfgbz2d.sgbz.continuum_lines import _join_runs_across_mrs
-        from bfgbz2d.core import JoinableLinePiece
-        from bfgbz2d.continuation.multiple_roots import MultipleRootInfo
+        from pygbz2d.sgbz.continuum_lines import _join_runs_across_mrs
+        from pygbz2d.core import JoinableLinePiece
+        from pygbz2d.continuation.multiple_roots import MultipleRootInfo
 
         vals = [1.0, 10.0, 100.0]  # 3-fold continuum: tracks A, B, C
         seg0 = SimpleNamespace(

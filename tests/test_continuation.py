@@ -13,12 +13,12 @@ from math import pi
 from cmath import exp
 from collections import defaultdict
 
-from bfgbz2d.core import (
+from pygbz2d.core import (
     TWO_PI,
     CharPoly, hungarian_match_indices, sort_by_root_abs,
     to_sphere_r3, cost_from_sphere_r3,
 )
-from bfgbz2d.continuation.arclength import (
+from pygbz2d.continuation.arclength import (
     compute_tangent,
     predict_roots,
     predict_roots_hermite,
@@ -27,16 +27,16 @@ from bfgbz2d.continuation.arclength import (
     StepResult,
     StepControl,
 )
-from bfgbz2d.continuation import arclength as _arcl
-from bfgbz2d.continuation.arclength import ZERO_THRESHOLD, INF_THRESHOLD
-from bfgbz2d.continuation.multiple_roots import (
+from pygbz2d.continuation import arclength as _arcl
+from pygbz2d.continuation.arclength import ZERO_THRESHOLD, INF_THRESHOLD
+from pygbz2d.continuation.multiple_roots import (
     multiple_root_point_trigger,
     MultipleRootIntervalTrigger,
     _closest_pair_deriv,
     detect_cluster,
     solve_multiple_roots_in_interval,
 )
-from bfgbz2d.continuation.zero_manager import (
+from pygbz2d.continuation.zero_manager import (
     integrate_segment,
     SegmentResult,
     StopReason,

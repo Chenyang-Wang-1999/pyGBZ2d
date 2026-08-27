@@ -30,18 +30,18 @@ from typing import Literal, Optional
 
 import numpy as np
 
-from bfgbz2d.core import (
+from pygbz2d.core import (
     TWO_PI,
     CharPoly, PointSubset, LineSubset,
     JoinableLinePiece, is_mr_cluster_endpoint,
 )
 
 from .ronkin_winding import _find_exact_crossing, _get_average_winding_from_zeros
-from bfgbz2d.continuation.zero_manager import SegmentData, ZeroManager
+from pygbz2d.continuation.zero_manager import SegmentData, ZeroManager
 
 
-from bfgbz2d import core
-from bfgbz2d.core import live_defaults
+from pygbz2d import core
+from pygbz2d.core import live_defaults
 
 #: Amoeba seam-snap radius (θ₁ scale).
 SNAP_TOL: float = 1e-3
@@ -104,8 +104,8 @@ def _continuum_mask(zm: AmoebaZeroManager, mu2: float, tol: float, frac: float) 
 # MR-boundary joining for continuum LineSubsets
 # ---------------------------------------------------------------------------
 #
-# _LinePiece / _is_cluster_endpoint live in bfgbz2d.core (as JoinableLinePiece /
-# is_mr_cluster_endpoint) — they are shared with bfgbz2d.sgbz's continuum
+# _LinePiece / _is_cluster_endpoint live in pygbz2d.core (as JoinableLinePiece /
+# is_mr_cluster_endpoint) — they are shared with pygbz2d.sgbz's continuum
 # extractor.  The old underscore names remain as aliases for the in-module
 # call sites and the tests that construct pieces directly.
 

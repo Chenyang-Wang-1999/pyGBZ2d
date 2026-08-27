@@ -7,12 +7,12 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 from typing import Optional
 import numpy as np
 
-from bfgbz2d import core
-from bfgbz2d.core import live_defaults
+from pygbz2d import core
+from pygbz2d.core import live_defaults
 
 #: Plateau-probe non-zero-winding area threshold.
 PLATEAU_AREA_THRESHOLD: float = 1e-2
-from bfgbz2d.core import (
+from pygbz2d.core import (
     PointSubset, LineSubset, GBZResult, CharPoly,
     check_points_clustered_on_torus, probe_zero_plateau,
 )
@@ -35,7 +35,7 @@ def _check_zeros_are_clustered(
     """Whether every amoeba zero has a neighbour within *tol_normalized*.
 
     Thin amoeba adapter over
-    :func:`bfgbz2d.core.check_points_clustered_on_torus`: amoeba zeros carry a
+    :func:`pygbz2d.core.check_points_clustered_on_torus`: amoeba zeros carry a
     trailing ``jump`` component, so only the first two are forwarded as
     ``(θ₁, θ₂)``.
 
@@ -95,7 +95,7 @@ def _probe_zero_plateau_near_mu1(
         bracket_width = abs(float(mu1_bracket[1]) - float(mu1_bracket[0]))
 
     def evaluator(mu1_probe: float) -> dict:
-        # The shared ladder protocol (bfgbz2d.core.probe_zero_plateau) reads
+        # The shared ladder protocol (pygbz2d.core.probe_zero_plateau) reads
         # "success" to skip failed probes and keep walking the ladder.  The
         # inner μ₂ bisection legitimately fails on the out-of-spectrum side
         # of a band edge (w2 has no sign change → range-expansion error) —

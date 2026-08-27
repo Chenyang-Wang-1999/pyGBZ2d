@@ -25,8 +25,8 @@ from pathlib import Path
 from collections import defaultdict
 sys.path.insert(0, '.')
 sys.path.insert(0, 'demos')
-from bfgbz2d.core import CharPoly, LineSubset, to_sphere_r3
-from bfgbz2d.continuation import ZeroManager
+from pygbz2d.core import CharPoly, LineSubset, to_sphere_r3
+from pygbz2d.continuation import ZeroManager
 from trivial_model import get_model, DEFAULT_PARAMS
 from demo_build_mesh import _solve_nexus_at_E, _torus_point
 from demo_fku import fku_triangulate as fku

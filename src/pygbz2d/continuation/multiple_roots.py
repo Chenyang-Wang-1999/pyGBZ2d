@@ -16,8 +16,8 @@ CLUSTER_TOL: float = 1e-4
 #: Closest-pair distance below which the MR interval trigger arms.
 MIN_DIST_THRESHOLD: float = 0.1
 
-from bfgbz2d.core import live_defaults
-from bfgbz2d.core import (
+from pygbz2d.core import live_defaults
+from pygbz2d.core import (
     TWO_PI,
     CharPoly,
     hungarian_match_indices,

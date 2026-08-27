@@ -15,11 +15,11 @@ for the Ronkin minimum.
 """
 
 from typing import Optional
-from bfgbz2d.core import CharPoly
+from pygbz2d.core import CharPoly
 
 from .ronkin_winding import _get_average_winding_from_zeros
-from bfgbz2d import core
-from bfgbz2d.core import live_defaults
+from pygbz2d import core
+from pygbz2d.core import live_defaults
 
 # μ₂ bisection budget (the winding is monotonic in μ₂, so range
 # expansion guarantees a sign bracket eventually).

@@ -1,5 +1,5 @@
 '''
-Pluggable Laurent-polynomial backends for :class:`bfgbz2d.core.CharPoly`.
+Pluggable Laurent-polynomial backends for :class:`pygbz2d.core.CharPoly`.
 
 Two implementations of the same protocol:
 

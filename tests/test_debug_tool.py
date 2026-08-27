@@ -19,7 +19,7 @@ matplotlib.use("Agg")
 
 from conftest import build_HN2D_polynomial
 
-from bfgbz2d.core import CharPoly, PointSubset, LineSubset, TWO_PI
+from pygbz2d.core import CharPoly, PointSubset, LineSubset, TWO_PI
 
 from debug_tool import (
     MethodDebug, GBZDebugReport, LoopWinding, GapCheck, MethodLoops,

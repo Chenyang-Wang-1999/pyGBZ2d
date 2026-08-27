@@ -11,13 +11,13 @@ import numpy as np
 import pytest
 from cmath import exp
 
-from bfgbz2d import backend as bz_backend
-from bfgbz2d.backend import (
+from pygbz2d import backend as bz_backend
+from pygbz2d.backend import (
     NumpyLaurent,
     PolyToolsLaurent,
     make_laurent,
 )
-from bfgbz2d.core import CharPoly, TWO_PI
+from pygbz2d.core import CharPoly, TWO_PI
 
 try:
     import poly_tools  # noqa: F401

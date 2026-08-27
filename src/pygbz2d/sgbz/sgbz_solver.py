@@ -21,12 +21,12 @@ from typing import Optional
 
 import numpy as np
 
-from bfgbz2d.core import (
+from pygbz2d.core import (
     PointSubset, LineSubset, GBZResult, CharPoly,
 )
 
-from bfgbz2d import core
-from bfgbz2d.core import live_defaults
+from pygbz2d import core
+from pygbz2d.core import live_defaults
 from . import pairwise as _pairwise
 
 #: Iteration budget of the μ₁ bisection.

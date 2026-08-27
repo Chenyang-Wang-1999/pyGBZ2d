@@ -39,7 +39,7 @@ MIN_STEP: float = 1e-12
 #: |β₂| below/above which a root is a singular 0/∞ padding root.
 ZERO_THRESHOLD: float = 1e-6
 INF_THRESHOLD: float = 1e6
-from bfgbz2d.core import (
+from pygbz2d.core import (
     CharPoly,
     hungarian_match_indices,
     to_sphere_r3,

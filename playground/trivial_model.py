@@ -24,10 +24,10 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bfgbz2d.continuation import ZeroManager
-from bfgbz2d.core import CharPoly, LineSubset
-import bfgbz2d.amoeba as bfa
-import bfgbz2d.sgbz as bfs
+from pygbz2d.continuation import ZeroManager
+from pygbz2d.core import CharPoly, LineSubset
+import pygbz2d.amoeba as bfa
+import pygbz2d.sgbz as bfs
 
 
 DEFAULT_PARAMS = {

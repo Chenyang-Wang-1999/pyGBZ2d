@@ -17,8 +17,8 @@ import pathlib
 
 import pytest
 
-import bfgbz2d as bz
-from bfgbz2d.core import live_defaults
+import pygbz2d as bz
+from pygbz2d.core import live_defaults
 
 # Home-module map: constant -> module path (single source of truth for
 # the AST lint rules below and for doc/constants.md).
@@ -78,7 +78,7 @@ class TestLiveDefaults:
         assert f(a=0.0) == 0.0          # 0.0 is a real value, not "missing"
 
     def test_module_assignment_is_live(self):
-        from bfgbz2d.sgbz import pairwise
+        from pygbz2d.sgbz import pairwise
         old = pairwise.CROSSING_TOL
         try:
             @live_defaults(a="sgbz.pairwise:CROSSING_TOL")
@@ -112,13 +112,13 @@ class TestLiveDefaults:
 
 class TestStepControl:
     def test_default_construction(self):
-        from bfgbz2d.continuation import arclength
+        from pygbz2d.continuation import arclength
         c = arclength.StepControl()
         assert c.safety == arclength.SAFETY
         assert c.max_iter == arclength.STEP_MAX_ITER
 
     def test_assignment_reaches_new_controllers(self):
-        from bfgbz2d.continuation import arclength
+        from pygbz2d.continuation import arclength
         old = arclength.SAFETY
         try:
             arclength.SAFETY = 0.95
@@ -128,7 +128,7 @@ class TestStepControl:
             arclength.SAFETY = old
 
     def test_run_defaults_are_none_sentinels(self):
-        from bfgbz2d.continuation.zero_manager import ZeroManager
+        from pygbz2d.continuation.zero_manager import ZeroManager
         sig = inspect.signature(ZeroManager.run)
         for name in ("h0", "min_dtheta", "cluster_tol", "mr_jump"):
             assert sig.parameters[name].default is None
@@ -140,8 +140,8 @@ class TestStepControl:
 
 class TestEndToEnd:
     def test_continuum_tol_assignment_reaches_analyze(self):
-        from bfgbz2d.sgbz import mu2mid
-        from bfgbz2d.sgbz.continuum_lines import detect_continuum_simple
+        from pygbz2d.sgbz import mu2mid
+        from pygbz2d.sgbz.continuum_lines import detect_continuum_simple
         from conftest import build_HN2D_polynomial
 
         seen = {}
@@ -253,7 +253,7 @@ class TestDecoratorStructure:
                         try:
                             mod_name, const_name = key.split(":")
                             module = importlib.import_module(
-                                "bfgbz2d." + mod_name)
+                                "pygbz2d." + mod_name)
                             getattr(module, const_name)
                         except Exception as e:
                             bad.append(f"{p.name}:{node.lineno}:"
@@ -262,5 +262,5 @@ class TestDecoratorStructure:
 
     def test_home_map_is_accurate(self):
         for const, mod_path in HOME.items():
-            module = importlib.import_module("bfgbz2d." + mod_path)
+            module = importlib.import_module("pygbz2d." + mod_path)
             assert hasattr(module, const), (mod_path, const)

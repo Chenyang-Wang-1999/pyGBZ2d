@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pickle
 import numpy as np
 
-import bfgbz2d.amoeba as bfa
+import pygbz2d.amoeba as bfa
 from trivial_model import get_model, DEFAULT_PARAMS
 
 CACHE_PATH = Path(__file__).resolve().parent / "trivial_line_cache.pkl"

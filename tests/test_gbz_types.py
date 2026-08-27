@@ -1,6 +1,6 @@
-"""Direct tests for the shared primitives in bfgbz2d/core.py.
+"""Direct tests for the shared primitives in pygbz2d/core.py.
 
-The old test_bfgbz2d/core.py was deleted in commit a118614 without a
+The old test_pygbz2d/core.py was deleted in commit a118614 without a
 replacement; these tools (cyclic intervals, chordal costs, Hungarian
 matching, probe ladder, zero-plateau helpers) are the seam-boundary
 semantic core shared by both GBZ modules and deserve direct coverage.
@@ -10,7 +10,7 @@ import math
 import numpy as np
 import pytest
 
-from bfgbz2d.core import (
+from pygbz2d.core import (
     TWO_PI,
     PointSubset, LineSubset, GBZResult,
     sort_by_root_abs, to_sphere_r3, chordal_cost_matrix,
@@ -20,7 +20,7 @@ from bfgbz2d.core import (
     JoinableLinePiece, is_mr_cluster_endpoint,
     get_minor_degrees,
 )
-from bfgbz2d.core import CharPoly
+from pygbz2d.core import CharPoly
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +212,7 @@ class TestIsMrClusterEndpoint:
     def _mk(self, cluster=(1, 2), *, has_boundary_mr=True,
             with_perm=True, left_mr=0, right_mr=-1):
         from types import SimpleNamespace
-        from bfgbz2d.continuation.multiple_roots import MultipleRootInfo
+        from pygbz2d.continuation.multiple_roots import MultipleRootInfo
         mr = MultipleRootInfo(
             theta1=1.0, cluster_indices=[tuple(cluster)],
             roots=np.array([1.0 + 0j, 2.0 + 0j, 3.0 + 0j, 4.0 + 0j]),

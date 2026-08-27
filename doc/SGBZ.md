@@ -1,4 +1,4 @@
-# bfgbz2d.sgbz — SGBZ Spectrum Calculation
+# pygbz2d.sgbz — SGBZ Spectrum Calculation
 
 Non-Hermitian spectrum computation based on the SGBZ (Strip Generalized Brillouin Zone) formulation. The 2026-08-13 μ₂_mid framework rewrite unifies SGBZ crossing detection with amoeba's per-column-vs-μ₂ structure — the only difference is that μ₂ is the piecewise-smooth boundary-pair mean curve `μ₂_mid(θ₁)` instead of a constant. See `log/2026-08-13-SGBZ算法梳理.md` for the authoritative algorithm writeup.
 
@@ -131,8 +131,8 @@ Top-level solver using bracket expansion + plain midpoint bisection with continu
 
 Two-stage check, unaffected by the μ₂_mid framework:
 
-1. **Clustering pre-check** (`_check_pmgbz_points_clustered`): thin SGBZ adapter over `bfgbz2d.core.check_points_clustered_on_torus`. Euclidean distance on the `(θ₁, θ₂)` torus — **must consider both θ₁ and θ₂**, not θ₁ alone: the same `θ₁` can host multiple distinct `β₂` (degenerate pairs), so a θ₁-only check would misclassify. Example: gain-loss Haldane at E=0.5 has 6 points in 3 degenerate pairs; torus minimum distance ≈ 33°, correctly judged non-clustered.
-2. **Probe ladder** (`_probe_zero_plateau_near_mu1`): thin adapter over `bfgbz2d.core.probe_zero_plateau`. Probe `μ₁ ± step`; a plateau shows zero winding with empty GBZ on both sides.
+1. **Clustering pre-check** (`_check_pmgbz_points_clustered`): thin SGBZ adapter over `pygbz2d.core.check_points_clustered_on_torus`. Euclidean distance on the `(θ₁, θ₂)` torus — **must consider both θ₁ and θ₂**, not θ₁ alone: the same `θ₁` can host multiple distinct `β₂` (degenerate pairs), so a θ₁-only check would misclassify. Example: gain-loss Haldane at E=0.5 has 6 points in 3 degenerate pairs; torus minimum distance ≈ 33°, correctly judged non-clustered.
+2. **Probe ladder** (`_probe_zero_plateau_near_mu1`): thin adapter over `pygbz2d.core.probe_zero_plateau`. Probe `μ₁ ± step`; a plateau shows zero winding with empty GBZ on both sides.
 
 ### 2.7 Continuum Handling Summary
 
@@ -339,9 +339,9 @@ Main entry point. Builds the characteristic polynomial from `(coeffs, degs)`, so
 | `CONTINUUM_TOL` | Default modulus gap threshold for continuum detection (1e-6) |
 | `CONTINUUM_FRAC` | Default vote fraction (0.9) |
 | `WindingFun`, `get_winding_number` | Loop winding integrand + quad integration (§2.4) |
-| `CharPoly` | Characteristic polynomial wrapper (from `bfgbz2d.core`) |
-| `get_minor_degrees` | Extract (M, N) from polynomial degrees (from `bfgbz2d.core`) |
-| `PointSubset`, `LineSubset`, `GBZResult`, `ConnectedSubset` | Data types (from `bfgbz2d.core`) |
+| `CharPoly` | Characteristic polynomial wrapper (from `pygbz2d.core`) |
+| `get_minor_degrees` | Extract (M, N) from polynomial degrees (from `pygbz2d.core`) |
+| `PointSubset`, `LineSubset`, `GBZResult`, `ConnectedSubset` | Data types (from `pygbz2d.core`) |
 
 ## 4. Key Numerical Parameters
 
@@ -382,9 +382,9 @@ Main entry point. Builds the characteristic polynomial from `(coeffs, degs)`, so
 | `plateau_check` | True | Enable zero-plateau detection |
 | `plateau_probe_radius` | None | Probe radius (default: auto from `continuum_perturb`) |
 
-## 5. Relation to `bfgbz2d.amoeba`
+## 5. Relation to `pygbz2d.amoeba`
 
-| Aspect | bfgbz2d.sgbz | bfgbz2d.amoeba |
+| Aspect | pygbz2d.sgbz | pygbz2d.amoeba |
 |--------|------------------|---------------------|
 | Backend | `continuation.ZeroManager` (adaptive β₂-root tracking) | `continuation.ZeroManager` (same backend) |
 | Base manifold | `μ₂_mid(θ₁)` piecewise-smooth boundary-pair mean curve | `μ₂` = constant level surface |

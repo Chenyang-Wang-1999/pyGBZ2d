@@ -16,13 +16,13 @@ import pytest
 from math import pi
 from types import SimpleNamespace
 
-from bfgbz2d.core import CharPoly, JoinableLinePiece
+from pygbz2d.core import CharPoly, JoinableLinePiece
 from conftest import build_HN2D_polynomial
 
-import bfgbz2d.sgbz as bfs
-from bfgbz2d.sgbz import pairwise as sgbz_pairwise
-from bfgbz2d.sgbz.mu2mid import Mu2MidZM
-from bfgbz2d.continuation.multiple_roots import solve_multiple_roots_iterative
+import pygbz2d.sgbz as bfs
+from pygbz2d.sgbz import pairwise as sgbz_pairwise
+from pygbz2d.sgbz.mu2mid import Mu2MidZM
+from pygbz2d.continuation.multiple_roots import solve_multiple_roots_iterative
 
 
 # ===========================================================================
@@ -152,10 +152,10 @@ class TestSgbzPlateauProbe:
         should complete and report not_found (winding non-zero off the
         boundary), demonstrating the SGBZ-side probe path executes.
         """
-        from bfgbz2d.sgbz.plateau import _probe_zero_plateau_near_mu1
-        from bfgbz2d.core import CONTINUUM_TOL
-        from bfgbz2d.sgbz.pairwise import CROSSING_TOL as _CROSSING_TOL
-        from bfgbz2d.sgbz.sgbz_solver import solve_SGBZ_for_E
+        from pygbz2d.sgbz.plateau import _probe_zero_plateau_near_mu1
+        from pygbz2d.core import CONTINUUM_TOL
+        from pygbz2d.sgbz.pairwise import CROSSING_TOL as _CROSSING_TOL
+        from pygbz2d.sgbz.sgbz_solver import solve_SGBZ_for_E
 
         coeffs, degs = build_HN2D_polynomial(
             J1=1.0, J2=1.0, gamma_1=0.2, gamma_2=0.3,

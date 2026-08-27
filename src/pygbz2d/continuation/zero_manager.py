@@ -37,7 +37,7 @@ BOUNDARY_THETA_TOL: float = 1e-6
 MR_GAUGE_TOL: float = 0.1
 #: Hard cap on segment count (runaway protection).
 MAX_SEGMENTS: int = 10000
-from bfgbz2d.core import (
+from pygbz2d.core import (
     TWO_PI,
     CharPoly,
     hungarian_match_indices,

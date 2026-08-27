@@ -19,9 +19,9 @@ from scipy import interpolate
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]) + "/src")
-import bfgbz2d.sgbz as bfs
-import bfgbz2d.amoeba as bfa
-from bfgbz2d.backend import make_laurent
+import pygbz2d.sgbz as bfs
+import pygbz2d.amoeba as bfa
+from pygbz2d.backend import make_laurent
 print("Using ", bfs.__file__)
 print("Polynomial backend:", type(make_laurent(np.array([1, 1]), np.array([1, 0, 0, 0, 1, 0]))))
 

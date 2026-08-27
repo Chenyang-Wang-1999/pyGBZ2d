@@ -1,8 +1,8 @@
 # Numerical Constants Reference
 
-Every numerical constant in bfGBZ2d lives in the module that consumes it
+Every numerical constant in pyGBZ2d lives in the module that consumes it
 (single-consumer locality); only the seven cross-package constants live in
-`bfgbz2d.core`.  This document is the complete map.
+`pygbz2d.core`.  This document is the complete map.
 
 ## The customization model
 
@@ -12,7 +12,7 @@ There are exactly two ways to tune a computation — no third channel:
    (defaults left as `None` resolve from the constants below at call time):
 
    ```python
-   from bfgbz2d.sgbz import collect_GBZ_subsets
+   from pygbz2d.sgbz import collect_GBZ_subsets
    gbz = collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, continuum_tol=1e-8)
    ```
 
@@ -21,7 +21,7 @@ There are exactly two ways to tune a computation — no third channel:
    attribute lookup at call time), including inside running loops:
 
    ```python
-   from bfgbz2d.sgbz import pairwise
+   from pygbz2d.sgbz import pairwise
    pairwise.CROSSING_TOL = 1e-12        # every later call sees 1e-12
    ```
 
@@ -49,7 +49,7 @@ Two rules keep this mechanism sound (enforced by AST lint in
 
 ---
 
-## `bfgbz2d.core` — cross-package constants
+## `pygbz2d.core` — cross-package constants
 
 | Constant | Default | Meaning |
 |---|---|---|
@@ -61,7 +61,7 @@ Two rules keep this mechanism sound (enforced by AST lint in
 | `ESCAPE_LADDER` | (1.0, 2.0, 4.0, 8.0) | Scale factors applied to `CONTINUUM_PERTURB` when one step fails to escape a degenerate band. |
 | `PROBE_XTOL` | 1e-10 | Step resolution of the probe stepper (`core.generate_probe_steps`). |
 
-## `bfgbz2d.continuation.arclength` — RK45-style stepper
+## `pygbz2d.continuation.arclength` — RK45-style stepper
 
 All single-consumer knobs of the pseudo-arclength step controller.
 `StepControl` fields left as `None` resolve from these **at construction**,
@@ -77,14 +77,14 @@ so assigning `arclength.SAFETY` reaches every controller built afterwards.
 | `MAX_STEP` / `MIN_STEP` | 0.5 / 1e-12 | Hard step bounds. ⚠ `MIN_STEP` is machine-anchored. |
 | `ZERO_THRESHOLD` / `INF_THRESHOLD` | 1e-6 / 1e6 | \|β₂\| below/above which a root is a singular 0/∞ padding root. |
 
-## `bfgbz2d.continuation.multiple_roots` — MR detection
+## `pygbz2d.continuation.multiple_roots` — MR detection
 
 | Constant | Default | Meaning |
 |---|---|---|
 | `CLUSTER_TOL` | 1e-4 | Chordal-distance threshold of `detect_cluster` — the single cluster predicate. Unified 2026-08 to the run-side value (the old direct-call default 1e-6 is retired). |
 | `MIN_DIST_THRESHOLD` | 0.1 | Closest-pair distance below which the MR interval trigger arms; above it the trigger state resets. |
 
-## `bfgbz2d.continuation.zero_manager` — ZM run loop
+## `pygbz2d.continuation.zero_manager` — ZM run loop
 
 The MR restart trio (`MR_JUMP`, `MR_RESTART_FACTOR_H0`,
 `MR_RESTART_FACTOR_ABS`) is **one formula's** parameters — the effective
@@ -103,7 +103,7 @@ together.
 | `MR_GAUGE_TOL` | 0.1 | Warn when the iterative MR solver's θ₁ drifts more than this from the trigger. |
 | `MAX_SEGMENTS` ⚠ | 10000 | Hard cap on tracked segments (runaway protection). |
 
-## `bfgbz2d.sgbz.pairwise` — the crossing channel
+## `pygbz2d.sgbz.pairwise` — the crossing channel
 
 | Constant | Default | Meaning |
 |---|---|---|
@@ -117,13 +117,13 @@ together.
 | `THETA_EQ_TOL` ⚠ | 1e-15 | Exact-endpoint float comparison when refinement reads mesh rows. |
 | `BRENTQ_MAXITER` | 100 | brentq iteration budget (the bracket is guaranteed by the sign scan). |
 
-## `bfgbz2d.sgbz.mu2mid`
+## `pygbz2d.sgbz.mu2mid`
 
 | Constant | Default | Meaning |
 |---|---|---|
 | `LOGABS_CLAMP` | 14.0 | Clamp band for ln\|β₂\| in μ₂_mid path pieces (\|β₂\| = e^±14 ≈ 1.2e6); divergent boundary-root slopes exceed it and degrade pieces to linear. |
 
-## `bfgbz2d.sgbz.winding`
+## `pygbz2d.sgbz.winding`
 
 | Constant | Default | Meaning |
 |---|---|---|
@@ -131,21 +131,21 @@ together.
 | `WINDING_QUAD_LIMIT` | 200 | quad sub-interval budget. |
 | `SEED_N_PER_INTERVAL` | 4 | θ₂ samples per interval when picking the loop-winding seed. |
 
-## `bfgbz2d.sgbz.sgbz_solver`
+## `pygbz2d.sgbz.sgbz_solver`
 
 | Constant | Default | Meaning |
 |---|---|---|
 | `MU1_MAX_ITER` | 60 | Iteration budget of the μ₁ bisection. |
 | `MAX_BRACKET_EXPANSIONS` | 10 | Cap on μ₁ bracket-expansion steps (error past this). |
 
-## `bfgbz2d.amoeba.zm_extract`
+## `pygbz2d.amoeba.zm_extract`
 
 | Constant | Default | Meaning |
 |---|---|---|
 | `SNAP_TOL` | 1e-3 | A crossing θ₁ within this of a continuum LineSubset endpoint snaps to the continuum/MR boundary (deliberately decoupled from `CONTINUUM_TOL`: snap radius vs. band sensitivity). |
 | `ROOT_TOL` | 1e-9 | Root-match radius of the curve-consistency screen (shared MR rows match to machine precision; unrelated tracks differ by O(1)). |
 
-## `bfgbz2d.amoeba.bisect`
+## `pygbz2d.amoeba.bisect`
 
 | Constant | Default | Meaning |
 |---|---|---|
@@ -154,7 +154,7 @@ together.
 | `MAX_RANGE_EXPANSIONS` | 10 | μ₂ search-range expansion cap. |
 | `RANGE_EXPAND_FACTOR` | 2.0 | Range growth per expansion step. |
 
-## `bfgbz2d.amoeba.ronkin_winding`
+## `pygbz2d.amoeba.ronkin_winding`
 
 | Constant | Default | Meaning |
 |---|---|---|
@@ -162,7 +162,7 @@ together.
 | `FSOLVE_MAXFEV` | 500 | fsolve evaluation budget. |
 | `CROSSING_RESIDUAL_TOL` | 1e-10 | Residual gate accepting a refined crossing (non-convergence falls back to the unrefined estimate). |
 
-## `bfgbz2d.amoeba.amoeba`
+## `pygbz2d.amoeba.amoeba`
 
 | Constant | Default | Meaning |
 |---|---|---|

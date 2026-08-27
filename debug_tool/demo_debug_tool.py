@@ -85,7 +85,7 @@ def main(argv=None):
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt  # noqa: F401  (backend fixed above)
 
-    from bfgbz2d.core import CharPoly
+    from pygbz2d.core import CharPoly
     from debug_tool import collect_debug_subsets, plot_winding_debug
 
     builder, E_default, mu1_default = MODELS[args.model]

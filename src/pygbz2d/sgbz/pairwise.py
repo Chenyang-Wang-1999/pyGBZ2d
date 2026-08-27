@@ -52,8 +52,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.optimize import brentq
 
-from bfgbz2d import core
-from bfgbz2d.core import live_defaults
+from pygbz2d import core
+from pygbz2d.core import live_defaults
 
 # Crossing-channel constants (single consumers live in this module).
 #: brentq xtol when refining a pairwise ln|β₂| crossing.
@@ -72,9 +72,9 @@ REFINE_REL_TOL: float = 1e-12
 THETA_EQ_TOL: float = 1e-15
 #: brentq iteration budget (the bracket is guaranteed by the sign scan).
 BRENTQ_MAXITER: int = 100
-from bfgbz2d.core import TWO_PI
-from bfgbz2d.continuation import ZeroManager
-from bfgbz2d.continuation.interpolation import hermite_interp_poly
+from pygbz2d.core import TWO_PI
+from pygbz2d.continuation import ZeroManager
+from pygbz2d.continuation.interpolation import hermite_interp_poly
 
 if TYPE_CHECKING:
     from .mu2mid import Mu2MidZM

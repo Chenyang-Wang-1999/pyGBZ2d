@@ -20,7 +20,7 @@ import sys
 from dataclasses import dataclass
 from math import pi
 
-from bfgbz2d.core import TWO_PI
+from pygbz2d.core import TWO_PI
 from pathlib import Path
 from typing import Iterable
 
@@ -30,8 +30,8 @@ if str(ROOT) not in sys.path:
 
 import numpy as np
 
-import bfgbz2d.amoeba.amoeba as amo
-from bfgbz2d.core import CharPoly
+import pygbz2d.amoeba.amoeba as amo
+from pygbz2d.core import CharPoly
 
 
 DEMO_PATH = ROOT / "demos" / "imaginary-degeneracy-splitting.py"

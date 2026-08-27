@@ -13,10 +13,10 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import bfgbz2d.sgbz as bfs
+import pygbz2d.sgbz as bfs
 print("GBZ path: ", bfs.__file__)
-import bfgbz2d.amoeba as bfa
-from bfgbz2d.core import CharPoly
+import pygbz2d.amoeba as bfa
+from pygbz2d.core import CharPoly
 
 DEFAULT_PARAMS = {
     "t": 1,

@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from bfgbz2d.core import CharPoly, LineSubset
-from bfgbz2d.continuation import ZeroManager
+from pygbz2d.core import CharPoly, LineSubset
+from pygbz2d.continuation import ZeroManager
 
-from bfgbz2d.core import live_defaults
+from pygbz2d.core import live_defaults
 from .mu2mid import ensure_mu2mid
 from .mu2mid import Mu2MidZM
-from bfgbz2d.core import JoinableLinePiece as _LinePiece, is_mr_cluster_endpoint as _is_cluster_endpoint
+from pygbz2d.core import JoinableLinePiece as _LinePiece, is_mr_cluster_endpoint as _is_cluster_endpoint
 
 
 # ---------------------------------------------------------------------------

@@ -27,7 +27,7 @@ FSOLVE_XTOL: float = 1e-12
 FSOLVE_MAXFEV: int = 500
 #: Residual gate that accepts a refined crossing.
 CROSSING_RESIDUAL_TOL: float = 1e-10
-from bfgbz2d.core import CharPoly, TWO_PI
+from pygbz2d.core import CharPoly, TWO_PI
 
 
 def _find_exact_crossing(

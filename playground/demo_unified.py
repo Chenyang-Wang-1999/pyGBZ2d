@@ -20,9 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 from cmath import exp
 
-import bfgbz2d.sgbz as bfs
-import bfgbz2d.amoeba as bfa
-from bfgbz2d.core import PointSubset, LineSubset, GBZResult, CharPoly
+import pygbz2d.sgbz as bfs
+import pygbz2d.amoeba as bfa
+from pygbz2d.core import PointSubset, LineSubset, GBZResult, CharPoly
 
 
 def build_HN2D_polynomial(J1, J2, gamma_1, gamma_2, delta_1, delta_2):

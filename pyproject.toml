@@ -3,7 +3,7 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bfGBZ2d"
+name = "pyGBZ2d"
 version = "0.1.0"
 description = "Brute-force generalized Brillouin zone (GBZ) computation for 2D non-Hermitian tight-binding models"
 readme = "README.md"

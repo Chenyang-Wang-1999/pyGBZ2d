@@ -7,10 +7,10 @@ from cmath import exp
 from collections import defaultdict
 from types import SimpleNamespace
 
-from bfgbz2d.core import (CharPoly, hungarian_match_indices, to_sphere_r3,
+from pygbz2d.core import (CharPoly, hungarian_match_indices, to_sphere_r3,
                        cost_from_sphere_r3, TWO_PI)
-from bfgbz2d.continuation.zero_manager import ZeroManager, SegmentData
-from bfgbz2d.continuation.multiple_roots import MultipleRootInfo
+from pygbz2d.continuation.zero_manager import ZeroManager, SegmentData
+from pygbz2d.continuation.multiple_roots import MultipleRootInfo
 
 
 # ===========================================================================

@@ -19,9 +19,9 @@ import math
 import cmath
 from typing import Optional
 
-from bfgbz2d import core
-from bfgbz2d.core import live_defaults
-from bfgbz2d.core import (
+from pygbz2d import core
+from pygbz2d.core import live_defaults
+from pygbz2d.core import (
     TWO_PI,
     CharPoly, GBZResult, PointSubset,
     check_points_clustered_on_torus, probe_zero_plateau,
@@ -41,7 +41,7 @@ def _check_pmgbz_points_clustered(
     """Whether every PMGBZ point has a neighbour within *tol_normalized*.
 
     Thin SGBZ adapter over
-    :func:`bfgbz2d.core.check_points_clustered_on_torus`: extracts ``(θ₁, θ₂)``
+    :func:`pygbz2d.core.check_points_clustered_on_torus`: extracts ``(θ₁, θ₂)``
     from the result's ``PointSubset``s (SGBZ points are PointSubsets, unlike
     amoeba's ``(θ₁, θ₂, jump)`` tuples) and forwards.
 
@@ -123,7 +123,7 @@ def _probe_zero_plateau_near_mu1(
 ) -> dict:
     """Check whether a nonempty-PMGBZ candidate sits next to a zero plateau.
 
-    Thin SGBZ adapter over :func:`bfgbz2d.core.probe_zero_plateau`: the step
+    Thin SGBZ adapter over :func:`pygbz2d.core.probe_zero_plateau`: the step
     ladder, ``±side`` loop and found/not_found/inconclusive classification
     are shared; the per-probe *evaluation* (build one Mu2MidZM, gate on
     continuum, else run crossing detection + winding) and the plateau

@@ -1,4 +1,4 @@
-# bfGBZ2d — brute-force-non-hermitian
+# pyGBZ2d — brute-force-non-hermitian
 
 Non-Hermitian skin effect computation for 2D tight-binding models — brute-force polynomial root-solving approaches.
 
@@ -6,8 +6,8 @@ This package implements two complementary formulations for determining the gener
 
 | Subpackage | Approach | Key Object |
 |--------|----------|------------|
-| `bfgbz2d.sgbz` | SGBZ / average major-axis winding | PMGBZ points, average winding $W(E, \mu_1)$ |
-| `bfgbz2d.amoeba` | Amoeba / Ronkin function | Average winding numbers, Ronkin minimum $(\mu_1, \mu_2)$ |
+| `pygbz2d.sgbz` | SGBZ / average major-axis winding | PMGBZ points, average winding $W(E, \mu_1)$ |
+| `pygbz2d.amoeba` | Amoeba / Ronkin function | Average winding numbers, Ronkin minimum $(\mu_1, \mu_2)$ |
 
 The characteristic polynomial $f(E, \beta_1, \beta_2) = \det[E - h(\beta_1, \beta_2)]$ of a 2D non-Hermitian tight-binding model is a Laurent polynomial in $\beta_j = e^{\mu_j + i\theta_j}$. Both modules solve for the non-Bloch decay factors $(\mu_1, \mu_2)$ that satisfy the GBZ condition, but through different mathematical routes.
 
@@ -38,7 +38,7 @@ CharPoly(coeffs, degs, backend="numpy")        # explicit, per-polynomial
 # or backend=None (default): poly_tools if importable, else numpy fallback
 ```
 
-A custom backend is any class satisfying the `LaurentProtocol` in `bfgbz2d/backend.py` (eval / derivative / partial_terms_1d / num_max_degrees).
+A custom backend is any class satisfying the `LaurentProtocol` in `pygbz2d/backend.py` (eval / derivative / partial_terms_1d / num_max_degrees).
 
 - (Optional) **BerryPy** — used by the Haldane playground script and Haldane counterexample tests; those tests skip automatically when BerryPy is absent.
 
@@ -50,7 +50,7 @@ Polynomials use triplet encoding `[E_exponent, beta1_exponent, beta2_exponent]`.
 
 ```python
 import numpy as np
-from bfgbz2d import CharPoly
+from pygbz2d import CharPoly
 
 coeffs = np.array([1, -1, -1, -1, -1], dtype=complex)
 degs = np.array([
@@ -68,7 +68,7 @@ poly = CharPoly(coeffs, degs)
 Find the critical $\mu_1$ where the average major-axis winding number vanishes:
 
 ```python
-from bfgbz2d.sgbz import collect_GBZ_subsets
+from pygbz2d.sgbz import collect_GBZ_subsets
 
 # Check spectrum membership for a reference energy
 gbz = collect_GBZ_subsets(coeffs, degs, E_ref=1.0 + 0j)
@@ -80,7 +80,7 @@ print(f"In spectrum: {not gbz.is_empty}, subsets: {len(gbz.subsets)}")
 Find the Ronkin function minimum $(\mu_1, \mu_2)$ where both average windings vanish:
 
 ```python
-from bfgbz2d.amoeba import bisect_amoeba_ronkin_min
+from pygbz2d.amoeba import bisect_amoeba_ronkin_min
 
 result = bisect_amoeba_ronkin_min(poly, 1.0 + 0j, -0.5, 0.5, -2.0, 2.0)
 print(f"mu1 = {result['mu1']:.6f}, mu2 = {result['mu2']:.6f}")
@@ -91,13 +91,13 @@ print(f"mu1 = {result['mu1']:.6f}, mu2 = {result['mu2']:.6f}")
 Every numerical constant lives in the module that consumes it (RK45
 stepper knobs in `continuation/arclength.py`, crossing tolerances in
 `sgbz/pairwise.py`, ...); the seven cross-package constants live in
-`bfgbz2d.core`.  The complete per-module reference with defaults and
+`pygbz2d.core`.  The complete per-module reference with defaults and
 tuning guidance is [doc/constants.md](doc/constants.md).
 
 The customization model has exactly two layers:
 
 ```python
-import bfgbz2d as bz
+import pygbz2d as bz
 
 # 1) tune ONE call — a plain keyword argument (misspelled names raise
 #    TypeError; there is no catch-all options dict)
@@ -105,7 +105,7 @@ gbz = bz.sgbz.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, continuum_tol=1e-8)
 
 # 2) tune the WHOLE process — assign the module constant; takes effect
 #    immediately, on the next read, everywhere (including running loops)
-from bfgbz2d.sgbz import pairwise
+from pygbz2d.sgbz import pairwise
 pairwise.CROSSING_TOL = 1e-12
 ```
 
@@ -114,7 +114,7 @@ if made **before** the pool is created.
 
 ## API Overview
 
-### `bfgbz2d.sgbz`
+### `pygbz2d.sgbz`
 
 | Function | Description |
 |----------|-------------|
@@ -128,7 +128,7 @@ if made **before** the pool is created.
 
 `Mu2MidZM.analyze()` runs a pre-crossing mesh refinement before the pairwise scan: intervals whose cubic-Hermite interpolants predict two or more crossings are sub-divided (disable with `refine_multi_crossings=False`).
 
-### `bfgbz2d.amoeba`
+### `pygbz2d.amoeba`
 
 | Function | Description |
 |----------|-------------|

@@ -9,7 +9,7 @@ import pickle
 from pathlib import Path
 import numpy as np
 
-from bfgbz2d.core import TWO_PI
+from pygbz2d.core import TWO_PI
 import pyvista as pv
 
 HERE = Path(__file__).resolve().parent

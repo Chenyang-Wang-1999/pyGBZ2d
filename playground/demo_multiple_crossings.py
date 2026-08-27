@@ -11,8 +11,8 @@ import sys
 import importlib.util
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bfgbz2d.sgbz import collect_GBZ_subsets
-from bfgbz2d.core import CharPoly
+from pygbz2d.sgbz import collect_GBZ_subsets
+from pygbz2d.core import CharPoly
 
 # Import from Haldane model (filename has hyphens, so use importlib)
 import importlib.util
@@ -60,7 +60,7 @@ def test_failed_energy(E_ref: complex, direction: str = "a1"):
     # Try direct solve to see more details
     print("\n2. Direct solve_SGBZ_for_E:")
     try:
-        from bfgbz2d.sgbz.sgbz_solver import solve_SGBZ_for_E
+        from pygbz2d.sgbz.sgbz_solver import solve_SGBZ_for_E
         solution = solve_SGBZ_for_E(poly, E_ref)
         print(f"   SUCCESS (should not reach here)")
         print(f"   mu1: {solution.get('mu1')}")

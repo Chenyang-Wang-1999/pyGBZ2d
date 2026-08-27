@@ -1,13 +1,13 @@
-"""Tests for bfgbz2d.amoeba module using 2D HN model analytic solution."""
+"""Tests for pygbz2d.amoeba module using 2D HN model analytic solution."""
 
 import numpy as np
 import pytest
 from cmath import exp
 
-import bfgbz2d.amoeba as bfa
-from bfgbz2d.amoeba.bisect import _resolve_continuum
-from bfgbz2d.amoeba.zm_extract import AmoebaZeroManager
-from bfgbz2d.core import PointSubset, LineSubset, GBZResult, CharPoly, TWO_PI
+import pygbz2d.amoeba as bfa
+from pygbz2d.amoeba.bisect import _resolve_continuum
+from pygbz2d.amoeba.zm_extract import AmoebaZeroManager
+from pygbz2d.core import PointSubset, LineSubset, GBZResult, CharPoly, TWO_PI
 
 from conftest import build_HN2D_polynomial
 
@@ -120,8 +120,8 @@ def _build_two_segment_zm(mu2, cont_on_seg1=True, cluster_tracks=(0, 1),
     cluster terminator and the only joinable boundary is the interior MR).
     """
     from cmath import exp, pi
-    from bfgbz2d.continuation.zero_manager import SegmentData
-    from bfgbz2d.continuation.multiple_roots import MultipleRootInfo
+    from pygbz2d.continuation.zero_manager import SegmentData
+    from pygbz2d.continuation.multiple_roots import MultipleRootInfo
     from types import SimpleNamespace
 
     K = 3
@@ -206,7 +206,7 @@ class TestContinuumThroughMR:
         (A 2-segment full-circle continuum has no genuine endpoint anywhere, so
         it is a closed loop; we open it at the interior MR and keep the seam
         interior rather than fabricating endpoints at θ₁=0/2π.)"""
-        from bfgbz2d.amoeba.zm_extract import (
+        from pygbz2d.amoeba.zm_extract import (
             _join_continuum_across_mrs, _LinePiece,
         )
         zm, masks, mu1, E = _build_two_segment_zm(mu2=0.3)
@@ -255,7 +255,7 @@ class TestContinuumThroughMR:
         would splice segment 0's right end (θ=π) onto the last segment's
         second point — a different physical point — and break β₂ continuity.
         """
-        from bfgbz2d.amoeba.zm_extract import (
+        from pygbz2d.amoeba.zm_extract import (
             _join_continuum_across_mrs, _LinePiece,
         )
         # Track 2 in the interior-MR cluster → interior boundary does not join.
@@ -296,7 +296,7 @@ class TestContinuumThroughMR:
         """If a non-cluster endpoint has no matching continuum in the adjacent
         segment, the join must raise (topology inconsistency), not silently
         truncate."""
-        from bfgbz2d.amoeba.zm_extract import (
+        from pygbz2d.amoeba.zm_extract import (
             _join_continuum_across_mrs, _LinePiece,
         )
         zm, masks, mu1, E = _build_two_segment_zm(
@@ -321,7 +321,7 @@ class TestContinuumThroughMR:
         only joinable boundary is the interior MR at θ₁=π.  Track 2 outside
         the cluster → joins (1 piece); track 2 inside the cluster → does not
         (2 pieces)."""
-        from bfgbz2d.amoeba.zm_extract import (
+        from pygbz2d.amoeba.zm_extract import (
             _join_continuum_across_mrs, _LinePiece,
         )
 
@@ -521,8 +521,8 @@ class TestPlateauEdge:
         fixed-grid behaviour, which produced 4 canceling spurious zeros at
         the edge; the functional outcome (edge → non-GBZ) is unchanged."""
         char_poly, coeffs, degs = nnc_char_poly
-        from bfgbz2d.amoeba.bisect import bisect_amoeba_ronkin_min
-        from bfgbz2d.amoeba.ronkin_winding import _get_average_winding_from_zeros
+        from pygbz2d.amoeba.bisect import bisect_amoeba_ronkin_min
+        from pygbz2d.amoeba.ronkin_winding import _get_average_winding_from_zeros
 
         res = bisect_amoeba_ronkin_min(char_poly, self.E_PLATEAU_EDGE)
         zeros = res["zeros"]
@@ -548,7 +548,7 @@ class TestPlateauEdge:
         crossings, so the net jump count is trivially 0 — the point is a
         uniform zero-w2 plateau, not a genuine GBZ with canceling jumps."""
         char_poly, coeffs, degs = nnc_char_poly
-        from bfgbz2d.amoeba.bisect import bisect_amoeba_ronkin_min
+        from pygbz2d.amoeba.bisect import bisect_amoeba_ronkin_min
 
         res = bisect_amoeba_ronkin_min(char_poly, self.E_PLATEAU_EDGE)
         zeros = res["zeros"]

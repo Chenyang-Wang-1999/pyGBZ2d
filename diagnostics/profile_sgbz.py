@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import numpy as np
-import bfgbz2d.sgbz as bfs
+import pygbz2d.sgbz as bfs
 
 
 def build_HN2D_polynomial(J1, J2, gamma_1, gamma_2, delta_1, delta_2):

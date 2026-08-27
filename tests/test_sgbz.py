@@ -1,4 +1,4 @@
-"""Tests for the ZeroManager-based bfgbz2d.sgbz module.
+"""Tests for the ZeroManager-based pygbz2d.sgbz module.
 
 The 2D HN model's SGBZ boundary at ``mu1 = gamma_1`` is a *continuum*
 (a 1D LineSubset of equal-modulus degeneracy), not isolated points — so
@@ -11,11 +11,11 @@ import numpy as np
 import pytest
 from cmath import exp
 
-import bfgbz2d.sgbz as bfs
-from bfgbz2d.sgbz import sgbz_solver, winding as sgbz_winding
-from bfgbz2d.sgbz import pairwise as sgbz_pairwise
-from bfgbz2d.core import PointSubset, LineSubset, GBZResult, CharPoly, TWO_PI
-from bfgbz2d.continuation import ZeroManager
+import pygbz2d.sgbz as bfs
+from pygbz2d.sgbz import sgbz_solver, winding as sgbz_winding
+from pygbz2d.sgbz import pairwise as sgbz_pairwise
+from pygbz2d.core import PointSubset, LineSubset, GBZResult, CharPoly, TWO_PI
+from pygbz2d.continuation import ZeroManager
 
 from conftest import build_HN2D_polynomial
 
@@ -203,7 +203,7 @@ class TestHermitianLimit:
         coeffs10, degs10 = poly_hermitian
         coeffs11, degs11 = poly_hermitian_11
 
-        import bfgbz2d.amoeba as bfa
+        import pygbz2d.amoeba as bfa
 
         gbz10 = bfs.collect_GBZ_subsets(coeffs10, degs10, 1.0 + 0j, 0.0)
         gbz11 = bfs.collect_GBZ_subsets(coeffs11, degs11, 1.0 + 0j, 0.0)
@@ -320,7 +320,7 @@ class TestContinuumMaterialization:
 
     def test_extract_requires_continuum_detected(self, poly_A):
         """Materialization without a detected continuum must raise, not return []."""
-        from bfgbz2d.sgbz import continuum_lines
+        from pygbz2d.sgbz import continuum_lines
 
         coeffs, degs = poly_A
         poly = CharPoly(coeffs, degs)
@@ -336,7 +336,7 @@ class TestContinuumMaterialization:
         self, poly_A, params_A, monkeypatch,
     ):
         """has_continuum=True with zero boundary runs is an invariant violation."""
-        from bfgbz2d.sgbz import continuum_lines
+        from pygbz2d.sgbz import continuum_lines
 
         coeffs, degs = poly_A
         poly = CharPoly(coeffs, degs)
@@ -543,7 +543,7 @@ class TestPairwiseAnalysis:
         genuinely differ.  The 2π-side event (columns 0,1 in track frame)
         must be relabelled to (1,0) in the θ=0-anchored merged group.
         """
-        from bfgbz2d.sgbz.mu2mid import ItemView
+        from pygbz2d.sgbz.mu2mid import ItemView
         from dataclasses import replace as _replace
 
         th = np.array([0.0, 0.1, 0.2, 6.183185307179586,
@@ -633,7 +633,7 @@ class TestPairwiseAnalysis:
         item a is ∞ at row 0 only; the pair has one transversal crossing
         at θ* = 1/3 inside interval [0.3, 0.4].
         """
-        from bfgbz2d.sgbz.mu2mid import ItemView
+        from pygbz2d.sgbz.mu2mid import ItemView
 
         th = np.array([0.0, 0.1, 0.2, 0.3, 0.4])
 
@@ -734,7 +734,7 @@ class TestPairwiseAnalysis:
         sign-change scan is blind to.
         """
         from types import SimpleNamespace
-        from bfgbz2d.sgbz.mu2mid import ItemView
+        from pygbz2d.sgbz.mu2mid import ItemView
 
         r1, r2 = 0.25, 0.55
         d0 = 4.0 * r1 * r2
@@ -793,7 +793,7 @@ class TestPairwiseAnalysis:
 
     def test_nonfinite_pair_diff_is_skipped_by_planner(self):
         from types import SimpleNamespace
-        from bfgbz2d.sgbz.mu2mid import ItemView
+        from pygbz2d.sgbz.mu2mid import ItemView
 
         th = np.array([0.0, 1.0])
         view = ItemView(
@@ -1027,8 +1027,8 @@ def test_logabs_clamped_keeps_mu2_mid_finite():
     Directly unit-tested because the HN models used elsewhere stay well
     inside the band; a synthetic root array is the honest fixture.
     """
-    from bfgbz2d.sgbz.mu2mid import logabs_clamped
-    from bfgbz2d.sgbz.mu2mid import LOGABS_CLAMP as _LOGABS_CLAMP_L
+    from pygbz2d.sgbz.mu2mid import logabs_clamped
+    from pygbz2d.sgbz.mu2mid import LOGABS_CLAMP as _LOGABS_CLAMP_L
 
     # one ordinary finite root, one very small finite root, one very large
     # finite root — the latter two lie outside the ±14 log-modulus band.
