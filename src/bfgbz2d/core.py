@@ -20,8 +20,9 @@ from dataclasses import dataclass
 from typing import Optional, Union
 
 import numpy as np
-import poly_tools as pt
 from scipy.optimize import linear_sum_assignment
+
+from bfgbz2d.backend import make_laurent
 
 # The single 2π constant for the whole project.  Every module imports it
 # from here instead of spelling `2 * pi` locally, so all seam comparisons
@@ -35,49 +36,54 @@ class CharPoly:
     """Characteristic Laurent polynomial f(E, beta1, beta2).
 
     The single entry point for polynomial construction, evaluation, and
-    root-solving.  Wraps poly_tools.CLaurent internally — no other file
-    in the project needs to import poly_tools directly.
+    root-solving.  Wraps a pluggable Laurent backend internally (see
+    :mod:`bfgbz2d.backend`) — no other file in the project touches a
+    backend directly.
 
     Parameters:
         coeffs: 1-D complex ndarray of polynomial coefficients.
         degs: (n_terms, 3) integer ndarray of (E, beta1, beta2) exponents.
+        backend: ``None`` (auto: GBZ_BACKEND env → poly_tools → numpy
+            fallback), ``'poly_tools'``, ``'numpy'``, or a user-supplied
+            class/callable ``backend(coeffs, degs)`` implementing the
+            Laurent protocol.
     """
 
-    def __init__(self, coeffs: np.ndarray, degs: np.ndarray):
+    def __init__(self, coeffs: np.ndarray, degs: np.ndarray, backend=None):
         self._coeffs = np.asarray(coeffs, dtype=complex)
         self._degs = np.asarray(degs, dtype=int)
-        self._claurent = pt.CLaurent(3)
-        self._claurent.set_Laurent_by_terms(
-            pt.CScalarVec(self._coeffs),
-            pt.CLaurentIndexVec(self._degs.flatten()),
-        )
+        self._laurent = make_laurent(self._coeffs, self._degs, backend)
         # Pre-compute partial derivatives (absorbs PolyDiffContext logic).
-        self._dclaurent = [
-            self._claurent.derivative(i) for i in range(self._claurent.dim)
+        self._dlaurent = [
+            self._laurent.derivative(i) for i in range(self._laurent.dim)
         ]
-        self._d2claurent = [
-            [self._dclaurent[i].derivative(j) for j in range(self._claurent.dim)] 
-            for i in range(self._claurent.dim)
+        self._d2laurent = [
+            [self._dlaurent[i].derivative(j)
+             for j in range(self._laurent.dim)]
+            for i in range(self._laurent.dim)
         ]
-        # Pre-compute minor degrees for both directions.
-        coeffs_ct = pt.CScalarVec([])
-        degs_ct = pt.CIndexVec([])
-        self._claurent.num.batch_get_data(coeffs_ct, degs_ct)
+        # Pre-compute minor degrees for both directions from the CLEARED
+        # numerator max degrees and the Laurent denominator orders.
+        num_max = self._laurent.num_max_degrees()
         for d in (1, 2):
-            M_plus_N = max(degs_ct[d::3])
-            M_val = self._claurent.denom_orders[d]
-            N_val = M_plus_N - M_val
+            M_val = int(self._laurent.denom_orders[d])
+            N_val = int(num_max[d]) - M_val
             if d == 2:
                 self._M, self._N = M_val, N_val
             else:
                 self._M1, self._N1 = M_val, N_val
+
+    @property
+    def backend_name(self) -> str:
+        """Name of the underlying Laurent backend (for debugging)."""
+        return type(self._laurent).__name__
 
     # -- Properties --
 
     @property
     def dim(self) -> int:
         """Number of variables (always 3)."""
-        return self._claurent.dim
+        return self._laurent.dim
 
     @property
     def M(self) -> int:
@@ -93,17 +99,15 @@ class CharPoly:
 
     def eval_val(self, var: tuple) -> complex:
         """Evaluate f(E, beta1, beta2) at the given variable tuple."""
-        return self._claurent.eval(pt.CScalarVec(var))
+        return self._laurent.eval(var)
 
     def eval_partials(self, var: tuple) -> list:
         """Evaluate all first partial derivatives at the given variable tuple."""
-        var_ctype = pt.CScalarVec(var)
-        return [dcl.eval(var_ctype) for dcl in self._dclaurent]
+        return [dcl.eval(var) for dcl in self._dlaurent]
     
     def eval_partials_2(self, var: tuple, var_id1: int, var_id2: int):
         '''Evaluate second order partials'''
-        var_ctype = pt.CScalarVec(var)
-        return self._d2claurent[var_id1][var_id2].eval(var_ctype)
+        return self._d2laurent[var_id1][var_id2].eval(var)
 
     def eval_dmu2(self, var: tuple) -> tuple:
         """Return (dmu2/dmu1, dmu2/dtheta1) from partial derivative ratios."""
@@ -148,29 +152,20 @@ class CharPoly:
             M = self._M
         if N is None:
             N = self._N
-        poly_1d = self._claurent.partial_eval(
-            pt.CScalarVec(param_vals),
-            pt.CIndexVec(param_indices),
-            pt.CIndexVec(var_indices),
+        coeffs_list, degs_list, deg_M = self._laurent.partial_terms_1d(
+            param_vals, param_indices, var_indices,
         )
-        coeffs_ct = pt.CScalarVec([])
-        degs_ct = pt.CIndexVec([])
-        poly_1d.num.batch_get_data(coeffs_ct, degs_ct)
 
-        # Convert poly_tools containers → numpy for np.roots.  A completely
+        # Assemble the dense coefficient vector for np.roots.  A completely
         # vanished partial polynomial (all β₂ terms carried a parameter that
         # became exactly 0) has no terms; its roots are entirely the padding
-        # roots below, so max() must not be attempted.  poly_tools keeps the
-        # global denominator order on that empty object, but for padding the
-        # *actual* denominator degree is zero.
-        coeffs_list = list(coeffs_ct)
-        degs_list = list(degs_ct)
+        # roots below, so max() must not be attempted.  The backend already
+        # reports the *actual* (zero) denominator degree for that empty case.
         if degs_list:
-            deg_M = int(poly_1d.denom_orders[0])
-            max_deg = max(degs_list)
+            max_deg = int(max(degs_list))
             np_coeffs = np.zeros(max_deg + 1, dtype=complex)
             for c, d in zip(coeffs_list, degs_list):
-                np_coeffs[max_deg - d] = c
+                np_coeffs[max_deg - int(d)] = c
             curr_roots = np.roots(np_coeffs)
         else:
             deg_M = 0

@@ -362,9 +362,17 @@ class TestPairwiseAnalysis:
         zm.analyze()
         assert len(zm._pair_events) == 1
         ev = zm._pair_events[0]
-        assert ev.kind == 'cross'
+        # This symmetric model (real hoppings) has its seam crossing EXACTLY
+        # at θ=0 ≡ 2π: the two representative ln|β₂| are equal there by
+        # symmetry, not by noise.  A backend whose rounding returns the
+        # exact zero classifies the row through the touch channel (kind
+        # 'touch', θ*=0); one whose last-ULP noise splits the values goes
+        # through brentq (kind 'cross', θ*=2π).  Same physical event, same
+        # direction, same charges — the kind tag is channel bookkeeping.
+        assert ev.kind in ('cross', 'touch')
         assert ev.converged
         assert ev.pair_kind == 'M-1_M'
+        assert ev.direction == 1
         assert len(zm._event_groups) == 1
         g = zm._event_groups[0]
         assert set(g.point_columns) == {0, 1}

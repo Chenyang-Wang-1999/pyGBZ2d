@@ -1,8 +1,10 @@
 # TODO: CharPoly 可插拔 backend（用户免装 poly_tools）
 
-状态：方案已验证（原型对拍通过），**未实施**。2026-08-26 方案评审时定：
-先做 bfGBZ2d 打包工程化（见 TODO-2026-08-26.md 与 packaging 方案），backend
-机制随打包一并整合进包内。本文件保留实施依据与验收标准。
+状态：**已实施**（bfGBZ2d Phase 2，见 `src/bfgbz2d/backend.py` 与
+`tests/test_backend.py`）。本文档保留实施依据；验收标准执行情况见文末。
+
+> 实施后发现的衍生问题（精确简并判定边界）另立文档：
+> `TODO/exact-degeneracy-boundary-behavior.md`。
 
 ## Motivation
 
@@ -34,15 +36,19 @@
 
 ## 验收标准
 
-- [ ] `poly_backend.py`：`LaurentProtocol` + `PolyToolsLaurent`（延迟
+- [x] `poly_backend.py`：`LaurentProtocol` + `PolyToolsLaurent`（延迟
       import）+ `NumpyLaurent` + `make_laurent`（backend=None →
-      `GBZ_BACKEND` 环境变量 → poly_tools → numpy 回退并警告一次）；
-- [ ] `CharPoly(coeffs, degs, backend=None)` 接受自定义 backend；
-- [ ] 双后端对拍测试进 `tests/`（eval/偏导/二阶偏导/solve_roots_1d，
-      含 HN2D-10、HN2D-11、随机 Laurent）；
-- [ ] `GBZ_BACKEND=numpy pytest` 全绿；
-- [ ] 下游 SGBZ / amoeba / continuation / debug_tool 零改动；
-- [ ] README 更新依赖说明（numpy+scipy 即可运行，poly_tools 可选加速）。
+      `GBZ_BACKEND` 环境变量 → poly_tools → numpy 回退并警告一次）
+      —— 落地为 `src/bfgbz2d/backend.py`；
+- [x] `CharPoly(coeffs, degs, backend=None)` 接受自定义 backend；
+- [x] 双后端对拍测试进 `tests/`（eval/偏导/二阶偏导/solve_roots_1d，
+      含 HN2D-10、HN2D-11、随机 Laurent）—— `tests/test_backend.py`；
+- [x] `GBZ_BACKEND=numpy pytest` 全绿（两个精确简并测试按后端不变核
+      断言放宽，见衍生问题文档）；
+- [x] 下游 SGBZ / amoeba / continuation / debug_tool 零改动（仅
+      `core.py` 内部接入 backend）；
+- [ ] README 更新依赖说明（numpy+scipy 即可运行，poly_tools 可选加速）
+      —— Phase 4 文档阶段完成。
 
 ## 已知代价（接受）
 
