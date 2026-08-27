@@ -1,0 +1,43 @@
+font.size: 10
+font.serif: Times New Roman
+font.sans-serif: Arial
+font.family: serif
+
+# mathtext.fontset: stixsans
+# mathtext.fontset: custom
+# mathtext.bf:  sans:bold
+# mathtext.it:  sans:italic
+# mathtext.rm:  sans
+
+axes.labelsize: 10
+axes.labelpad: 1.5
+axes.linewidth: 0.5
+
+lines.linewidth: 0.8
+lines.markersize: 2
+patch.linewidth: 0.5    # Also applied to the out box of legend
+
+xtick.major.size: 3
+ytick.major.size: 3
+xtick.minor.size: 1.5
+ytick.minor.size: 1.5
+xtick.major.width: 0.5
+ytick.major.width: 0.5
+xtick.minor.width: 0.5
+ytick.minor.width: 0.5
+xtick.labelsize: 8
+ytick.labelsize: 8
+xtick.major.pad: 2
+ytick.major.pad: 2
+xtick.direction: in
+ytick.direction: in
+xtick.minor.visible: True
+ytick.minor.visible: True
+xtick.minor.ndivs: 2
+ytick.minor.ndivs: 2
+
+legend.fontsize: 6 
+legend.handlelength: 1.2
+legend.labelspacing: 0.3
+legend.handletextpad: 0.5
+legend.columnspacing: 1

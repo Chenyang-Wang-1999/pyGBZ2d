@@ -18,10 +18,12 @@ import os
 from scipy import interpolate
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]) + "/src")
 import bfgbz2d.sgbz as bfs
 import bfgbz2d.amoeba as bfa
+from bfgbz2d.backend import make_laurent
 print("Using ", bfs.__file__)
+print("Polynomial backend:", type(make_laurent(np.array([1, 1]), np.array([1, 0, 0, 0, 1, 0]))))
 
 ALL_PARAMS = (
     1, #t1,
@@ -572,24 +574,24 @@ def debug_y_SGBZ():
 
 
 if __name__ == "__main__":
-    # sweep_amoeba()
-    # sweep_amoeba_multiband()
-    # sweep_SGBZ_a1()
-    # sweep_SGBZ_a2()
-    # sweep_SGBZ_x()
-    # sweep_SGBZ_y()
+    sweep_amoeba()
+    sweep_amoeba_multiband()
+    sweep_SGBZ_a1()
+    sweep_SGBZ_a2()
+    sweep_SGBZ_x()
+    sweep_SGBZ_y()
     # recompute_failed_SGBZ("y")
     # recompute_failed_SGBZ("y", out_fname="data/Haldane-gain-loss-y-SGBZ-recomputed.pkl")
     # recompute_failed_SGBZ("x", out_fname="data/Haldane-gain-loss-x-SGBZ-recomputed.pkl")
     # recompute_failed_SGBZ("a1", out_fname="data/Haldane-gain-loss-a1-SGBZ-recomputed.pkl")
     # recompute_failed_SGBZ("a2", out_fname="data/Haldane-gain-loss-a2-SGBZ-recomputed.pkl")
-    plot_amoebic_spectrum()
+    # plot_amoebic_spectrum()
     # plot_amoeba_mu()
-    plot_amoebic_spectrum("-xy")
-    plot_SGBZ("a1")
-    plot_SGBZ("a2")
-    plot_SGBZ("x")
-    plot_SGBZ("y")
+    # plot_amoebic_spectrum("-xy")
+    # plot_SGBZ("a1")
+    # plot_SGBZ("a2")
+    # plot_SGBZ("x")
+    # plot_SGBZ("y")
     # plot_index_E("a1", kind="SGBZ")
     # plot_index_E("a2", kind="SGBZ")
     # plot_index_E("x", kind="SGBZ")

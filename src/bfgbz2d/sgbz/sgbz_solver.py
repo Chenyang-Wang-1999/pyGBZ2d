@@ -138,10 +138,10 @@ def solve_SGBZ_for_E(
     poly: CharPoly,
     E_ref: complex,
     mu1_guess: tuple[float, float] = (-1, 1),
+    *,
     zero_tol: Optional[float] = None,
     continuum_perturb: Optional[float] = None,
     max_iter: Optional[int] = None,
-    *,
     continuum_tol: Optional[float] = None,
     crossing_tol: Optional[float] = None,
 ) -> dict:

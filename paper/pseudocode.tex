@@ -1,0 +1,465 @@
+% ======================================================================
+% pseudocode.tex — Pseudocode collection for the PRB paper on the
+% numerical computation of 2D generalized Brillouin zones.
+%
+% Usage: \input{paper/pseudocode.tex}  (from the main text or the SM).
+% Required packages (add to the preamble):
+%   \usepackage{algorithm}
+%   \usepackage{algpseudocode}   % algorithmicx
+%   \usepackage{amsmath, amssymb}
+% In REVTeX two-column layout, use \begin{algorithm} for one column or
+% \begin{algorithm*} for spanning both columns.
+%
+% Every algorithm carries a \Comment{source: <file>::<function>} tag that
+% maps the pseudocode line-for-line onto the released implementation.
+% Notation is fixed in Table \ref{tab:pseudo-notation} below.
+%
+% Suggested placement in the paper:
+%   main text : Algs. 1, 2, 4, 8, 11      (engine + the two top-level solvers)
+%   SM        : Algs. 3, 5, 6, 7, 9, 10, 12, 13, 14  (full detail)
+% ======================================================================
+
+% ---------------------------- shared macros ----------------------------
+\providecommand{\LogAbs}[1]{\ln\lvert #1\rvert}
+\providecommand{\Chord}{\mathrm{chord}}
+\providecommand{\SolveRoots}{\mathrm{SolveRoots}}
+\providecommand{\Hungarian}{\mathrm{Hungarian}}
+\providecommand{\TrackOrder}{\mathrm{TrackOrder}}
+\providecommand{\Partials}{\mathrm{Partials}}
+\providecommand{\DetectCluster}{\mathrm{DetectCluster}}
+\providecommand{\LoopWinding}{\mathrm{LoopWinding}}
+\providecommand{\SnapClusters}{\mathrm{SnapClusters}}
+\providecommand{\RangeExpand}{\mathrm{RangeExpand}}
+\providecommand{\Continue}{\mathrm{perturb}}
+
+% ---------------------------- notation table ---------------------------
+% (Optional; typically reproduced in the SM.)
+\begin{table}[htb]
+\centering
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}p{0.16\linewidth}p{0.52\linewidth}p{0.25\linewidth}@{}}
+\toprule
+Symbol & Meaning & Source \\
+\midrule
+$f(E,\beta_1,\beta_2)$ & characteristic Laurent polynomial $\det[E-h(\beta_1,\beta_2)]$ & \texttt{CharPoly} \\
+$\beta_j=e^{\mu_j+i\theta_j}$ & non-Bloch factor in direction $j$ & --- \\
+$M,N$ & minor degrees of $f$ in the solved variable ($-M$ lowest, $N$ highest exponent) & \texttt{get\_minor\_\allowbreak degrees} \\
+$K=M+N$ & number of roots of the 1-D problem (incl.\ $0/\infty$ padding) & \texttt{solve\_roots\_\allowbreak 1d} \\
+$\SolveRoots$ & all $K$ roots of $f(E,\beta_1,\beta_2)=0$ in $\beta_2$ & \texttt{np.roots} \\
+$\Hungarian$ & min-cost perfect matching $A\to B$ by chordal cost; returns $\pi$ & \texttt{hungarian\_\allowbreak match\_\allowbreak indices} \\
+$\Chord$ & chordal distance on the Riemann sphere & \texttt{to\_sphere\_\allowbreak r3} \\
+$V_j=\mathrm{d}\ln\beta_2^{(j)}/\mathrm{d}\theta_1$ & track tangent; \texttt{nan} = undefined (padding root), \texttt{inf} = divergent (multiple root) & \texttt{compute\_\allowbreak tangent} \\
+$W(E,\mu_1)$ & SGBZ average major-axis winding & \texttt{compute\_\allowbreak average\_\allowbreak winding} \\
+$a_1,a_2$ & amoeba average windings $\partial R/\partial\mu_1,\partial R/\partial\mu_2$ & \texttt{amoeba\_\allowbreak windings} \\
+$\mu_{2,\mathrm{mid}}(\theta_1)$ & SGBZ base manifold, mean of the two boundary moduli & \texttt{Mu2Mid} \\
+MR & multiple root of $f$ in $\beta_2$ (branch point of the zero curve) & \texttt{multiple\_\allowbreak roots.py} \\
+\bottomrule
+\end{tabular}
+\caption{Notation used in the pseudocode and its mapping onto the released implementation.}
+\label{tab:pseudo-notation}
+\end{table}
+
+% ======================================================================
+% Part A. Root-tracking engine  (continuation/)
+% ======================================================================
+
+\begin{algorithm}
+\caption{\textsc{ComputeTangents}$(\mathrm{poly},E,\beta_1,\{\beta_2^{(j)}\})$ —
+analytic track tangents $V_j=\mathrm{d}\ln\beta_2^{(j)}/\mathrm{d}\theta_1$ by the implicit-function theorem.}
+\label{alg:compute-tangent}
+\begin{algorithmic}[1]
+\Require $\mathrm{poly}$, $E$, $\beta_1=e^{\mu_1+i\theta_1}$, roots $\{\beta_2^{(j)}\}_{j=1}^{K}$
+\Ensure tangent vector $V$ and arclength norm $\lVert V\rVert$
+\For{$j=1$ \textbf{to} $K$}
+  \If{$|\beta_2^{(j)}|<\epsilon_0$ \textbf{or} $|\beta_2^{(j)}|>1/\epsilon_0$ \textbf{or} $\neg\mathrm{finite}(\beta_2^{(j)})$}
+    \State $V_j\gets\mathrm{nan}$ \Comment{0/$\infty$ padding root: tangent undefined}
+  \Else
+    \State $(\partial f/\partial\beta_1,\ \partial f/\partial\beta_2)\gets\Partials(\mathrm{poly},E,\beta_1,\beta_2^{(j)})$
+    \If{$\partial f/\partial\beta_2=0$}
+      \State $V_j\gets\mathrm{inf}$ \Comment{multiple root: tangent diverges}
+    \Else
+      \State $V_j\gets -i\,\beta_1\,\dfrac{\partial f/\partial\beta_1}{\beta_2^{(j)}\,\partial f/\partial\beta_2}$
+      \If{$\neg\mathrm{finite}(V_j)$} \State $V_j\gets\mathrm{inf}$ \EndIf
+    \EndIf
+  \EndIf
+\EndFor
+\State $\lVert V\rVert\gets\sqrt{\,1+\sum_{j:\ \mathrm{finite}(V_j)}|V_j|^2}$ \Comment{nan entries excluded}
+\State \Return $(V,\lVert V\rVert)$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{\textsc{ArclengthStep}$(\mathrm{poly},E,\mu_1,\theta_1,\{\beta_2\},h,\mathrm{ctrl})$\\
+one adaptive pseudo-arclength step: tangent prediction, exact solve, error-controlled step size, identity-preserving permutation.}
+\label{alg:arclength-step}
+\begin{algorithmic}[1]
+\Require current state $(\theta_1,\{\beta_2\})$, step bound $h$, controller \texttt{ctrl} (RK45-style: $s$, $e_{\mathrm{exp}}$, $f_{\min/\max}$, $h_{\min/\max}$, $n_{\max}$)
+\State $(V,\lVert V\rVert)\gets\textsc{ComputeTangents}(\mathrm{poly},E,e^{\mu_1+i\theta_1},\{\beta_2\})$
+\State $\mathrm{rejected}\gets\mathbf{false}$
+\For{$\mathrm{iter}=1$ \textbf{to} $\mathrm{ctrl}.n_{\max}$}
+  \If{$h<\mathrm{ctrl}.h_{\min}$}
+    \State \Return $(\theta_1,\{\beta_2\},h,\mathrm{accepted}{=}\mathbf{false},V,\lVert V\rVert)$ \Comment{step collapse $\Rightarrow$ MR signal}
+  \EndIf
+  \State $\Delta\theta_1\gets h/\lVert V\rVert$
+  \State $\tilde\beta_2^{(j)}\gets\beta_2^{(j)}e^{V_j\Delta\theta_1}$; hold fixed where $V_j$ not finite \Comment{tangent prediction}
+  \State $\{\beta_2'\}\gets\SolveRoots(\mathrm{poly},E,e^{\mu_1+i(\theta_1+\Delta\theta_1)})$
+  \State $\pi\gets\Hungarian(\{\tilde\beta_2\},\{\beta_2'\})$ \Comment{predicted $\to$ solved; stable track identity}
+  \State $\mathrm{err}\gets\dfrac{\max_j\Chord(\tilde\beta_2^{(j)},\beta_2'^{(\pi(j))})}{\mathrm{ctrl}.a_{\mathrm{tol}}+\mathrm{ctrl}.r_{\mathrm{tol}}\cdot\mathrm{median}_j|\beta_2'^{(j)}|}$ \Comment{finite roots only in the median}
+  \If{$\mathrm{err}<1$}
+    \State $f\gets\min\!\big(\mathrm{ctrl}.f_{\max},\ \mathrm{ctrl}.s\cdot\mathrm{err}^{e_{\mathrm{exp}}}\big)$; \textbf{if} $\mathrm{rejected}$ \textbf{then} $f\gets\min(1,f)$
+    \State $h\gets\min(\mathrm{ctrl}.h_{\max},\ h\cdot f)$
+    \State \Return $(\theta_1+\Delta\theta_1,\ \{\beta_2'^{(\pi^{-1}(j))}\},\ h,\ \mathrm{accepted}{=}\mathbf{true},V,\lVert V\rVert)$
+  \Else
+    \State $h\gets h\cdot\max\big(\mathrm{ctrl}.f_{\min},\ \mathrm{ctrl}.s\cdot\mathrm{err}^{e_{\mathrm{exp}}}\big)$
+    \State $\mathrm{rejected}\gets\mathbf{true}$
+  \EndIf
+\EndFor
+\State \Return $(\theta_1,\{\beta_2\},h,\mathrm{accepted}{=}\mathbf{false},V,\lVert V\rVert)$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{\textsc{IntegrateSegment}$(\mathrm{poly},\allowbreak E,\allowbreak \mu_1,\allowbreak \theta_{\mathrm{start}},\allowbreak \{\beta_2\},\allowbreak \theta_{\mathrm{end}},\allowbreak h_0,\allowbreak \mathrm{ctrl},\allowbreak \Delta_{\min})$\\
+one curve segment between two multiple roots, with the two MR triggers.}
+\label{alg:integrate-segment}
+\begin{algorithmic}[1]
+\State $\theta_1\gets\theta_{\mathrm{start}}$; $\{\beta_2\}\gets\{\beta_2\}_{\mathrm{start}}$; $h\gets h_0$
+\State $\mathrm{trigger}\gets\mathrm{IntervalTrigger}(d_{\mathrm{thr}}=0.1)$ \Comment{tracks closest-pair distance derivative}
+\State record $(\theta_1,\{\beta_2\})$ as mesh row 0
+\While{$\theta_1<\theta_{\mathrm{end}}$}
+  \State $\mathrm{res}\gets\textsc{ArclengthStep}(\mathrm{poly},E,\mu_1,\theta_1,\{\beta_2\},h,\mathrm{ctrl})$
+  \If{$\mathrm{res}.\mathrm{accepted}$}
+    \If{$|\mathrm{res}.\theta_1'-\theta_1|<\Delta_{\min}$}
+      \State \Return \textsc{multiple\_root\_encountered} at $(\theta_1,\{\beta_2\},\mathrm{res}.V)$ \Comment{point trigger}
+    \EndIf
+    \State $(\mathrm{ok},[a,b])\gets\mathrm{trigger}(\{\beta_2\},\mathrm{res}.V,\theta_1)$
+    \Comment{interval trigger: derivative of $\min_{i<j}|\beta_2^{(i)}-\beta_2^{(j)}|$ flips $-\to+$ for the \emph{same} pair while the distance $<d_{\mathrm{thr}}$}
+    \If{$\mathrm{ok}$}
+      \State \Return \textsc{multiple\_root\_in\_interval}, bracket $[a,b]$ with both endpoint states
+    \EndIf
+    \State $\theta_1\gets\mathrm{res}.\theta_1'$; $\{\beta_2\}\gets\mathrm{res}.\{\beta_2\}$; $h\gets\mathrm{res}.h$; record row
+  \Else
+    \State \Return \textsc{multiple\_root\_encountered} at $(\theta_1,\{\beta_2\},\mathrm{res}.V)$ \Comment{$n_{\max}$ exhausted near a singularity}
+  \EndIf
+\EndWhile
+\State \Return \textsc{completed}
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{\textsc{ZeroManager.Run}$(f,E,\mu_1)$ — segment integration, MR refinement, cyclic boundary matching.}
+\label{alg:zero-manager-run}
+\begin{algorithmic}[1]
+\State $\{\beta_2\}\gets\SolveRoots(\mathrm{poly},E,e^{\mu_1})$ at $\theta_1=0$, sorted by $|\beta_2|$; $\mathcal{C}\gets\DetectCluster(\{\beta_2\},\mathrm{tol}_{\mathrm{cl}})$
+\If{$\mathcal{C}\neq\varnothing$} \Comment{boundary MR at $\theta_1=0$}
+  \State snap to mean; record $\mathrm{MR}_0=(0,\mathcal{C},\{\beta_2\})$; $\mathrm{left\_mr}\gets0$; $\theta_1\gets j_{\mathrm{eff}}$
+  \Comment{$j_{\mathrm{eff}}=\max(j,10\Delta_{\min}/h_0,100\Delta_{\min})$: restart floors prevent MR ping-pong}
+  \State $\{\beta_2\}\gets\TrackOrder(\SolveRoots(\mathrm{poly},E,e^{\mu_1+i\theta_1}),\ \mathrm{anchored})$
+\Else
+  \State $\mathrm{left\_mr}\gets-1$; $\theta_1\gets0$
+\EndIf
+\State $\mathrm{pending}\gets\varnothing$
+\Loop
+  \State $\mathrm{seg}\gets\textsc{IntegrateSegment}(\mathrm{poly},E,\mu_1,\theta_1,\{\beta_2\},2\pi,h_0,\mathrm{ctrl},\Delta_{\min})$; attach left boundary
+  \If{$\mathrm{seg}=\textsc{completed}$}
+    \State $\mathrm{boundary\_perm}\gets\Hungarian(\mathrm{HermitePredict}(2\pi),\ \{\beta_2\}_{\mathrm{left}})$; close at $2\pi$ with the permuted left roots; \textbf{break}
+  \Else \Comment{MR triggered}
+    \State $(\theta_{\mathrm{MR}},\{\beta_2\}_{\mathrm{MR}},\mathcal{C}_{\mathrm{MR}})\gets\textsc{RefineMR}(\mathrm{seg})$ \Comment{brentq on closest-pair derivative; then cluster check}
+    \If{$\mathcal{C}_{\mathrm{MR}}\neq\varnothing$}
+      \State \textbf{raise} if $\theta_{\mathrm{MR}}\le\theta_{\mathrm{prev}}+\mathrm{tol}_{\mathrm{stuck}}$; else trim rows to $\theta_1<\theta_{\mathrm{MR}}$ and close segment at $\theta_{\mathrm{MR}}$ \Comment{stuck guard}
+      \If{$\theta_{\mathrm{MR}}\approx2\pi$} \Comment{boundary MR}
+        \State close at $2\pi$; $\mathrm{boundary\_perm}\gets\Hungarian(\mathrm{predict}(2\pi)\to\{\beta_2\}_{\mathrm{left}})$; \textbf{break}
+      \Else
+        \State record $\mathrm{MR}(\theta_{\mathrm{MR}},\mathcal{C}_{\mathrm{MR}})$; append segment; $\mathrm{left\_mr}\gets\mathrm{right\_mr}$
+      \EndIf
+    \Else
+      \State $\mathrm{pending}\gets$ rows \Comment{false positive: merge into next segment}
+    \EndIf
+    \State $\theta_1\gets\theta_{\mathrm{MR}}+j_{\mathrm{eff}}$; $\{\beta_2\}\gets\TrackOrder(\SolveRoots(\mathrm{poly},E,e^{\mu_1+i\theta_1}),\ \mathrm{anchored})$
+  \EndIf
+\EndLoop
+\State \textbf{assert} $\mathrm{boundary\_perm}$ was set \Comment{fail loudly on a half-built topology}
+\end{algorithmic}
+\end{algorithm}
+
+% ======================================================================
+% Part B. SGBZ solver  (brute_force_SGBZ/)
+% ======================================================================
+
+\begin{algorithm}
+\caption{\textsc{AnalyzeMu2Mid}$(zm,\mathrm{poly},E,\mu_1;\tau_{\mathrm{tie}},\tau_{\mathrm{cross}})$ —
+build the $\mu_{2,\mathrm{mid}}$ base manifold: continuum clustering, pairwise crossings, Hermite path.}
+\label{alg:analyze-mu2mid}
+\begin{algorithmic}[1]
+\State \Comment{1. per-segment continuum clustering (whole-segment vote)}
+\For{each segment $s$}
+  \State $L_j(\theta_1)\gets\LogAbs{\beta_2^{(j)}(\theta_1)}$ for each track column $j$
+  \State $\mathrm{same}[j,k]\gets\Big[\ \text{fraction of rows with } |L_j-L_k|<\tau_{\mathrm{tie}}\ \Big] > 0.9$
+  \State $\mathrm{clusters}_s\gets$ connected components (BFS) of $\mathrm{same}$
+\EndFor
+\State \Comment{2. ItemView: collapse each cluster to one representative column with multiplicity}
+\State per row: $\mathrm{sort\_to\_item}\gets$ argsort of representative $L$, expanded by multiplicities
+\State $j_{\mathrm{lo}},j_{\mathrm{hi}}\gets$ columns at sorted positions $M{-}1,M$
+\State \Comment{3. pairwise crossing events (representative pairs only)}
+\For{each representative pair $(a,b)$}
+  \State $d(\theta_1)\gets L_a(\theta_1)-L_b(\theta_1)$
+  \State exact touch $d(\theta_i)=0\Rightarrow$ event at $\theta_i$; sign change $d(\theta_i)\,d(\theta_{i+1})<0\Rightarrow\theta^*$ by linear prediction $+$ brentq on $d$
+  \State deduplicate $\theta^*\equiv0\pmod{2\pi}$
+\EndFor
+\State \Comment{4. EventGroup: merge $\theta^*$ within $\tau_{\mathrm{cross}}$ (incl.\ the $\theta_1{=}0{\equiv}2\pi$ seam) into one mesh row}
+\State insert event rows into the mesh; rebuild ItemView; finalize groups (connectivity, charges)
+\State $\mathrm{has\_continuum}\gets\exists$ row with $j_{\mathrm{lo}}=j_{\mathrm{hi}}$ \Comment{boundary pair collapsed $\Leftrightarrow$ 1-D LineSubset}
+\State \Comment{5. $\mu_{2,\mathrm{mid}}$ path}
+\State $\mu_{2,\mathrm{mid}}(\theta_1)\gets\tfrac12\big(L_{j_{\mathrm{lo}}}(\theta_1)+L_{j_{\mathrm{hi}}}(\theta_1)\big)$, values clamped to $\pm14$
+\State knots at event rows / MR rows / clamp crossings; cubic Hermite per smooth piece ($C^1$ at ordinary knots, left/right derivatives at event/MR/clamp knots)
+\State \Return $(\mathrm{ItemViews},\mathrm{EventGroups},\mu_{2,\mathrm{mid}},\mathrm{has\_continuum})$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{\textsc{ComputeAverageWinding}$(zm,\mathrm{poly},E,\mu_1,\mathrm{charges})$ —
+average major-axis winding by regions, seed loops, and charge propagation.}
+\label{alg:average-winding}
+\begin{algorithmic}[1]
+\State $\mathrm{boundaries}\gets\{(\theta_2\bmod2\pi,\ \mathrm{hard}?,\ \mathrm{charge})\}$ from EventGroups
+\Comment{hard $=$ MR/tangent/unknown with charge \texttt{None}; soft $=$ ordinary with charge $\pm1$}
+\If{all boundaries soft}
+  \If{$\sum\mathrm{charge}\neq0$} \State \textbf{raise} ``crossing detection incomplete'' \Comment{charge conservation} \EndIf
+\EndIf
+\State $\mathrm{regions}\gets$ maximal arcs between consecutive hard boundaries
+\For{each region $R$}
+  \State seed interval $\gets$ interval maximizing $\min_{\theta_1}\big|f\big(E,\beta_1(\theta_1),e^{\mu_{2,\mathrm{mid}}(\theta_1)+i\theta_2}\big)\big|$
+  \State $w_0\gets\LoopWinding(E,\mu_1,\theta_2^{\mathrm{seed}})$ \Comment{$\oint \mathrm{Im}(f'/f)\,\mathrm{d}\theta_1/2\pi$, quad split at $\mu_{2,\mathrm{mid}}$ breakpoints}
+  \State propagate: across soft boundaries $w\gets w\pm\mathrm{charge}$ (forward and backward from the seed)
+\EndFor
+\State $W\gets\sum_k w_k\cdot\mathrm{width}_k/(2\pi)$ \Comment{arc-weighted average over $\theta_2$}
+\State \Return $\mathrm{round}(W)$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{\textsc{SolveSGBZForE}$(\mathrm{poly},E;\mu_1^{\mathrm{guess}},\mathrm{tol},n_{\max})$ —
+locate the winding zero $\mu_{1,0}$: bracket expansion + plain midpoint bisection with continuum interception.}
+\label{alg:solve-sgbz}
+\begin{algorithmic}[1]
+\State $W(\mu_1)\gets\textsc{ComputeAverageWinding}(E,\mu_1)$ together with the 0-D subsets
+\State \Comment{1. bracket expansion (each side capped at 10 steps)}
+\While{$W(\mu_1^{\mathrm{low}})\ge0$}
+  \State evaluate $W$; if continuum: resolve $w_{\mathrm{L}},w_{\mathrm{R}}$ at $\mu_1\pm(1,2,4,8)\,\varepsilon$
+  \State \hspace{1.6em}if $w_{\mathrm{L}}w_{\mathrm{R}}<0$ \textbf{then return} $\mu_1$ with 1-D LineSubsets \Comment{continuum boundary}
+  \State \hspace{1.6em}else use the band edge nearest the zero as the bracket point
+  \State $\mu_1^{\mathrm{low}}\gets\mu_1^{\mathrm{low}}-1$
+\EndWhile
+\While{$W(\mu_1^{\mathrm{high}})\le0$} \Comment{same continuum interception}
+  \State $\mu_1^{\mathrm{high}}\gets\mu_1^{\mathrm{high}}+1$
+\EndWhile
+\If{$|W|$ at an endpoint $\le\mathrm{tol}$} \State \Return endpoint (with subsets) \EndIf
+\State \Comment{2. plain midpoint bisection (false-position stalls on the flat $\pm1$ plateaus)}
+\For{$\mathrm{iter}=1$ \textbf{to} $n_{\max}$}
+  \State $\mu_{\mathrm{mid}}\gets(\mu_{\mathrm{low}}+\mu_{\mathrm{high}})/2$; $w\gets W(\mu_{\mathrm{mid}})$
+  \If{continuum at $\mu_{\mathrm{mid}}$}
+    \State resolve limits; if straddle \textbf{then return} boundary with LineSubsets
+    \State else proxy to the band edge (a zero proxy is returned immediately)
+  \EndIf
+  \If{$|w|\le\mathrm{tol}$} \State \Return $\mu_{\mathrm{mid}}$ (with subsets) \EndIf
+  \State update bracket by $\operatorname{sign}(W_{\mathrm{low}}\cdot w)$
+\EndFor
+\State \textbf{raise} ``bisection did not converge'' \Comment{never dress a mid-bracket point up as success}
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{\textsc{SGBZCollectGBZSubsets}$(\mathrm{coeffs},\mathrm{degs},E)$ —
+top-level SGBZ entry point with the zero-plateau reclassification.}
+\label{alg:sgbz-collect}
+\begin{algorithmic}[1]
+\State $\mathrm{poly}\gets\mathrm{CharPoly}(\mathrm{coeffs},\mathrm{degs})$
+\State $\mathrm{res}\gets\textsc{SolveSGBZForE}(\mathrm{poly},E)$
+\If{$\mathrm{res}.\mathrm{is\_continuum}$}
+  \State \Return $\mathrm{GBZResult}(E,\ \mathrm{LineSubsets})$ \Comment{in spectrum}
+\EndIf
+\State $\mathrm{subsets}\gets\mathrm{res}.\mathrm{subsets}$
+\If{$\mathrm{subsets}\neq\varnothing$ \textbf{and} plateau check enabled}
+  \State pre-check: PMGBZ points clustered on the $(\theta_1,\theta_2)$ torus? \Comment{$\theta_1$-only check is wrong: degenerate pairs share $\theta_1$}
+  \If{pre-check passes}
+    \State probe $\mu_1\pm r$: plateau found iff $W\approx0$ with \emph{empty} GBZ on both sides over a nonzero interval
+    \If{plateau found} \State $\mathrm{subsets}\gets\varnothing$ \Comment{reclassify as out-of-spectrum} \EndIf
+  \EndIf
+\EndIf
+\State \Return $\mathrm{GBZResult}(E,\mathrm{subsets})$ \Comment{$\mathrm{PointSubsets}\cup\mathrm{LineSubsets}$, unified type}
+\end{algorithmic}
+\end{algorithm}
+
+% ======================================================================
+% Part C. Amoeba solver  (brute_force_amoeba/)
+% ======================================================================
+
+\begin{algorithm}
+\caption{\textsc{FindMu2ForA2Zero}$(\mathrm{poly},E,\mu_1,zm;\mu_2^{\mathrm{low}},\mu_2^{\mathrm{high}},\mathrm{tol},n_{\max})$\\
+inner bisection: $a_2(\mu_2)=0$, with a Newton correction using the analytic $\mathrm{d}a_2/\mathrm{d}\mu_2$.}
+\label{alg:find-mu2}
+\begin{algorithmic}[1]
+\If{$zm=\textsc{None}$} \State $zm\gets\mathrm{AmoebaZeroManager}(\mathrm{poly},E,\mu_1).\mathrm{Run}()$ \Comment{$\mu_2$-independent; built once, reused $\sim$30 times} \EndIf
+\State \Comment{range expansion (unrefined winding: linear-interpolation crossings, no fsolve)}
+\While{$a_2(\mu_2^{\mathrm{low}})\cdot a_2(\mu_2^{\mathrm{high}})>0$}
+  \State if continuum at an endpoint: expand the range by factor 2 outward
+  \State else $\mu_2^{\mathrm{low}}\gets\mu_2^{\mathrm{low}}-\mathrm{width}$; $\mu_2^{\mathrm{high}}\gets\mu_2^{\mathrm{high}}+\mathrm{width}$ \Comment{cap 10 expansions}
+\EndWhile
+\State \Comment{bisection on the unrefined $a_2$}
+\For{$\mathrm{iter}=1$ \textbf{to} $n_{\max}$}
+  \State $\mu_2^{\mathrm{mid}}\gets(\mathrm{low}+\mathrm{high})/2$; $(a_2,\mathrm{zeros},\mathrm{has\_cont})\gets$ winding at $\mu_2^{\mathrm{mid}}$
+  \If{$\mathrm{has\_cont}$}
+    \State $(a_{\mathrm{L}},a_{\mathrm{R}})\gets$ limits at $\mu_2^{\mathrm{mid}}\mp(1,2,4,8)\,\varepsilon$
+    \If{$a_{\mathrm{L}}a_{\mathrm{R}}<0$}
+      \State \Return $(\mu_2^{\mathrm{mid}},\ \mathrm{zeros}{=}[],\ \mathrm{is\_continuum}{=}\mathbf{true})$ \Comment{outer loop resolves $a_1$ by $\mu_1$-perturbation}
+    \Else
+      \State update bracket toward the side of the $a_2=0$ zero \Comment{monotone $a_2(\mu_2)$}
+    \EndIf
+  \ElsIf{$|a_2|<\mathrm{tol}$ \textbf{or} $\mathrm{high}-\mathrm{low}<\mathrm{tol}$}
+    \State \Return \textsc{RefineAndCorrect}$(\mu_2^{\mathrm{mid}})$ \Comment{Alg.~\ref{alg:refine-and-correct}}
+  \Else
+    \State update bracket by $\operatorname{sign}(a_2^{\mathrm{low}}\cdot a_2)$
+  \EndIf
+\EndFor
+\State \textbf{raise} ``$\mu_2$ bisection did not converge''
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{\textsc{RefineAndCorrect}$(\mu_2^0)$ —
+exact crossing refinement (fsolve with the analytic $2\times2$ Jacobian) + one Newton step on $a_2(\mu_2)=0$.}
+\label{alg:refine-and-correct}
+\begin{algorithmic}[1]
+\State $(a_2,\mathrm{zeros},\mathrm{d}a_2/\mathrm{d}\mu_2)\gets$ winding at $\mu_2^0$ with exact crossings \Comment{refine $=\mathbf{true}$}
+\State \textbf{if} refined detection finds a continuum \textbf{then return} $(\mu_2^0,[],\mathbf{true})$ \EndIf
+\If{$|a_2|<\mathrm{tol}$} \State \Return $(\mu_2^0,\mathrm{zeros})$ \EndIf
+\If{$|\mathrm{d}a_2/\mathrm{d}\mu_2|>10^{-15}$}
+  \State $\Delta\gets-a_2/(\mathrm{d}a_2/\mathrm{d}\mu_2)$, clamped to $\pm\tfrac12(\mathrm{high}_{\mathrm{init}}-\mathrm{low}_{\mathrm{init}})$ and to $[\mathrm{low}_{\mathrm{init}},\mathrm{high}_{\mathrm{init}}]$
+  \Comment{$\mathrm{d}a_2/\mathrm{d}\mu_2$ from the zero derivatives $\mathrm{d}\theta_1^*/\mathrm{d}\mu_2$ (implicit $2\times2$ system)}
+\Else
+  \State $\Delta\gets$ midpoint of the current bracket \Comment{derivative carries no signal}
+\EndIf
+\State re-evaluate (refined) at $\mu_2^0+\Delta$; \Return the point with the smaller $|a_2|$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{\textsc{BisectAmoebaRonkinMin}$(\mathrm{poly},\allowbreak E;\allowbreak \mu_1^{\mathrm{low}},\allowbreak \mu_1^{\mathrm{high}},\allowbreak \mu_2^{\mathrm{low}},\allowbreak \mu_2^{\mathrm{high}},\allowbreak n_{\max},\allowbreak \mathrm{tol})$\\
+outer bisection: nested 1-D root finds of $a_2=0$ and $a_1=0$, i.e.\ $\nabla R=0$.}
+\label{alg:bisect-ronkin}
+\begin{algorithmic}[1]
+\State \Comment{outer range expansion: per endpoint run the inner $\mu_2$ solve, then compute $a_1$ from its zeros}
+\While{$a_1(\mu_1^{\mathrm{low}})\cdot a_1(\mu_1^{\mathrm{high}})>0$}
+  \State expand $[\mu_1^{\mathrm{low}},\mu_1^{\mathrm{high}}]$ by factor 2 \Comment{cap 10 expansions}
+\EndWhile
+\For{$\mathrm{iter}=1$ \textbf{to} $n_{\max}$}
+  \State $\mu_1^{\mathrm{mid}}\gets(\mu_1^{\mathrm{low}}+\mu_1^{\mathrm{high}})/2$
+  \State $zm\gets\mathrm{AmoebaZeroManager}(\mathrm{poly},E,\mu_1^{\mathrm{mid}}).\mathrm{Run}()$ \Comment{built once, reused by the inner loop}
+  \State $\mathrm{inner}\gets\textsc{FindMu2ForA2Zero}(\mathrm{poly},E,\mu_1^{\mathrm{mid}},zm)$
+  \If{$\mathrm{inner}.\mathrm{is\_continuum}$}
+    \State resolve $a_1$ limits by $\mu_1^{\mathrm{mid}}\pm(1,2,4,8)\,\varepsilon$ (each re-running the inner $\mu_2$ solve)
+    \If{$a_2$ limits straddle \textbf{and} $a_1$ limits straddle}
+      \State \Return $(\mu_1^{\mathrm{mid}},\mu_2^{\mathrm{mid}},\mathrm{continuum}{=}\mathbf{true})$ \Comment{Ronkin minimum on a continuum}
+    \Else
+      \State update bracket at the band edge nearest the zero; \textbf{continue}
+    \EndIf
+  \Else
+    \State $a_1^{\mathrm{mid}}\gets\textsc{AverageWindingFromZeros}(\mathrm{zeros},\mathrm{direction}{=}1)$ \Comment{partition $\theta_2$, solve $\beta_1$}
+    \If{$|a_1^{\mathrm{mid}}|<\mathrm{tol}$ \textbf{or} bracket width $<\mathrm{tol}$}
+      \State \Return $(\mu_1^{\mathrm{mid}},\mu_2^{\mathrm{mid}},\mathrm{zeros},zm)$ \Comment{$zm$ reused for subset extraction}
+    \EndIf
+    \State update bracket by $\operatorname{sign}(a_1^{\mathrm{low}}\cdot a_1^{\mathrm{mid}})$
+  \EndIf
+\EndFor
+\State \textbf{raise} ``outer $\mu_1$ bisection did not converge''
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{\textsc{AverageWindingFromZeros}$(\mathrm{poly},E,\mu_1,\mu_2,\mathrm{zeros},\mathrm{direction})$ —
+average winding and non-zero angular area from the crossing zeros.}
+\label{alg:winding-from-zeros}
+\begin{algorithmic}[1]
+\State $(M,N)\gets$ minor degrees of $f$ in the \emph{solved} variable
+\If{$\mathrm{direction}=2$} \Comment{$a_2$: partition $\theta_1$, solve $\beta_2$, count $< \mu_2$}
+  \State $\Theta\gets$ sorted distinct $\theta_1$ of the zeros; count variable $\mu\gets\mu_2$
+\Else \Comment{$a_1$: partition $\theta_2$, solve $\beta_1$, count $< \mu_1$}
+  \State $\Theta\gets$ sorted distinct $\theta_2$ of the zeros; count variable $\mu\gets\mu_1$
+\EndIf
+\If{$\Theta$ empty}
+  \State solve once at any angle; $u\gets\#\{\LogAbs{\beta}<\mu\}-M$; \Return $(u,\,|u|)$
+\EndIf
+\For{each interval $[\Theta_i,\Theta_{i+1}]$ (cyclic)}
+  \State $\theta_{\mathrm{mid}}\gets(\Theta_i+\Theta_{i+1})/2$; solve roots at $\theta_{\mathrm{mid}}$
+  \State $u_i\gets\#\{\LogAbs{\beta}<\mu\}-M$ \Comment{constant on the interval (argument principle)}
+  \State accumulate $u_i\cdot\mathrm{width}_i$ and $|u_i|\cdot\mathrm{width}_i$
+\EndFor
+\State \Return $\big(\sum_i u_i\mathrm{width}_i/(2\pi),\ \sum_i|u_i|\mathrm{width}_i/(2\pi)\big)$ \Comment{winding, non-zero area}
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{\textsc{ExtractAmoebaSubsets}$(zm,\allowbreak \mathrm{poly},\allowbreak E,\allowbreak \mu_1,\allowbreak \mu_2;\allowbreak \mathrm{mode},\allowbreak \tau,\allowbreak \mathrm{frac})$\\
+continuum lines and refined discrete points, with boundary dedup.}
+\label{alg:extract-amoeba}
+\begin{algorithmic}[1]
+\For{each segment $s$, track $j$}
+  \State continuum mask: fraction of rows with $|\LogAbs{\beta_2^{(j)}}-\mu_2|<\tau$ exceeding $\mathrm{frac}$ $(0.9)$ $\Rightarrow$ one \textsc{LineSubset}
+  \State on non-continuum tracks: $d(\theta_1)\gets\LogAbs{\beta_2^{(j)}}-\mu_2$
+  \State exact touch $d=0\Rightarrow$ hit $(\mathrm{kind}{=}\mathrm{zero})$; sign change $d_i d_{i+1}<0\Rightarrow$ hit $(\mathrm{kind}{=}\mathrm{cross})$
+\EndFor
+\State join LineSubsets across MR boundaries: endpoint root $\notin$ MR cluster $\Rightarrow$ the track continues
+\For{each hit}
+  \State $\theta_1^*\gets$ linear interpolation ($\mathrm{coarse}$) \textbf{or} fsolve of $f=0$ with the analytic $2\times2$ Jacobian ($\mathrm{solve}$)
+  \State \textbf{Rule 1:} drop if $\theta_1^*$ within $\mathrm{snap\_tol}$ (circular distance) of a LineSubset endpoint \emph{and} its $\beta_2$ matches the endpoint root
+  \State \textbf{Rule 2:} deduplicate ``zero'' hits by identity $(\mathrm{endpoint},\mathrm{track})$; fold $\theta_1=2\pi$ onto $0$ via $\mathrm{boundary\_perm}$
+\EndFor
+\State \Return $\mathrm{LineSubsets}\cup\mathrm{PointSubsets}$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{\textsc{AmoebaCollectGBZSubsets}$(\mathrm{coeffs},\mathrm{degs},E)$ —
+top-level amoeba entry point with the two-stage zero-plateau reclassification.}
+\label{alg:amoeba-collect}
+\begin{algorithmic}[1]
+\State $\mathrm{poly}\gets\mathrm{CharPoly}(\mathrm{coeffs},\mathrm{degs})$
+\State $\mathrm{res}\gets\textsc{BisectAmoebaRonkinMin}(\mathrm{poly},E)$
+\State $zm\gets\mathrm{res}.\_zm$ \Comment{reuse the solved tracks; no second ZeroManager run}
+\State $\mathrm{subsets}\gets\textsc{ExtractAmoebaSubsets}(zm,\mathrm{poly},E,\mathrm{res}.\mu_1,\mathrm{res}.\mu_2,$
+\State \hspace{7.7em} $\mathrm{mode}{=}\mathrm{solve})$
+\State $\mathrm{in\_spectrum}\gets\mathbf{true}$
+\If{$\neg\mathrm{res}.\mathrm{is\_continuum}$ \textbf{and} $\mathrm{res}.\mathrm{zeros}=\varnothing$}
+  \State $\mathrm{in\_spectrum}\gets\mathbf{false}$
+\ElsIf{plateau check enabled \textbf{and} $\neg\mathrm{res}.\mathrm{is\_continuum}$}
+  \State pre-check (all three must hold): $a_1$ non-zero area $<10^{-2}$; $a_2$ non-zero area $<10^{-2}$;
+  \State \hspace{4.4em} zeros clustered on the $(\theta_1,\theta_2)$ torus
+  \If{pre-check passes}
+    \State probe $\mu_1\pm r$: plateau found iff $a_1\approx0$ \emph{and} zero count $=0$ on both sides over a nonzero interval
+    \If{plateau found} \State $\mathrm{in\_spectrum}\gets\mathbf{false}$ \EndIf
+  \EndIf
+\EndIf
+\If{$\neg\mathrm{in\_spectrum}$} \State $\mathrm{subsets}\gets\varnothing$ \EndIf
+\State \Return $\mathrm{GBZResult}(E,\mathrm{subsets})$ \Comment{$\mathrm{PointSubsets}\cup\mathrm{LineSubsets}$, unified type}
+\end{algorithmic}
+\end{algorithm}
+
+% ======================================================================
+% Source-code map
+% ======================================================================
+% Algorithm                                    Implementation
+% Alg. 1  ComputeTangents                     continuation/arclength.py::compute_tangent
+% Alg. 2  ArclengthStep                       continuation/arclength.py::arclength_step (+ estimate_error, predict_roots)
+% Alg. 3  IntegrateSegment                    continuation/zero_manager.py::integrate_segment
+% Alg. 4  ZeroManager.Run                     continuation/zero_manager.py::ZeroManager.run (+ _refine_mr)
+% Alg. 5  AnalyzeMu2Mid                       brute_force_SGBZ/mu2mid.py::Mu2MidZM.analyze (+ pairwise.collect_pair_events, group_events)
+% Alg. 6  ComputeAverageWinding               brute_force_SGBZ/winding.py::compute_average_winding
+% Alg. 7  SolveSGBZForE                       brute_force_SGBZ/sgbz_solver.py::solve_SGBZ_for_E
+% Alg. 8  SGBZCollectGBZSubsets               brute_force_SGBZ/sgbz_solver.py::collect_GBZ_subsets (+ plateau.py)
+% Alg. 9  FindMu2ForA2Zero                    brute_force_amoeba/bisect.py::_find_mu2_for_w2_zero
+% Alg. 10 RefineAndCorrect                    brute_force_amoeba/bisect.py::_refine_and_correct (+ ronkin_winding._find_exact_crossing, _compute_zero_dtheta1_dmu2)
+% Alg. 11 BisectAmoebaRonkinMin               brute_force_amoeba/bisect.py::bisect_amoeba_ronkin_min (+ _resolve_continuum)
+% Alg. 12 AverageWindingFromZeros             brute_force_amoeba/ronkin_winding.py::_get_average_winding_from_zeros
+% Alg. 13 ExtractAmoebaSubsets                brute_force_amoeba/zm_extract.py::extract_amoeba_subsets
+% Alg. 14 AmoebaCollectGBZSubsets             brute_force_amoeba/amoeba.py::collect_GBZ_subsets (+ plateau check)
+% MR refinement (brentq + cluster check)      continuation/multiple_roots.py::solve_multiple_roots_in_interval, detect_cluster
