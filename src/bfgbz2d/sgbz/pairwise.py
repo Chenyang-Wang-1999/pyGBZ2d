@@ -52,6 +52,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.optimize import brentq
 
+from bfgbz2d import config
 from bfgbz2d.core import TWO_PI
 from bfgbz2d.continuation import ZeroManager
 from bfgbz2d.continuation.interpolation import hermite_interp_poly
@@ -61,25 +62,25 @@ if TYPE_CHECKING:
 
 # Minimum |Re(V_a) - Re(V_b)| below which a pair crossing is treated as a
 # tangent touch (hard boundary): the crossing direction is not trustworthy.
-MIN_DIRECTION_DERIV: float = 1e-12
+config.MIN_DIRECTION_DERIV: float = 1e-12
 
 # brentq extra iteration budget (the bracket is guaranteed by the sign scan).
-_BRENTQ_MAXITER: int = 100
+config.BRENTQ_MAXITER: int = 100
 
 # Real-root filter for nothing here (brentq operates on the true function);
 # this tolerance only guards exact-endpoint float comparison.
-_THETA_EQ_TOL: float = 1e-15
+config.THETA_EQ_TOL: float = 1e-15
 
 # Mesh refinement for multi-crossing intervals (runs after ZeroManager.run,
-# before collect_pair_events).  ``_REFINE_DEFAULT_TIE_TOL`` must match
-# Mu2MidZM's CONTINUUM_TOL; ``analyze()`` passes the live value explicitly.
-_REFINE_DEFAULT_TIE_TOL: float = 1e-6
-_REFINE_DEFAULT_MAX_ROUNDS: int = 3
-_REFINE_DEFAULT_SAFETY_FACTOR: float = 4.0
-_REFINE_DEFAULT_MAX_SUBINTERVALS: int = 64
-_REFINE_DEFAULT_MAX_TOTAL_INSERTS: int = 2000
+# before collect_pair_events).  ``config.CONTINUUM_TOL`` must match
+# Mu2MidZM's config.CONTINUUM_TOL; ``analyze()`` passes the live value explicitly.
+config.CONTINUUM_TOL: float = 1e-6
+config.REFINE_MAX_ROUNDS: int = 3
+config.REFINE_SAFETY_FACTOR: float = 4.0
+config.REFINE_MAX_SUBINTERVALS: int = 64
+config.REFINE_MAX_TOTAL_INSERTS: int = 2000
 # Real-root / duplicate-θ filter in units of max(1, interval length).
-_REFINE_REL_TOL: float = 1e-12
+config.REFINE_REL_TOL: float = 1e-12
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +165,7 @@ def _real_roots_in_open_interval(poly: np.ndarray, h: float) -> list[float]:
     """Real roots of *poly* strictly inside ``(0, h)``, sorted and deduped."""
     if poly.size < 2:
         return []
-    tol = _REFINE_REL_TOL * max(1.0, float(h))
+    tol = config.REFINE_REL_TOL * max(1.0, float(h))
     roots: list[float] = []
     for r in np.roots(poly):
         if not np.isfinite(r.real) or not np.isfinite(r.imag):
@@ -420,7 +421,7 @@ def _insert_refinement_grids(
         # tolerance would erase the fine grid of a tiny near-tangent interval.
         entries: list[tuple[float, float]] = []
         for plan in seg_plans:
-            tol = _REFINE_REL_TOL * max(1.0, float(plan.theta_b - plan.theta_a))
+            tol = config.REFINE_REL_TOL * max(1.0, float(plan.theta_b - plan.theta_a))
             for theta in _refinement_grid_points(
                 plan,
                 safety_factor=safety_factor,
@@ -481,12 +482,12 @@ def _views_in_sync_with_mesh(zm) -> bool:
 def refine_mesh_for_multiple_crossings(
     zm,
     *,
-    tie_tol: float = _REFINE_DEFAULT_TIE_TOL,
+    tie_tol: float = config.CONTINUUM_TOL,
     crossing_tol: float = 1e-10,
-    max_rounds: int = _REFINE_DEFAULT_MAX_ROUNDS,
-    safety_factor: float = _REFINE_DEFAULT_SAFETY_FACTOR,
-    max_subintervals: int = _REFINE_DEFAULT_MAX_SUBINTERVALS,
-    max_total_inserts: int = _REFINE_DEFAULT_MAX_TOTAL_INSERTS,
+    max_rounds: int = config.REFINE_MAX_ROUNDS,
+    safety_factor: float = config.REFINE_SAFETY_FACTOR,
+    max_subintervals: int = config.REFINE_MAX_SUBINTERVALS,
+    max_total_inserts: int = config.REFINE_MAX_TOTAL_INSERTS,
 ) -> int:
     """Refine mesh intervals holding two or more close crossings.
 
@@ -666,7 +667,7 @@ def collect_pair_events(
     zm: Mu2MidZM,
     *,
     crossing_tol: float = 1e-10,
-    min_direction_deriv: float = MIN_DIRECTION_DERIV,
+    min_direction_deriv: float = config.MIN_DIRECTION_DERIV,
 ) -> list[PairEvent]:
     """Scan every representative item pair on every segment.
 
@@ -775,10 +776,10 @@ def _refine_pair_crossing(
             return cache[t]
         seg = zm.segments[s_idx]
         th = seg.theta1_arr
-        if abs(t - float(th[i])) < _THETA_EQ_TOL:
+        if abs(t - float(th[i])) < config.THETA_EQ_TOL:
             roots = seg.tracked_roots[i, :]
             V = seg.tangents[i, :]
-        elif abs(t - float(th[i + 1])) < _THETA_EQ_TOL:
+        elif abs(t - float(th[i + 1])) < config.THETA_EQ_TOL:
             roots = seg.tracked_roots[i + 1, :]
             V = seg.tangents[i + 1, :]
         else:
@@ -803,7 +804,7 @@ def _refine_pair_crossing(
             lambda t: eval_point(t)[0],
             theta_lo, theta_hi,
             xtol=crossing_tol, rtol=4.0 * np.finfo(float).eps,
-            maxiter=_BRENTQ_MAXITER,
+            maxiter=config.BRENTQ_MAXITER,
         )
         _, gp = eval_point(root)
         return float(root), _protected_direction(gp, min_direction_deriv), True

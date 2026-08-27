@@ -19,6 +19,7 @@ import math
 import cmath
 from typing import Optional
 
+from bfgbz2d import config
 from bfgbz2d.core import (
     TWO_PI,
     CharPoly, GBZResult, PointSubset,
@@ -115,8 +116,8 @@ def _probe_zero_plateau_near_mu1(
     *,
     continuum_tol: float,
     crossing_tol: float,
-    zero_tol: float = 1e-10,
-    continuum_perturb: float = 1e-2,
+    zero_tol: float = config.ZERO_TOL,
+    continuum_perturb: float = config.CONTINUUM_PERTURB,
     probe_radius: Optional[float] = None,
 ) -> dict:
     """Check whether a nonempty-PMGBZ candidate sits next to a zero plateau.

@@ -48,7 +48,8 @@ from scipy import integrate
 from bfgbz2d.core import CharPoly, PointSubset, TWO_PI
 from bfgbz2d.continuation import ZeroManager
 
-from .mu2mid import Mu2MidZM, ensure_mu2mid, _CROSSING_TOL
+from bfgbz2d import config
+from .mu2mid import Mu2MidZM, ensure_mu2mid
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +115,8 @@ def get_winding_number(
     for i in range(len(bounds) - 1):
         total += integrate.quad(
             winding_fun, bounds[i], bounds[i + 1],
-            epsabs=1e-3, epsrel=1e-3, limit=200,
+            epsabs=config.WINDING_QUAD_EPSABS, epsrel=config.WINDING_QUAD_EPSREL,
+            limit=config.WINDING_QUAD_LIMIT,
         )[0]
     return total / (TWO_PI)
 
@@ -393,7 +395,7 @@ def detect_crossings_simple(
     zm: ZeroManager,
     poly: CharPoly,
     *,
-    crossing_tol: float = _CROSSING_TOL,
+    crossing_tol: float = config.CROSSING_TOL,
     zm_run_kwargs: dict | None = None,
 ) -> tuple[list[PointSubset], list[dict]]:
     """Materialize 0D PMGBZ PointSubsets from analyzed EventGroups.
@@ -468,7 +470,7 @@ def detect_crossings_and_winding(
     zm: ZeroManager,
     poly: CharPoly,
     *,
-    crossing_tol: float = _CROSSING_TOL,
+    crossing_tol: float = config.CROSSING_TOL,
     zm_run_kwargs: dict | None = None,
 ) -> tuple[list[PointSubset], float]:
     """Crossing detection + average major-axis winding.

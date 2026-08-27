@@ -1027,7 +1027,8 @@ def test_logabs_clamped_keeps_mu2_mid_finite():
     Directly unit-tested because the HN models used elsewhere stay well
     inside the band; a synthetic root array is the honest fixture.
     """
-    from bfgbz2d.sgbz.mu2mid import logabs_clamped, _LOGABS_CLAMP_L
+    from bfgbz2d.sgbz.mu2mid import logabs_clamped
+    from bfgbz2d.config import LOGABS_CLAMP as _LOGABS_CLAMP_L
 
     # one ordinary finite root, one very small finite root, one very large
     # finite root — the latter two lie outside the ±14 log-modulus band.
@@ -1094,7 +1095,7 @@ class TestReviewFixes:
             return 1.0, [], None   # W never crosses zero
 
         monkeypatch.setattr(sgbz_solver, "_evaluate_winding", fake_eval)
-        monkeypatch.setattr(sgbz_solver, "_MAX_BRACKET_EXPANSIONS", 3)
+        monkeypatch.setattr(sgbz_solver.config, "MAX_BRACKET_EXPANSIONS", 3)
 
         with pytest.raises(RuntimeError, match="left bracket expansion"):
             sgbz_solver.solve_SGBZ_for_E(poly, 1.0 + 0j, mu1_guess=(0.0, 1.0))
@@ -1121,7 +1122,7 @@ class TestReviewFixes:
         monkeypatch.setattr(sgbz_solver, "_evaluate_winding", fake_eval)
         monkeypatch.setattr(
             sgbz_solver, "_resolve_continuum_winding", fake_resolve)
-        monkeypatch.setattr(sgbz_solver, "_MAX_BRACKET_EXPANSIONS", 3)
+        monkeypatch.setattr(sgbz_solver.config, "MAX_BRACKET_EXPANSIONS", 3)
 
         with pytest.raises(RuntimeError, match="right bracket expansion"):
             sgbz_solver.solve_SGBZ_for_E(poly, 1.0 + 0j, mu1_guess=(-1.0, 0.0))

@@ -8,7 +8,7 @@ approximately constant.
 
 Adaptive step-size control follows the pattern of scipy's RK45 integrator:
 error between tangent-predicted roots and np.roots-actual roots drives the PI
-step-size controller with SAFETY, MIN_FACTOR, MAX_FACTOR, and error_exponent.
+step-size controller with config.SAFETY, config.MIN_FACTOR, config.MAX_FACTOR, and error_exponent.
 
 References
 ----------
@@ -23,6 +23,7 @@ from cmath import exp
 from dataclasses import dataclass
 from typing import Optional, NamedTuple
 
+from bfgbz2d import config
 from bfgbz2d.core import (
     CharPoly,
     hungarian_match_indices,
@@ -31,39 +32,25 @@ from bfgbz2d.core import (
 
 from .interpolation import hermite_interp_poly
 
-# ---------------------------------------------------------------------------
-# Step-size control constants (mirror scipy's RK45)
-# ---------------------------------------------------------------------------
-
-SAFETY = 0.9
-MIN_FACTOR = 0.2
-MAX_FACTOR = 10.0
-ERROR_EXPONENT = -0.5  # -1/(p+1) for first-order tangent prediction (p=1)
-
-# Threshold for treating a root as "effectively 0 or ∞"
-ZERO_THRESHOLD = 1e-6
-INF_THRESHOLD = 1e6
-
-
 @dataclass(frozen=True)
 class StepControl:
     """Tolerances and factors for the adaptive pseudo-arclength step controller.
 
-    Bundles the RK45-style PI controller knobs (SAFETY / MIN_FACTOR /
-    MAX_FACTOR / ERROR_EXPONENT) and the arclength step bounds so that
+    Bundles the RK45-style PI controller knobs (config.SAFETY / config.MIN_FACTOR /
+    config.MAX_FACTOR / config.ERROR_EXPONENT) and the arclength step bounds so that
     ``arclength_step``, ``integrate_segment`` and ``ZeroManager.run`` don't
     each re-declare nine parameters.  Add a knob here once; all three layers
     carry the same ``StepControl`` instance.
     """
-    max_step: float = 0.5
-    min_step: float = 1e-12
-    atol: float = 1e-12
-    rtol: float = 1e-3
-    safety: float = SAFETY
-    min_factor: float = MIN_FACTOR
-    max_factor: float = MAX_FACTOR
-    error_exponent: float = ERROR_EXPONENT
-    max_iter: int = 20
+    max_step: float = config.MAX_STEP
+    min_step: float = config.MIN_STEP
+    atol: float = config.STEP_ATOL
+    rtol: float = config.STEP_RTOL
+    safety: float = config.SAFETY
+    min_factor: float = config.MIN_FACTOR
+    max_factor: float = config.MAX_FACTOR
+    error_exponent: float = config.ERROR_EXPONENT
+    max_iter: int = config.STEP_MAX_ITER
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +76,7 @@ def _is_singular_root(beta2: complex) -> bool:
     so they are held fixed during prediction.
     """
     abs_b2 = np.abs(beta2)
-    return (abs_b2 < ZERO_THRESHOLD or abs_b2 > INF_THRESHOLD
+    return (abs_b2 < config.ZERO_THRESHOLD or abs_b2 > config.INF_THRESHOLD
             or not np.isfinite(beta2))
 
 
@@ -251,8 +238,8 @@ def predict_roots_hermite(
 def estimate_error(
     roots_predicted: np.ndarray,
     roots_actual: np.ndarray,
-    atol: float = 1e-12,
-    rtol: float = 1e-3,
+    atol: float = config.STEP_ATOL,
+    rtol: float = config.STEP_RTOL,
 ) -> float:
     """Compute error norm between tangent-predicted and np.roots-actual roots.
 

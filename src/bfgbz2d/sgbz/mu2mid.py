@@ -37,9 +37,9 @@ import numpy as np
 from bfgbz2d.continuation import ZeroManager
 from bfgbz2d.continuation.interpolation import hermite_interp_poly
 
+from bfgbz2d import config
 from .pairwise import (
     EventGroup,
-    MIN_DIRECTION_DERIV,
     collect_pair_events,
     finalize_event_groups,
     group_events,
@@ -48,26 +48,9 @@ from .pairwise import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Tunables
-# ---------------------------------------------------------------------------
-
-# A genuine continuum is constant-modulus to ~1e-9; a transversal crossing
-# leaves the level after one sample.  1e-6 separates them.
-CONTINUUM_TOL = 1e-6
-# Vote fraction for the per-column same-modulus test.
-CONTINUUM_FRAC = 0.9
-
-# Clamp band for ln|β₂| -- applied when building the μ₂_mid path values.
-_LOGABS_CLAMP_L = 14.0
-
-# Default pairwise crossing tolerance.
-_CROSSING_TOL = 1e-10
-
-
 def logabs_clamped(roots: np.ndarray) -> np.ndarray:
-    """``np.log(np.abs(roots))`` with ±∞ clamped to ``±_LOGABS_CLAMP_L``."""
-    return np.clip(np.log(np.abs(roots)), -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
+    """``np.log(np.abs(roots))`` with ±∞ clamped to ``±config.LOGABS_CLAMP``."""
+    return np.clip(np.log(np.abs(roots)), -config.LOGABS_CLAMP, config.LOGABS_CLAMP)
 
 
 def ensure_mu2mid(zm: ZeroManager, **run_kwargs) -> "Mu2MidZM":
@@ -75,7 +58,7 @@ def ensure_mu2mid(zm: ZeroManager, **run_kwargs) -> "Mu2MidZM":
 
     A plain ``ZeroManager`` cannot be analyzed in place, so a fresh
     ``Mu2MidZM`` is constructed from its ``(poly, E_ref, mu1)``, run and
-    analyzed with ``tie_tol=CONTINUUM_TOL``.  This is the single bootstrap
+    analyzed with ``tie_tol=config.CONTINUUM_TOL``.  This is the single bootstrap
     every consumer (winding, continuum extraction) goes through, kept next
     to the class it builds.
     """
@@ -88,7 +71,7 @@ def ensure_mu2mid(zm: ZeroManager, **run_kwargs) -> "Mu2MidZM":
         return zm
     m = Mu2MidZM(zm.poly, zm.E_ref, zm.mu1)
     m.run(**run_kwargs)
-    m.analyze(tie_tol=CONTINUUM_TOL)
+    m.analyze(tie_tol=config.CONTINUUM_TOL)
     return m
 
 
@@ -261,9 +244,9 @@ class Mu2MidZM(ZeroManager):
         self,
         continuum_clusters: list | None = None,
         *,
-        tie_tol: float = CONTINUUM_TOL,
-        crossing_tol: float = _CROSSING_TOL,
-        min_direction_deriv: float = MIN_DIRECTION_DERIV,
+        tie_tol: float = config.CONTINUUM_TOL,
+        crossing_tol: float = config.CROSSING_TOL,
+        min_direction_deriv: float = config.MIN_DIRECTION_DERIV,
         verbose: bool = False,
         refine_multi_crossings: bool = True,
         refine_max_rounds: int = 3,
@@ -345,9 +328,9 @@ class Mu2MidZM(ZeroManager):
         self,
         continuum_clusters: list | None = None,
         *,
-        tie_tol: float = CONTINUUM_TOL,
-        crossing_tol: float = _CROSSING_TOL,
-        min_direction_deriv: float = MIN_DIRECTION_DERIV,
+        tie_tol: float = config.CONTINUUM_TOL,
+        crossing_tol: float = config.CROSSING_TOL,
+        min_direction_deriv: float = config.MIN_DIRECTION_DERIV,
         verbose: bool = False,
         refine_multi_crossings: bool = True,
         refine_max_rounds: int = 3,
@@ -393,7 +376,7 @@ class Mu2MidZM(ZeroManager):
             for k in range(j + 1, K):
                 frac_in_band = np.mean(
                     np.abs(logabs[:, j] - logabs[:, k]) < tie_tol)
-                if frac_in_band > CONTINUUM_FRAC:
+                if frac_in_band > config.CONTINUUM_FRAC:
                     same[j, k] = same[k, j] = True
         visited = [False] * K
         clusters: list[tuple] = []
@@ -544,9 +527,9 @@ class Mu2MidZM(ZeroManager):
             rows = np.arange(N)
             mu = (
                 np.clip(view.item_logabs[rows, view.j_lo],
-                        -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
+                        -config.LOGABS_CLAMP, config.LOGABS_CLAMP)
                 + np.clip(view.item_logabs[rows, view.j_hi],
-                          -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
+                          -config.LOGABS_CLAMP, config.LOGABS_CLAMP)
             ) / 2.0
             dm = (view.item_tang_re[rows, view.j_lo]
                   + view.item_tang_re[rows, view.j_hi]) / 2.0
@@ -573,9 +556,9 @@ def _boundary_mean(
     item_hi: int,
 ) -> float:
     a = np.clip(float(view.item_logabs[row, item_lo]),
-                -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
+                -config.LOGABS_CLAMP, config.LOGABS_CLAMP)
     b = np.clip(float(view.item_logabs[row, item_hi]),
-                -_LOGABS_CLAMP_L, _LOGABS_CLAMP_L)
+                -config.LOGABS_CLAMP, config.LOGABS_CLAMP)
     return float((a + b) / 2.0)
 
 
@@ -587,7 +570,7 @@ def _boundary_deriv(
 ) -> float:
     def contrib(item: int) -> float:
         raw = float(view.item_logabs[row, item])
-        if raw <= -_LOGABS_CLAMP_L or raw >= _LOGABS_CLAMP_L:
+        if raw <= -config.LOGABS_CLAMP or raw >= config.LOGABS_CLAMP:
             return 0.0  # clipped value is saturated → derivative zero
         d = float(view.item_tang_re[row, item])
         return d if np.isfinite(d) else float('inf')
@@ -677,7 +660,7 @@ def _split_piece_at_clamp(
         hull = (v0, v1, v0 + h * dv0 / 3.0, v1 - h * dv1 / 3.0)
     else:
         hull = (v0, v1)
-    if max(hull) <= _LOGABS_CLAMP_L and min(hull) >= -_LOGABS_CLAMP_L:
+    if max(hull) <= config.LOGABS_CLAMP and min(hull) >= -config.LOGABS_CLAMP:
         # Bit-identical to the unguarded no-crossing path below (same
         # _make_piece refit over the full interval).
         return [_make_piece(
@@ -687,7 +670,7 @@ def _split_piece_at_clamp(
         )]
 
     xs = [0.0, h]
-    for bound in (-_LOGABS_CLAMP_L, _LOGABS_CLAMP_L):
+    for bound in (-config.LOGABS_CLAMP, config.LOGABS_CLAMP):
         q = np.array(poly, dtype=complex)
         q[-1] -= bound
         for r in np.roots(q):
@@ -704,15 +687,15 @@ def _split_piece_at_clamp(
             continue
         mid = (a + b) / 2.0
         val_mid = float(np.polyval(poly, mid))
-        if -_LOGABS_CLAMP_L <= val_mid <= _LOGABS_CLAMP_L:
+        if -config.LOGABS_CLAMP <= val_mid <= config.LOGABS_CLAMP:
             va = float(np.polyval(poly, a))
             vb = float(np.polyval(poly, b))
             da = float(np.polyval(deriv, a))
             db = float(np.polyval(deriv, b))
             pieces.append(_make_piece(t0 + a, t0 + b, va, da, vb, db))
         else:
-            bound = (_LOGABS_CLAMP_L if val_mid > _LOGABS_CLAMP_L
-                     else -_LOGABS_CLAMP_L)
+            bound = (config.LOGABS_CLAMP if val_mid > config.LOGABS_CLAMP
+                     else -config.LOGABS_CLAMP)
             pieces.append(_make_constant_piece(t0 + a, t0 + b, bound))
     return pieces
 

@@ -153,7 +153,7 @@ class TestSgbzPlateauProbe:
         boundary), demonstrating the SGBZ-side probe path executes.
         """
         from bfgbz2d.sgbz.plateau import _probe_zero_plateau_near_mu1
-        from bfgbz2d.sgbz.mu2mid import CONTINUUM_TOL, _CROSSING_TOL
+        from bfgbz2d.config import CONTINUUM_TOL, CROSSING_TOL as _CROSSING_TOL
         from bfgbz2d.sgbz.sgbz_solver import solve_SGBZ_for_E
 
         coeffs, degs = build_HN2D_polynomial(

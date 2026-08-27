@@ -25,19 +25,20 @@ from bfgbz2d.core import (
     PointSubset, LineSubset, GBZResult, CharPoly,
 )
 
+from bfgbz2d import config
 from .continuum_lines import (
-    extract_continuum_linesubsets, CONTINUUM_TOL,
+    extract_continuum_linesubsets,
 )
 from .winding import detect_crossings_and_winding
 from .plateau import _check_pmgbz_points_clustered, _probe_zero_plateau_near_mu1
-from .mu2mid import Mu2MidZM, _CROSSING_TOL
+from .mu2mid import Mu2MidZM
 
 
 # Max bracket-expansion steps per side (aligned with amoeba's
 # max_range_expansions=10).  The expansion loop only guards against runaway
 # cases (unsolvable models, non-monotonic winding); a normal winding crosses
 # zero within 1-2 steps of the default guess.
-_MAX_BRACKET_EXPANSIONS = 10
+config.MAX_BRACKET_EXPANSIONS = 10
 
 
 # ---------------------------------------------------------------------------
@@ -131,18 +132,18 @@ def solve_SGBZ_for_E(
     poly: CharPoly,
     E_ref: complex,
     mu1_guess: tuple[float, float] = (-1, 1),
-    zero_tol: float = 1e-10,
-    continuum_perturb: float = 1e-2,
+    zero_tol: float = config.ZERO_TOL,
+    continuum_perturb: float = config.CONTINUUM_PERTURB,
     max_iter: int = 60,
     zm_run_kwargs: Optional[dict] = None,
     *,
-    continuum_tol: float = CONTINUUM_TOL,
-    crossing_tol: float = _CROSSING_TOL,
+    continuum_tol: float = config.CONTINUUM_TOL,
+    crossing_tol: float = config.CROSSING_TOL,
 ) -> dict:
     """Locate the winding-zero mu1 and return solve diagnostics.
 
     Uses bracket expansion + plain bisection (midpoint).  Each side of the
-    bracket expansion is capped at ``_MAX_BRACKET_EXPANSIONS`` steps (raise
+    bracket expansion is capped at ``config.MAX_BRACKET_EXPANSIONS`` steps (raise
     ``RuntimeError`` instead of looping forever on unsolvable / anomalous
     winding).  When a continuum-degenerate mu1 is encountered,
     ``_resolve_continuum_winding`` resolves the left/right winding limits;
@@ -251,7 +252,7 @@ def solve_SGBZ_for_E(
     w_high = None
     mu1_ext_right = None
 
-    for _ in range(_MAX_BRACKET_EXPANSIONS):
+    for _ in range(config.MAX_BRACKET_EXPANSIONS):
         w_low, gbz_low, zm_low = winding_at(mu1_low)
         if w_low is None:
             is_boundary, proxy, result = handle_continuum(
@@ -278,7 +279,7 @@ def solve_SGBZ_for_E(
         mu1_low -= 1
     else:
         raise RuntimeError(
-            f"left bracket expansion exceeded {_MAX_BRACKET_EXPANSIONS} steps: "
+            f"left bracket expansion exceeded {config.MAX_BRACKET_EXPANSIONS} steps: "
             f"E_ref={E_ref}, mu1={mu1_low}, winding={w_low}"
         )
 
@@ -303,7 +304,7 @@ def solve_SGBZ_for_E(
     if mu1_ext_right is None:
         mu1_ext_right = mu1_guess[1]
 
-    for _ in range(_MAX_BRACKET_EXPANSIONS):
+    for _ in range(config.MAX_BRACKET_EXPANSIONS):
         w_high, gbz_high, zm_high = winding_at(mu1_ext_right)
         if w_high is None:
             is_boundary, proxy, result = handle_continuum(
@@ -321,7 +322,7 @@ def solve_SGBZ_for_E(
         mu1_ext_right += 1
     else:
         raise RuntimeError(
-            f"right bracket expansion exceeded {_MAX_BRACKET_EXPANSIONS} steps: "
+            f"right bracket expansion exceeded {config.MAX_BRACKET_EXPANSIONS} steps: "
             f"E_ref={E_ref}, mu1={mu1_ext_right}, winding={w_high}"
         )
 
@@ -485,8 +486,8 @@ def collect_GBZ_subsets(
     zm_run_kwargs = solver_options.pop("zm_run_kwargs", {})
 
     # Continuum / crossing tunables (rarely overridden).
-    continuum_tol = solver_options.pop("continuum_tol", CONTINUUM_TOL)
-    crossing_tol = solver_options.pop("crossing_tol", _CROSSING_TOL)
+    continuum_tol = solver_options.pop("continuum_tol", config.CONTINUUM_TOL)
+    crossing_tol = solver_options.pop("crossing_tol", config.CROSSING_TOL)
 
     # Obsolete knobs, accepted silently for API compatibility with older
     # callers: N_points (fixed mesh, replaced by the adaptive ZeroManager)

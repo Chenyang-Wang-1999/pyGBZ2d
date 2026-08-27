@@ -18,7 +18,8 @@ from typing import Optional
 from bfgbz2d.core import CharPoly
 
 from .ronkin_winding import _get_average_winding_from_zeros
-from .zm_extract import AmoebaZeroManager, amoeba_windings, CONTINUUM_FRAC
+from bfgbz2d import config
+from .zm_extract import AmoebaZeroManager, amoeba_windings
 
 
 def _refine_and_correct(
@@ -107,14 +108,14 @@ def _find_mu2_for_w2_zero(
     mu1: float,
     mu2_low: float,
     mu2_high: float,
-    continuum_tol: float = 1e-6,
-    continuum_perturb: float = 1e-4,
-    max_iter: int = 60,
-    xtol: float = 1e-10,
-    max_range_expansions: int = 10,
-    range_expand_factor: float = 2.0,
+    continuum_tol: float = config.CONTINUUM_TOL,
+    continuum_perturb: float = config.CONTINUUM_PERTURB,
+    max_iter: int = config.AMOEBA_MAX_ITER,
+    xtol: float = config.AMOEBA_XTOL,
+    max_range_expansions: int = config.AMOEBA_MAX_RANGE_EXPANSIONS,
+    range_expand_factor: float = config.AMOEBA_RANGE_EXPAND_FACTOR,
     _zm: Optional[AmoebaZeroManager] = None,
-    frac: float = CONTINUUM_FRAC,
+    frac: float = config.CONTINUUM_FRAC,
 ) -> dict:
     """Find mu2 where w2 winding crosses 0, with adaptive range.
 
@@ -257,13 +258,13 @@ def _resolve_continuum(
     zm: AmoebaZeroManager,
     mu2_low: float = -1.0,
     mu2_high: float = 1.0,
-    continuum_perturb: float = 1e-4,
-    continuum_tol: float = 1e-6,
-    max_iter: int = 60,
-    xtol: float = 1e-10,
-    max_range_expansions: int = 10,
-    range_expand_factor: float = 2.0,
-    frac: float = CONTINUUM_FRAC,
+    continuum_perturb: float = config.CONTINUUM_PERTURB,
+    continuum_tol: float = config.CONTINUUM_TOL,
+    max_iter: int = config.AMOEBA_MAX_ITER,
+    xtol: float = config.AMOEBA_XTOL,
+    max_range_expansions: int = config.AMOEBA_MAX_RANGE_EXPANSIONS,
+    range_expand_factor: float = config.AMOEBA_RANGE_EXPAND_FACTOR,
+    frac: float = config.CONTINUUM_FRAC,
 ) -> dict:
     """Resolve a continuum point by computing winding left/right limits.
 
@@ -378,13 +379,13 @@ def bisect_amoeba_ronkin_min(
     mu1_high: float = 1,
     mu2_low: float = -1,
     mu2_high: float = 1,
-    continuum_tol: float = 1e-6,
-    continuum_perturb: float = 1e-4,
-    max_iter: int = 60,
-    xtol: float = 1e-10,
-    max_range_expansions: int = 10,
-    range_expand_factor: float = 2.0,
-    frac: float = CONTINUUM_FRAC,
+    continuum_tol: float = config.CONTINUUM_TOL,
+    continuum_perturb: float = config.CONTINUUM_PERTURB,
+    max_iter: int = config.AMOEBA_MAX_ITER,
+    xtol: float = config.AMOEBA_XTOL,
+    max_range_expansions: int = config.AMOEBA_MAX_RANGE_EXPANSIONS,
+    range_expand_factor: float = config.AMOEBA_RANGE_EXPAND_FACTOR,
+    frac: float = config.CONTINUUM_FRAC,
     zm_run_kwargs: Optional[dict] = None,
 ) -> dict:
     """
