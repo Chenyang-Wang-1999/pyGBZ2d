@@ -20,6 +20,7 @@ from bfgbz2d.core import CharPoly, LineSubset
 from bfgbz2d.continuation import ZeroManager
 
 from bfgbz2d import config
+from bfgbz2d.config import live_defaults
 from .mu2mid import ensure_mu2mid
 from .mu2mid import Mu2MidZM
 from bfgbz2d.core import JoinableLinePiece as _LinePiece, is_mr_cluster_endpoint as _is_cluster_endpoint
@@ -38,11 +39,12 @@ def _check_boundary_indices(poly: CharPoly) -> None:
         raise ValueError(f"M={M} <= 0: invalid boundary index")
 
 
+@live_defaults(continuum_tol="CONTINUUM_TOL")
 def detect_continuum_simple(
     zm: ZeroManager,
     poly: CharPoly,
     *,
-    continuum_tol: float = config.CONTINUUM_TOL,
+    continuum_tol: Optional[float] = None,
     zm_run_kwargs: dict | None = None,
 ) -> bool:
     """Presence-only continuum detection.

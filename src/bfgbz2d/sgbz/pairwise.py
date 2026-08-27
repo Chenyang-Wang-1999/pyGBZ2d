@@ -53,6 +53,7 @@ import numpy as np
 from scipy.optimize import brentq
 
 from bfgbz2d import config
+from bfgbz2d.config import live_defaults
 from bfgbz2d.core import TWO_PI
 from bfgbz2d.continuation import ZeroManager
 from bfgbz2d.continuation.interpolation import hermite_interp_poly
@@ -479,15 +480,16 @@ def _views_in_sync_with_mesh(zm) -> bool:
     return True
 
 
+@live_defaults(tie_tol="CONTINUUM_TOL", max_rounds="REFINE_MAX_ROUNDS", safety_factor="REFINE_SAFETY_FACTOR", max_subintervals="REFINE_MAX_SUBINTERVALS", max_total_inserts="REFINE_MAX_TOTAL_INSERTS")
 def refine_mesh_for_multiple_crossings(
     zm,
     *,
-    tie_tol: float = config.CONTINUUM_TOL,
+    tie_tol: Optional[float] = None,
     crossing_tol: float = 1e-10,
-    max_rounds: int = config.REFINE_MAX_ROUNDS,
-    safety_factor: float = config.REFINE_SAFETY_FACTOR,
-    max_subintervals: int = config.REFINE_MAX_SUBINTERVALS,
-    max_total_inserts: int = config.REFINE_MAX_TOTAL_INSERTS,
+    max_rounds: Optional[int] = None,
+    safety_factor: Optional[float] = None,
+    max_subintervals: Optional[int] = None,
+    max_total_inserts: Optional[int] = None,
 ) -> int:
     """Refine mesh intervals holding two or more close crossings.
 
@@ -663,11 +665,12 @@ def _normalize_theta(theta: float) -> float:
 # Event collection
 # ---------------------------------------------------------------------------
 
+@live_defaults(min_direction_deriv="MIN_DIRECTION_DERIV")
 def collect_pair_events(
     zm: Mu2MidZM,
     *,
     crossing_tol: float = 1e-10,
-    min_direction_deriv: float = config.MIN_DIRECTION_DERIV,
+    min_direction_deriv: Optional[float] = None,
 ) -> list[PairEvent]:
     """Scan every representative item pair on every segment.
 

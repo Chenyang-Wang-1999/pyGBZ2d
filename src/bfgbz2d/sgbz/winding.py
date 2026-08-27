@@ -38,6 +38,7 @@ Design (``log/2026-08-13-SGBZ算法梳理.md`` §3/§6.4):
 '''
 
 from __future__ import annotations
+from typing import Optional
 
 import math
 
@@ -49,6 +50,7 @@ from bfgbz2d.core import CharPoly, PointSubset, TWO_PI
 from bfgbz2d.continuation import ZeroManager
 
 from bfgbz2d import config
+from bfgbz2d.config import live_defaults
 from .mu2mid import Mu2MidZM, ensure_mu2mid
 
 
@@ -391,11 +393,12 @@ def compute_average_winding(
 # proximity rule discarded legitimate dense events.
 
 
+@live_defaults(crossing_tol="CROSSING_TOL")
 def detect_crossings_simple(
     zm: ZeroManager,
     poly: CharPoly,
     *,
-    crossing_tol: float = config.CROSSING_TOL,
+    crossing_tol: Optional[float] = None,
     zm_run_kwargs: dict | None = None,
 ) -> tuple[list[PointSubset], list[dict]]:
     """Materialize 0D PMGBZ PointSubsets from analyzed EventGroups.
@@ -466,11 +469,12 @@ def detect_crossings_simple(
 # Convenience: detection + winding in one call
 # ---------------------------------------------------------------------------
 
+@live_defaults(crossing_tol="CROSSING_TOL")
 def detect_crossings_and_winding(
     zm: ZeroManager,
     poly: CharPoly,
     *,
-    crossing_tol: float = config.CROSSING_TOL,
+    crossing_tol: Optional[float] = None,
     zm_run_kwargs: dict | None = None,
 ) -> tuple[list[PointSubset], float]:
     """Crossing detection + average major-axis winding.

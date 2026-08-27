@@ -19,6 +19,7 @@ from bfgbz2d.core import CharPoly
 
 from .ronkin_winding import _get_average_winding_from_zeros
 from bfgbz2d import config
+from bfgbz2d.config import live_defaults
 from .zm_extract import AmoebaZeroManager, amoeba_windings
 
 
@@ -102,20 +103,21 @@ def _refine_and_correct(
     }
 
 
+@live_defaults(continuum_tol="CONTINUUM_TOL", continuum_perturb="CONTINUUM_PERTURB", max_iter="AMOEBA_MAX_ITER", xtol="AMOEBA_XTOL", max_range_expansions="AMOEBA_MAX_RANGE_EXPANSIONS", range_expand_factor="AMOEBA_RANGE_EXPAND_FACTOR", frac="CONTINUUM_FRAC")
 def _find_mu2_for_w2_zero(
     char_poly: CharPoly,
     E_ref: complex,
     mu1: float,
     mu2_low: float,
     mu2_high: float,
-    continuum_tol: float = config.CONTINUUM_TOL,
-    continuum_perturb: float = config.CONTINUUM_PERTURB,
-    max_iter: int = config.AMOEBA_MAX_ITER,
-    xtol: float = config.AMOEBA_XTOL,
-    max_range_expansions: int = config.AMOEBA_MAX_RANGE_EXPANSIONS,
-    range_expand_factor: float = config.AMOEBA_RANGE_EXPAND_FACTOR,
+    continuum_tol: Optional[float] = None,
+    continuum_perturb: Optional[float] = None,
+    max_iter: Optional[int] = None,
+    xtol: Optional[float] = None,
+    max_range_expansions: Optional[int] = None,
+    range_expand_factor: Optional[float] = None,
     _zm: Optional[AmoebaZeroManager] = None,
-    frac: float = config.CONTINUUM_FRAC,
+    frac: Optional[float] = None,
 ) -> dict:
     """Find mu2 where w2 winding crosses 0, with adaptive range.
 
@@ -250,6 +252,7 @@ def _find_mu2_for_w2_zero(
     )
 
 
+@live_defaults(continuum_perturb="CONTINUUM_PERTURB", continuum_tol="CONTINUUM_TOL", max_iter="AMOEBA_MAX_ITER", xtol="AMOEBA_XTOL", max_range_expansions="AMOEBA_MAX_RANGE_EXPANSIONS", range_expand_factor="AMOEBA_RANGE_EXPAND_FACTOR", frac="CONTINUUM_FRAC")
 def _resolve_continuum(
     char_poly: CharPoly,
     E_ref: complex,
@@ -258,13 +261,13 @@ def _resolve_continuum(
     zm: AmoebaZeroManager,
     mu2_low: float = -1.0,
     mu2_high: float = 1.0,
-    continuum_perturb: float = config.CONTINUUM_PERTURB,
-    continuum_tol: float = config.CONTINUUM_TOL,
-    max_iter: int = config.AMOEBA_MAX_ITER,
-    xtol: float = config.AMOEBA_XTOL,
-    max_range_expansions: int = config.AMOEBA_MAX_RANGE_EXPANSIONS,
-    range_expand_factor: float = config.AMOEBA_RANGE_EXPAND_FACTOR,
-    frac: float = config.CONTINUUM_FRAC,
+    continuum_perturb: Optional[float] = None,
+    continuum_tol: Optional[float] = None,
+    max_iter: Optional[int] = None,
+    xtol: Optional[float] = None,
+    max_range_expansions: Optional[int] = None,
+    range_expand_factor: Optional[float] = None,
+    frac: Optional[float] = None,
 ) -> dict:
     """Resolve a continuum point by computing winding left/right limits.
 
@@ -372,6 +375,7 @@ def _resolve_continuum(
     }
 
 
+@live_defaults(continuum_tol="CONTINUUM_TOL", continuum_perturb="CONTINUUM_PERTURB", max_iter="AMOEBA_MAX_ITER", xtol="AMOEBA_XTOL", max_range_expansions="AMOEBA_MAX_RANGE_EXPANSIONS", range_expand_factor="AMOEBA_RANGE_EXPAND_FACTOR", frac="CONTINUUM_FRAC")
 def bisect_amoeba_ronkin_min(
     char_poly: CharPoly,
     E_ref: complex,
@@ -379,13 +383,13 @@ def bisect_amoeba_ronkin_min(
     mu1_high: float = 1,
     mu2_low: float = -1,
     mu2_high: float = 1,
-    continuum_tol: float = config.CONTINUUM_TOL,
-    continuum_perturb: float = config.CONTINUUM_PERTURB,
-    max_iter: int = config.AMOEBA_MAX_ITER,
-    xtol: float = config.AMOEBA_XTOL,
-    max_range_expansions: int = config.AMOEBA_MAX_RANGE_EXPANSIONS,
-    range_expand_factor: float = config.AMOEBA_RANGE_EXPAND_FACTOR,
-    frac: float = config.CONTINUUM_FRAC,
+    continuum_tol: Optional[float] = None,
+    continuum_perturb: Optional[float] = None,
+    max_iter: Optional[int] = None,
+    xtol: Optional[float] = None,
+    max_range_expansions: Optional[int] = None,
+    range_expand_factor: Optional[float] = None,
+    frac: Optional[float] = None,
     zm_run_kwargs: Optional[dict] = None,
 ) -> dict:
     """

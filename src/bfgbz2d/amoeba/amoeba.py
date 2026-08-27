@@ -8,6 +8,7 @@ from typing import Optional
 import numpy as np
 
 from bfgbz2d import config
+from bfgbz2d.config import live_defaults
 from bfgbz2d.core import (
     PointSubset, LineSubset, GBZResult, CharPoly,
     check_points_clustered_on_torus, probe_zero_plateau,
@@ -56,6 +57,7 @@ def _is_zero_plateau_probe(point: dict, winding_tol: float) -> bool:
     )
 
 
+@live_defaults(continuum_tol="CONTINUUM_TOL", continuum_perturb="CONTINUUM_PERTURB", max_iter="AMOEBA_MAX_ITER", xtol="AMOEBA_XTOL", max_range_expansions="AMOEBA_MAX_RANGE_EXPANSIONS")
 def _probe_zero_plateau_near_mu1(
     char_poly: CharPoly,
     E_ref: complex,
@@ -63,11 +65,11 @@ def _probe_zero_plateau_near_mu1(
     mu1_bracket: Optional[tuple[float, float]],
     mu2_low: float = -1,
     mu2_high: float = 1,
-    continuum_tol: float = config.CONTINUUM_TOL,
-    continuum_perturb: float = 1e-4,
-    max_iter: int = 60,
-    xtol: float = 1e-10,
-    max_range_expansions: int = 10,
+    continuum_tol: Optional[float] = None,
+    continuum_perturb: Optional[float] = None,
+    max_iter: Optional[int] = None,
+    xtol: Optional[float] = None,
+    max_range_expansions: Optional[int] = None,
     range_expand_factor: float = 2.0,
     winding_tol: Optional[float] = None,
     probe_radius: Optional[float] = None,

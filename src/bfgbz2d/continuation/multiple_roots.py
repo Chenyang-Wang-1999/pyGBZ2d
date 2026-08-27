@@ -10,6 +10,7 @@ import numpy as np
 from typing import Optional, NamedTuple
 from cmath import exp
 from bfgbz2d import config
+from bfgbz2d.config import live_defaults
 from bfgbz2d.core import (
     TWO_PI,
     CharPoly,
@@ -205,10 +206,11 @@ class MultipleRootIntervalTrigger:
         self._prev_V = None
 
 
+@live_defaults(cluster_tol="MR_CLUSTER_TOL")
 def detect_cluster(
     roots: np.ndarray,
     *,
-    cluster_tol: float = config.MR_CLUSTER_TOL,
+    cluster_tol: Optional[float] = None,
 ) -> list[tuple[int, ...]]:
     """Find all root clusters as connected components of the proximity graph.
 

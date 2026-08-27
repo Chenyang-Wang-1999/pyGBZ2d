@@ -119,9 +119,9 @@ def integrate_segment(
     roots_start: np.ndarray,
     theta_end: float,
     *,
-    h0: float = config.H0,
-    ctrl: StepControl = StepControl(),
-    min_dtheta: float = config.MIN_DTHETA,
+    h0: Optional[float] = None,
+    ctrl: Optional[StepControl] = None,
+    min_dtheta: Optional[float] = None,
     min_dist_threshold: float = 0.1,
 ) -> SegmentResult:
     """Integrate β₂ roots from *theta_start* toward *theta_end*.
@@ -139,6 +139,12 @@ def integrate_segment(
     subsequent row is Hungarian-matched to the previous one to maintain
     track continuity within the segment.
     """
+    if ctrl is None:
+        ctrl = StepControl()
+    if h0 is None:
+        h0 = config.H0
+    if min_dtheta is None:
+        min_dtheta = config.MIN_DTHETA
     h = h0
     theta1 = theta_start
     roots = roots_start
@@ -383,11 +389,11 @@ class ZeroManager:
     def run(
         self,
         *,
-        h0: float = config.H0,
-        ctrl: StepControl = StepControl(),
-        min_dtheta: float = config.MIN_DTHETA,
-        cluster_tol: float = config.CLUSTER_TOL,
-        mr_jump: float = config.MR_JUMP,
+        h0: Optional[float] = None,
+        ctrl: Optional[StepControl] = None,
+        min_dtheta: Optional[float] = None,
+        cluster_tol: Optional[float] = None,
+        mr_jump: Optional[float] = None,
         verbose: bool = False,
     ) -> None:
         """Execute the full pipeline.
@@ -413,6 +419,16 @@ class ZeroManager:
             fresh ``ZeroManager``: a second run would append a new topology on
             top of the first one instead of replacing it.
         """
+        if ctrl is None:
+            ctrl = StepControl()
+        if h0 is None:
+            h0 = config.H0
+        if min_dtheta is None:
+            min_dtheta = config.MIN_DTHETA
+        if cluster_tol is None:
+            cluster_tol = config.CLUSTER_TOL
+        if mr_jump is None:
+            mr_jump = config.MR_JUMP
         if self._has_run:
             raise RuntimeError(
                 "ZeroManager.run() has already been called on this instance; "

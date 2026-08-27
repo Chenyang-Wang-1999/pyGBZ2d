@@ -26,6 +26,7 @@ from bfgbz2d.core import (
 )
 
 from bfgbz2d import config
+from bfgbz2d.config import live_defaults
 from .continuum_lines import (
     extract_continuum_linesubsets,
 )
@@ -128,17 +129,18 @@ def _resolve_continuum_winding(
 # μ₁ bisection (bracket expansion + plain midpoint with continuum interception)
 # ---------------------------------------------------------------------------
 
+@live_defaults(zero_tol="ZERO_TOL", continuum_perturb="CONTINUUM_PERTURB", continuum_tol="CONTINUUM_TOL", crossing_tol="CROSSING_TOL")
 def solve_SGBZ_for_E(
     poly: CharPoly,
     E_ref: complex,
     mu1_guess: tuple[float, float] = (-1, 1),
-    zero_tol: float = config.ZERO_TOL,
-    continuum_perturb: float = config.CONTINUUM_PERTURB,
+    zero_tol: Optional[float] = None,
+    continuum_perturb: Optional[float] = None,
     max_iter: int = 60,
     zm_run_kwargs: Optional[dict] = None,
     *,
-    continuum_tol: float = config.CONTINUUM_TOL,
-    crossing_tol: float = config.CROSSING_TOL,
+    continuum_tol: Optional[float] = None,
+    crossing_tol: Optional[float] = None,
 ) -> dict:
     """Locate the winding-zero mu1 and return solve diagnostics.
 

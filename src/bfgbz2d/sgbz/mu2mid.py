@@ -38,6 +38,7 @@ from bfgbz2d.continuation import ZeroManager
 from bfgbz2d.continuation.interpolation import hermite_interp_poly
 
 from bfgbz2d import config
+from bfgbz2d.config import live_defaults
 from .pairwise import (
     EventGroup,
     collect_pair_events,
@@ -240,13 +241,14 @@ class Mu2MidZM(ZeroManager):
     # Public entry point
     # ------------------------------------------------------------------
 
+    @live_defaults(tie_tol="CONTINUUM_TOL", crossing_tol="CROSSING_TOL", min_direction_deriv="MIN_DIRECTION_DERIV")
     def analyze(
         self,
         continuum_clusters: list | None = None,
         *,
-        tie_tol: float = config.CONTINUUM_TOL,
-        crossing_tol: float = config.CROSSING_TOL,
-        min_direction_deriv: float = config.MIN_DIRECTION_DERIV,
+        tie_tol: Optional[float] = None,
+        crossing_tol: Optional[float] = None,
+        min_direction_deriv: Optional[float] = None,
         verbose: bool = False,
         refine_multi_crossings: bool = True,
         refine_max_rounds: int = 3,
@@ -324,13 +326,14 @@ class Mu2MidZM(ZeroManager):
         self.mu2_mid = build_mu2_mid(self, groups)
         self._sync_compat_arrays()
 
+    @live_defaults(tie_tol="CONTINUUM_TOL", crossing_tol="CROSSING_TOL", min_direction_deriv="MIN_DIRECTION_DERIV")
     def build_mu2_mid(
         self,
         continuum_clusters: list | None = None,
         *,
-        tie_tol: float = config.CONTINUUM_TOL,
-        crossing_tol: float = config.CROSSING_TOL,
-        min_direction_deriv: float = config.MIN_DIRECTION_DERIV,
+        tie_tol: Optional[float] = None,
+        crossing_tol: Optional[float] = None,
+        min_direction_deriv: Optional[float] = None,
         verbose: bool = False,
         refine_multi_crossings: bool = True,
         refine_max_rounds: int = 3,

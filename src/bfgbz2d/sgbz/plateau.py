@@ -20,6 +20,7 @@ import cmath
 from typing import Optional
 
 from bfgbz2d import config
+from bfgbz2d.config import live_defaults
 from bfgbz2d.core import (
     TWO_PI,
     CharPoly, GBZResult, PointSubset,
@@ -107,6 +108,7 @@ def _is_zero_plateau_probe(point: dict, zero_tol: float) -> bool:
     )
 
 
+@live_defaults(zero_tol="ZERO_TOL", continuum_perturb="CONTINUUM_PERTURB")
 def _probe_zero_plateau_near_mu1(
     poly: CharPoly,
     E_ref: complex,
@@ -116,8 +118,8 @@ def _probe_zero_plateau_near_mu1(
     *,
     continuum_tol: float,
     crossing_tol: float,
-    zero_tol: float = config.ZERO_TOL,
-    continuum_perturb: float = config.CONTINUUM_PERTURB,
+    zero_tol: Optional[float] = None,
+    continuum_perturb: Optional[float] = None,
     probe_radius: Optional[float] = None,
 ) -> dict:
     """Check whether a nonempty-PMGBZ candidate sits next to a zero plateau.

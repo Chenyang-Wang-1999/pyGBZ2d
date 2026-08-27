@@ -41,6 +41,7 @@ from bfgbz2d.continuation.zero_manager import SegmentData, ZeroManager
 
 
 from bfgbz2d import config
+from bfgbz2d.config import live_defaults
 ExtractMode = Literal['coarse', 'fine', 'solve']
 
 
@@ -263,6 +264,7 @@ def _merge_two(
 # Subset extraction (3 modes)
 # ---------------------------------------------------------------------------
 
+@live_defaults(tol="CONTINUUM_TOL", frac="CONTINUUM_FRAC", snap_tol="SNAP_TOL")
 def extract_amoeba_subsets(
     zm: AmoebaZeroManager,
     poly: CharPoly,
@@ -271,9 +273,9 @@ def extract_amoeba_subsets(
     mu2: float,
     *,
     mode: ExtractMode = 'solve',
-    tol: float = config.CONTINUUM_TOL,
-    frac: float = config.CONTINUUM_FRAC,
-    snap_tol: float = config.SNAP_TOL,
+    tol: Optional[float] = None,
+    frac: Optional[float] = None,
+    snap_tol: Optional[float] = None,
 ) -> list:
     """GBZ subsets of f at ln|b1|=mu1, ln|b2|=mu2, from ZM tracks.
 
@@ -514,6 +516,7 @@ def _finalize_crossing(
 # Winding (for the μ₂-bisection) — RAW crossing detection, no boundary rules
 # ---------------------------------------------------------------------------
 
+@live_defaults(tol="CONTINUUM_TOL", frac="CONTINUUM_FRAC")
 def amoeba_windings(
     zm: AmoebaZeroManager,
     poly: CharPoly,
@@ -521,8 +524,8 @@ def amoeba_windings(
     mu1: float,
     mu2: float,
     *,
-    tol: float = config.CONTINUUM_TOL,
-    frac: float = config.CONTINUUM_FRAC,
+    tol: Optional[float] = None,
+    frac: Optional[float] = None,
     refine: bool = True,
 ) -> tuple[Optional[float], Optional[list], bool, Optional[float]]:
     """w2 average winding from ZM tracks at ``(E, mu1, mu2)``.

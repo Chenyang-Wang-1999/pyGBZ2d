@@ -41,16 +41,37 @@ class StepControl:
     ``arclength_step``, ``integrate_segment`` and ``ZeroManager.run`` don't
     each re-declare nine parameters.  Add a knob here once; all three layers
     carry the same ``StepControl`` instance.
+
+    Fields left as ``None`` (the default) resolve from :mod:`bfgbz2d.config`
+    at CONSTRUCTION time, so a global ``config.SAFETY = ...`` override
+    reaches every subsequently created controller.
     """
-    max_step: float = config.MAX_STEP
-    min_step: float = config.MIN_STEP
-    atol: float = config.STEP_ATOL
-    rtol: float = config.STEP_RTOL
-    safety: float = config.SAFETY
-    min_factor: float = config.MIN_FACTOR
-    max_factor: float = config.MAX_FACTOR
-    error_exponent: float = config.ERROR_EXPONENT
-    max_iter: int = config.STEP_MAX_ITER
+    max_step: Optional[float] = None
+    min_step: Optional[float] = None
+    atol: Optional[float] = None
+    rtol: Optional[float] = None
+    safety: Optional[float] = None
+    min_factor: Optional[float] = None
+    max_factor: Optional[float] = None
+    error_exponent: Optional[float] = None
+    max_iter: Optional[int] = None
+
+    _FIELDS_TO_CONFIG = {
+        "max_step": "MAX_STEP",
+        "min_step": "MIN_STEP",
+        "atol": "STEP_ATOL",
+        "rtol": "STEP_RTOL",
+        "safety": "SAFETY",
+        "min_factor": "MIN_FACTOR",
+        "max_factor": "MAX_FACTOR",
+        "error_exponent": "ERROR_EXPONENT",
+        "max_iter": "STEP_MAX_ITER",
+    }
+
+    def __post_init__(self):
+        for fname, ckey in self._FIELDS_TO_CONFIG.items():
+            if getattr(self, fname) is None:
+                object.__setattr__(self, fname, getattr(config, ckey))
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +298,7 @@ def arclength_step(
     theta1: float,
     roots: np.ndarray,
     h: float,
-    ctrl: StepControl = StepControl(),
+    ctrl: Optional[StepControl] = None,
 ) -> StepResult:
     """Take one adaptive pseudo-arclength step along θ₁.
 
@@ -289,6 +310,8 @@ def arclength_step(
     *ctrl* carries the RK45-style tolerances and step bounds; see
     :class:`StepControl`.
     """
+    if ctrl is None:
+        ctrl = StepControl()
     V, norm_V = compute_tangent(poly, E_ref,
                                  exp(mu1 + 1j * theta1), roots)
 

@@ -26,6 +26,9 @@ Grouping encodes how safe a constant is to tune:
 '''
 
 from contextlib import contextmanager
+import functools
+import inspect
+from typing import Optional
 
 # ---------------------------------------------------------------------------
 # 1. Model / algorithm scale (user-facing)
@@ -167,6 +170,38 @@ BOUNDARY_THETA_TOL: float = 1e-6
 MAX_SEGMENTS: int = 10000
 
 
+def live_defaults(**param_to_key):
+    """Decorator: resolve ``None`` parameters from config at CALL time.
+
+    Apply to public entry points whose keyword defaults would otherwise
+    freeze the config value at import time (Python evaluates ``def``
+    defaults once).  Usage::
+
+        @live_defaults(continuum_tol="CONTINUUM_TOL")
+        def detect_continuum_simple(zm, continuum_tol: Optional[float] = None):
+            ...   # continuum_tol is never None inside
+
+    Resolution order stays: per-call kwarg > config value (live) — the
+    import-time built-in default no longer exists as a third tier, since
+    config IS the single definition point.  Intended for top-level APIs
+    (called ~once per solve), not per-step hot loops; those carry their
+    knobs explicitly via ``StepControl``.
+    """
+    def decorator(fn):
+        sig = inspect.signature(fn)
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            bound = sig.bind(*args, **kwargs)
+            bound.apply_defaults()
+            for pname, ckey in param_to_key.items():
+                if bound.arguments[pname] is None:
+                    bound.arguments[pname] = globals()[ckey]
+            return fn(*bound.args, **bound.kwargs)
+        return wrapper
+    return decorator
+
+
 @contextmanager
 def override(**kwargs):
     """Temporarily override config values, restored on exit.
@@ -176,7 +211,9 @@ def override(**kwargs):
     ...     ...   # computations here see the tighter tolerance
     """
     unknown = [k for k in kwargs
-               if k.startswith("_") or k not in globals()]
+               if k.startswith("_")
+               or k not in globals()
+               or not isinstance(globals()[k], (int, float))]
     if unknown:
         raise AttributeError(
             f"unknown config key(s): {unknown}; see bfgbz2d.config for "
