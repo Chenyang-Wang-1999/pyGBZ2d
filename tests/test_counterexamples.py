@@ -167,7 +167,7 @@ class TestSgbzPlateauProbe:
         E_ref = 1.0 + 0j
         res = solve_SGBZ_for_E(poly, E_ref)
         info = _probe_zero_plateau_near_mu1(
-            poly, E_ref, res["mu1"], res.get("_mu1_bracket"), {},
+            poly, E_ref, res["mu1"], res.get("_mu1_bracket"),
             continuum_tol=CONTINUUM_TOL,
             crossing_tol=_CROSSING_TOL,
             zero_tol=1e-10,

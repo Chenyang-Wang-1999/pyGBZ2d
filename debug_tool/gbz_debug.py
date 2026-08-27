@@ -270,7 +270,7 @@ class MethodLoops:
 
 def _collect_sgbz(
     poly: CharPoly, E_ref: complex, mu1: float,
-    *, zm_run_kwargs: Optional[dict], continuum_tol: float,
+    *, continuum_tol: float,
     crossing_tol: float,
 ) -> MethodDebug:
     """SGBZ slice at fixed mu1 — mirrors ``_evaluate_winding`` (sgbz_solver).
@@ -281,7 +281,7 @@ def _collect_sgbz(
     machinery output at the requested mu1.
     """
     zm = Mu2MidZM(poly, E_ref, mu1)
-    zm.run(**(zm_run_kwargs or {}))
+    zm.run()
     zm.analyze(tie_tol=continuum_tol, crossing_tol=crossing_tol)
 
     if zm.has_continuum:
@@ -303,7 +303,7 @@ def _collect_sgbz(
 
 def _collect_amoeba(
     poly: CharPoly, E_ref: complex, mu1: float,
-    *, zm_run_kwargs: Optional[dict], mu2_guess: tuple,
+    *, mu2_guess: tuple,
     options: dict,
 ) -> MethodDebug:
     """Amoeba slice at fixed mu1 — ``collect_GBZ_subsets`` minus the outer
@@ -316,7 +316,7 @@ def _collect_amoeba(
     actual amoeba GBZ radius.
     """
     zm = AmoebaZeroManager(poly, E_ref, mu1)
-    zm.run(**(zm_run_kwargs or {}))
+    zm.run()
     inner = _find_mu2_for_w2_zero(
         poly, E_ref, mu1, float(mu2_guess[0]), float(mu2_guess[1]),
         _zm=zm, **options,
@@ -345,7 +345,6 @@ def collect_debug_subsets(
     mu1: float,
     *,
     methods: Sequence[str] = ("sgbz", "amoeba"),
-    zm_run_kwargs: Optional[dict] = None,
     mu2_guess: tuple = (-1.0, 1.0),
     continuum_tol: float = CONTINUUM_TOL,
     crossing_tol: float = _CROSSING_TOL,
@@ -358,7 +357,6 @@ def collect_debug_subsets(
         E_ref, mu1: the frozen evaluation point (mu1 is NOT solved for —
             inspect a solver candidate or probe any radius).
         methods: subset of ``("sgbz", "amoeba")``.
-        zm_run_kwargs: forwarded to ``ZeroManager.run`` of both methods.
         mu2_guess: initial mu2 bracket for the amoeba w2=0 bisection.
         continuum_tol / crossing_tol: SGBZ analyze tunables.
         amoeba_options: extra kwargs for the amoeba's ``_find_mu2_for_w2_zero``
@@ -379,12 +377,12 @@ def collect_debug_subsets(
         try:
             if method == "sgbz":
                 report.methods[method] = _collect_sgbz(
-                    poly, E_ref, mu1, zm_run_kwargs=zm_run_kwargs,
+                    poly, E_ref, mu1,
                     continuum_tol=continuum_tol, crossing_tol=crossing_tol,
                 )
             elif method == "amoeba":
                 report.methods[method] = _collect_amoeba(
-                    poly, E_ref, mu1, zm_run_kwargs=zm_run_kwargs,
+                    poly, E_ref, mu1,
                     mu2_guess=mu2_guess, options=options,
                 )
             else:

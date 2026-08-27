@@ -407,7 +407,6 @@ def detect_crossings_simple(
     poly: CharPoly,
     *,
     crossing_tol: Optional[float] = None,
-    zm_run_kwargs: dict | None = None,
 ) -> tuple[list[PointSubset], list[dict]]:
     """Materialize 0D PMGBZ PointSubsets from analyzed EventGroups.
 
@@ -439,7 +438,7 @@ def detect_crossings_simple(
     if M <= 0:
         raise ValueError(f"M={M} <= 0: invalid boundary index")
 
-    m = ensure_mu2mid(zm, **(zm_run_kwargs or {}))
+    m = ensure_mu2mid(zm)
 
     E_ref = m.E_ref
     mu1 = m.mu1
@@ -483,7 +482,6 @@ def detect_crossings_and_winding(
     poly: CharPoly,
     *,
     crossing_tol: Optional[float] = None,
-    zm_run_kwargs: dict | None = None,
 ) -> tuple[list[PointSubset], float]:
     """Crossing detection + average major-axis winding.
 
@@ -495,7 +493,7 @@ def detect_crossings_and_winding(
 
     Returns ``(subsets, W_avg)``.
     """
-    m = ensure_mu2mid(zm, **(zm_run_kwargs or {}))
+    m = ensure_mu2mid(zm)
     subsets, charges = detect_crossings_simple(
         m, poly, crossing_tol=crossing_tol,
     )

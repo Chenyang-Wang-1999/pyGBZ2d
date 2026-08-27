@@ -44,7 +44,6 @@ def detect_continuum_simple(
     poly: CharPoly,
     *,
     continuum_tol: Optional[float] = None,
-    zm_run_kwargs: dict | None = None,
 ) -> bool:
     """Presence-only continuum detection.
 
@@ -53,7 +52,7 @@ def detect_continuum_simple(
     """
     _check_boundary_indices(poly)
     m = Mu2MidZM(zm.poly, zm.E_ref, zm.mu1)
-    m.run(**(zm_run_kwargs or {}))
+    m.run()
     m.analyze(tie_tol=continuum_tol)
     return m.has_continuum
 
@@ -254,14 +253,14 @@ def _merge_two(
 
 
 def extract_continuum_linesubsets(
-    zm: ZeroManager, poly: CharPoly, *, zm_run_kwargs: dict | None = None,
+    zm: ZeroManager, poly: CharPoly,
 ) -> list[LineSubset]:
     """Materialise the 1D continuum LineSubsets of *zm*.
 
     Precondition: continuum detection has already run and returned
     ``has_continuum == True``.
     """
-    m = ensure_mu2mid(zm, **(zm_run_kwargs or {}))
+    m = ensure_mu2mid(zm)
     if not m.has_continuum:
         raise RuntimeError(
             "extract_continuum_linesubsets requires has_continuum=True; "

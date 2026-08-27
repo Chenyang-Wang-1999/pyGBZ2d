@@ -65,7 +65,6 @@ def _evaluate_probe(
     poly: CharPoly,
     E_ref: complex,
     mu1: float,
-    zm_run_kwargs: dict,
     *,
     continuum_tol: float,
     crossing_tol: float,
@@ -82,7 +81,7 @@ def _evaluate_probe(
     Errors propagate directly — a failing probe must not be silently skipped.
     """
     m = Mu2MidZM(poly, E_ref, mu1)
-    m.run(**zm_run_kwargs)
+    m.run()
     m.analyze(tie_tol=continuum_tol, crossing_tol=crossing_tol)
     if m.has_continuum:
         return {
@@ -115,7 +114,6 @@ def _probe_zero_plateau_near_mu1(
     E_ref: complex,
     mu1: float,
     mu1_bracket: Optional[tuple[float, float]],
-    zm_run_kwargs: dict,
     *,
     continuum_tol: float,
     crossing_tol: float,
@@ -139,14 +137,10 @@ def _probe_zero_plateau_near_mu1(
     if mu1_bracket is not None:
         bracket_width = abs(float(mu1_bracket[1]) - float(mu1_bracket[0]))
 
-    eval_kwargs = dict(
-        continuum_tol=continuum_tol,
-        crossing_tol=crossing_tol,
-    )
-
     def evaluator(mu1_probe: float) -> dict:
         res = _evaluate_probe(
-            poly, E_ref, mu1_probe, zm_run_kwargs, **eval_kwargs,
+            poly, E_ref, mu1_probe,
+            continuum_tol=continuum_tol, crossing_tol=crossing_tol,
         )
         # Collapse the SGBZ-specific criterion to the one bool the shared
         # loop reads; keep the raw fields for diagnostics.

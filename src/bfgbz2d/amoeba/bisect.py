@@ -397,7 +397,6 @@ def bisect_amoeba_ronkin_min(
     max_range_expansions: Optional[int] = None,
     range_expand_factor: Optional[float] = None,
     frac: Optional[float] = None,
-    zm_run_kwargs: Optional[dict] = None,
 ) -> dict:
     """
     Find the Ronkin function minimum by bisecting mu1 and mu2.
@@ -473,7 +472,7 @@ def bisect_amoeba_ronkin_min(
         # Build the ZeroManager once for this mu1_mid — reused across all
         # mu2 evaluations in the inner bisection.
         zm = AmoebaZeroManager(char_poly, E_ref, mu1_mid)
-        zm.run(**(zm_run_kwargs or {}))
+        zm.run()
 
         inner_mid = _find_mu2_for_w2_zero(
             char_poly, E_ref, mu1_mid, mu2_low, mu2_high,

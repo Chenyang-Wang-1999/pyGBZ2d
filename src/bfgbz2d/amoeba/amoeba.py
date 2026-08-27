@@ -147,13 +147,34 @@ def _probe_zero_plateau_near_mu1(
 
 # ---- main entry point ----
 
+@live_defaults(continuum_tol="core:CONTINUUM_TOL", continuum_perturb="core:CONTINUUM_PERTURB",
+    max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL",
+    max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS",
+    range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR",
+    plateau_cluster_tol="core:PLATEAU_CLUSTER_TOL",
+    plateau_area_threshold="amoeba.amoeba:PLATEAU_AREA_THRESHOLD")
 def collect_GBZ_subsets(
     coeffs: np.ndarray,
     degs: np.ndarray,
     E_ref: complex,
     perc: float = None,
+    *,
     debug_mode: bool = False,
-    **options,
+    plateau_check: bool = True,
+    plateau_winding_tol: Optional[float] = None,
+    plateau_probe_radius: Optional[float] = None,
+    plateau_area_threshold: Optional[float] = None,
+    plateau_cluster_tol: Optional[float] = None,
+    mu1_low: float = -1,
+    mu1_high: float = 1,
+    mu2_low: float = -1,
+    mu2_high: float = 1,
+    continuum_tol: Optional[float] = None,
+    continuum_perturb: Optional[float] = None,
+    max_iter: Optional[int] = None,
+    xtol: Optional[float] = None,
+    max_range_expansions: Optional[int] = None,
+    range_expand_factor: Optional[float] = None,
 ) -> GBZResult:
     """Check amoeba condition and return GBZ points for a reference energy.
 
@@ -170,25 +191,19 @@ def collect_GBZ_subsets(
         print("%.2f" % (perc * 100) + r"%")
     char_poly = CharPoly(coeffs, degs)
 
-    solver_options = dict(options)
-    plateau_check = solver_options.pop("plateau_check", True)
-    plateau_winding_tol = solver_options.pop("plateau_winding_tol", None)
-    plateau_probe_radius = solver_options.pop("plateau_probe_radius", None)
-    plateau_area_threshold = solver_options.pop("plateau_area_threshold", PLATEAU_AREA_THRESHOLD)
-    # Neighbour threshold for the torus-clustering pre-check, in units of
-    # the 2π torus period.  Deliberately a SEPARATE knob from
-    # plateau_area_threshold (a winding-area fraction): the two criteria
-    # have different units, and sharing one value couples their tuning.
-    # Defaults to the historical shared value for behaviour compatibility.
-    plateau_cluster_tol = solver_options.pop("plateau_cluster_tol", core.PLATEAU_CLUSTER_TOL)
-    # kwargs forwarded to ZeroManager.run() (h0, ctrl, min_dtheta,
-    # cluster_tol, mr_jump, verbose).  Kept separate from the bisection
-    # options, which ZeroManager.run does not accept.
-    zm_run_kwargs = solver_options.pop("zm_run_kwargs", {})
-
+    # Neighbour threshold note (plateau_cluster_tol vs
+    # plateau_area_threshold): deliberately SEPARATE knobs — the former is
+    # a torus-clustering radius, the latter a winding-area fraction.
     try:
         amoeba_res = bisect_amoeba_ronkin_min(
-            char_poly, E_ref, zm_run_kwargs=zm_run_kwargs, **solver_options,
+            char_poly, E_ref,
+            mu1_low=mu1_low, mu1_high=mu1_high,
+            mu2_low=mu2_low, mu2_high=mu2_high,
+            continuum_tol=continuum_tol,
+            continuum_perturb=continuum_perturb,
+            max_iter=max_iter, xtol=xtol,
+            max_range_expansions=max_range_expansions,
+            range_expand_factor=range_expand_factor,
         )
 
         # Reuse the ZeroManager built inside the bisection at the solved
@@ -237,14 +252,13 @@ def collect_GBZ_subsets(
                 plateau_info = _probe_zero_plateau_near_mu1(
                     char_poly, E_ref, mu1,
                     amoeba_res.get("_mu1_bracket"),
-                    mu2_low=solver_options.get("mu2_low", -1),
-                    mu2_high=solver_options.get("mu2_high", 1),
-                    continuum_tol=solver_options.get("continuum_tol", core.CONTINUUM_TOL),
-                    continuum_perturb=solver_options.get("continuum_perturb", 1e-4),
-                    max_iter=solver_options.get("max_iter", 60),
-                    xtol=solver_options.get("xtol", 1e-10),
-                    max_range_expansions=solver_options.get("max_range_expansions", 10),
-                    range_expand_factor=solver_options.get("range_expand_factor", 2.0),
+                    mu2_low=mu2_low,
+                    mu2_high=mu2_high,
+                    continuum_tol=continuum_tol,
+                    continuum_perturb=continuum_perturb,
+                    max_iter=max_iter, xtol=xtol,
+                    max_range_expansions=max_range_expansions,
+                    range_expand_factor=range_expand_factor,
                     winding_tol=plateau_winding_tol,
                     probe_radius=plateau_probe_radius,
                 )

@@ -56,7 +56,6 @@ def _evaluate_winding(
     poly: CharPoly,
     E_ref: complex,
     mu1: float,
-    zm_run_kwargs: dict,
     *,
     continuum_tol: float,
     crossing_tol: float,
@@ -80,7 +79,7 @@ def _evaluate_winding(
         caller, only when this μ₁ is confirmed as the boundary).
     """
     zm = Mu2MidZM(poly, E_ref, mu1)
-    zm.run(**zm_run_kwargs)
+    zm.run()
     zm.analyze(tie_tol=continuum_tol, crossing_tol=crossing_tol)
 
     if zm.has_continuum:
@@ -96,7 +95,6 @@ def _resolve_continuum_winding(
     poly: CharPoly,
     E_ref: complex,
     mu1: float,
-    zm_run_kwargs: dict,
     *,
     continuum_perturb: float,
     continuum_tol: float,
@@ -114,17 +112,15 @@ def _resolve_continuum_winding(
     place the continuation point at ``mu1 ± eps``.  Returns ``(None, None,
     None)`` when all scales are still degenerate on some side.
     """
-    eval_kwargs = dict(
-        continuum_tol=continuum_tol,
-        crossing_tol=crossing_tol,
-    )
-    for scale in (1.0, 2.0, 4.0, 8.0):
+    for scale in core.ESCAPE_LADDER:
         eps = continuum_perturb * scale
         w_left, _, _ = _evaluate_winding(
-            poly, E_ref, mu1 - eps, zm_run_kwargs, **eval_kwargs,
+            poly, E_ref, mu1 - eps,
+            continuum_tol=continuum_tol, crossing_tol=crossing_tol,
         )
         w_right, _, _ = _evaluate_winding(
-            poly, E_ref, mu1 + eps, zm_run_kwargs, **eval_kwargs,
+            poly, E_ref, mu1 + eps,
+            continuum_tol=continuum_tol, crossing_tol=crossing_tol,
         )
         if (w_left is not None) and (w_right is not None):
             return w_left, w_right, eps
@@ -145,7 +141,6 @@ def solve_SGBZ_for_E(
     zero_tol: Optional[float] = None,
     continuum_perturb: Optional[float] = None,
     max_iter: Optional[int] = None,
-    zm_run_kwargs: Optional[dict] = None,
     *,
     continuum_tol: Optional[float] = None,
     crossing_tol: Optional[float] = None,
@@ -174,24 +169,17 @@ def solve_SGBZ_for_E(
         fields "_mu1_bracket", "_winding_bracket", "_w_limits"
         (continuum only), "_exit_reason".
     """
-    if zm_run_kwargs is None:
-        zm_run_kwargs = {}
-
-    eval_kwargs = dict(
-        continuum_tol=continuum_tol,
-        crossing_tol=crossing_tol,
-    )
-
     # --- winding_at: evaluate W(E_ref, mu1) + 0D subsets at *mu1_val* ---
     # Partially-applied _evaluate_winding on the fixed (poly, E_ref,
-    # zm_run_kwargs, eval_kwargs): returns the full (winding, subsets, zm)
+    # tolerances): returns the full (winding, subsets, zm)
     # triple.  The subsets are used by the callers
     # below (gbz_low/gbz_high/gbz_mid/gbz_final), so this is the general
     # evaluation, not a winding-only cheap probe (that lives in
     # _resolve_continuum_winding, which discards the subsets).
     def winding_at(mu1_val: float):
         return _evaluate_winding(
-            poly, E_ref, mu1_val, zm_run_kwargs, **eval_kwargs,
+            poly, E_ref, mu1_val,
+            continuum_tol=continuum_tol, crossing_tol=crossing_tol,
         )
 
     # --- handle_continuum: resolve a continuum-degenerate mu1 ---
@@ -206,8 +194,9 @@ def solve_SGBZ_for_E(
         mu1_bracket: tuple[float, float | None],
     ):
         w_l, w_r, eps = _resolve_continuum_winding(
-            poly, E_ref, mu1_val, zm_run_kwargs,
-            continuum_perturb=continuum_perturb, **eval_kwargs,
+            poly, E_ref, mu1_val,
+            continuum_perturb=continuum_perturb,
+            continuum_tol=continuum_tol, crossing_tol=crossing_tol,
         )
         if w_l is None or w_r is None:
             raise ValueError(
@@ -440,13 +429,24 @@ def solve_SGBZ_for_E(
 # Main entry point
 # ---------------------------------------------------------------------------
 
+@live_defaults(zero_tol="core:WINDING_ZERO_TOL", continuum_perturb="core:CONTINUUM_PERTURB",
+    continuum_tol="core:CONTINUUM_TOL", crossing_tol="sgbz.pairwise:CROSSING_TOL",
+    max_iter="sgbz.sgbz_solver:MU1_MAX_ITER")
 def collect_GBZ_subsets(
     coeffs: np.ndarray,
     degs: np.ndarray,
     E_ref: complex,
     perc: float = None,
+    *,
     debug_mode: bool = False,
-    **options,
+    plateau_check: bool = True,
+    plateau_probe_radius: Optional[float] = None,
+    mu1_guess: tuple[float, float] = (-1, 1),
+    zero_tol: Optional[float] = None,
+    continuum_perturb: Optional[float] = None,
+    max_iter: Optional[int] = None,
+    continuum_tol: Optional[float] = None,
+    crossing_tol: Optional[float] = None,
 ) -> GBZResult:
     """Check the SGBZ condition and return GBZ points for a reference energy.
 
@@ -469,12 +469,10 @@ def collect_GBZ_subsets(
         perc: progress fraction in [0, 1], printed as a percentage.
         debug_mode: if True, re-raise solver exceptions instead of returning
             a failed GBZResult.
-        **options: solver options — "mu1_guess" (default (-1, 1)),
-            "zero_tol" (1e-10), "continuum_perturb" (1e-2), "max_iter" (60),
-            "plateau_check" (True), "plateau_probe_radius"
-            (None), "zm_run_kwargs" ({}), plus the continuum/crossing
-            tunables "continuum_tol", "crossing_tol".
-            The obsolete "N_points" / "xtol" / "max_newton" are accepted and ignored.
+        Explicit keyword arguments only (no catch-all options dict): every
+        tunable is named, defaults resolve from the home-module constants
+        (see doc/constants.md), and a misspelled keyword raises TypeError
+        instead of being silently ignored.
 
     Returns:
         GBZResult with connected subsets.  ``gbz.is_empty`` / ``gbz.index
@@ -486,38 +484,10 @@ def collect_GBZ_subsets(
         print("%.2f" % (perc * 100) + r"%")
     poly = CharPoly(coeffs, degs)
 
-    solver_options = dict(options)
-    plateau_check = solver_options.pop("plateau_check", True)
-    plateau_probe_radius = solver_options.pop("plateau_probe_radius", None)
-    mu1_guess = solver_options.pop("mu1_guess", (-1, 1))
-    zero_tol = solver_options.pop("zero_tol", 1e-10)
-    continuum_perturb = solver_options.pop("continuum_perturb", 1e-2)
-    max_iter = solver_options.pop("max_iter", 60)
-    zm_run_kwargs = solver_options.pop("zm_run_kwargs", {})
-
-    # Continuum / crossing tunables (rarely overridden).
-    continuum_tol = solver_options.pop("continuum_tol", core.CONTINUUM_TOL)
-    crossing_tol = solver_options.pop("crossing_tol", _pairwise.CROSSING_TOL)
-
-    # Obsolete knobs, accepted silently for API compatibility with older
-    # callers: N_points (fixed mesh, replaced by the adaptive ZeroManager)
-    # and xtol (a bisection x-tolerance that was never consumed — bisection
-    # exits on winding-zero / continuum only).
-    solver_options.pop("N_points", None)
-    solver_options.pop("xtol", None)
-    solver_options.pop("max_newton", None)
-    if solver_options:
-        import warnings
-        warnings.warn(
-            f"collect_GBZ_subsets: ignoring unrecognized options: "
-            f"{sorted(solver_options)}"
-        )
-
     try:
         sgbz_res = solve_SGBZ_for_E(
             poly, E_ref, mu1_guess=mu1_guess, zero_tol=zero_tol,
             continuum_perturb=continuum_perturb, max_iter=max_iter,
-            zm_run_kwargs=zm_run_kwargs,
             continuum_tol=continuum_tol,
             crossing_tol=crossing_tol,
         )
@@ -542,7 +512,6 @@ def collect_GBZ_subsets(
             if _check_pmgbz_points_clustered(candidate):
                 plateau_info = _probe_zero_plateau_near_mu1(
                     poly, E_ref, mu1, sgbz_res.get("_mu1_bracket"),
-                    zm_run_kwargs,
                     continuum_tol=continuum_tol,
                     crossing_tol=crossing_tol,
                     zero_tol=zero_tol,

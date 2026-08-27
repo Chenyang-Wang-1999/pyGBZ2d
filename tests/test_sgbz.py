@@ -1089,7 +1089,7 @@ class TestReviewFixes:
         poly = CharPoly(*poly_A)
         calls = {"n": 0}
 
-        def fake_eval(poly_, E_ref, mu1, zm_run_kwargs, *,
+        def fake_eval(poly_, E_ref, mu1, *,
                       continuum_tol, crossing_tol):
             calls["n"] += 1
             return 1.0, [], None   # W never crosses zero
@@ -1108,7 +1108,7 @@ class TestReviewFixes:
         poly = CharPoly(*poly_A)
         seen = []
 
-        def fake_eval(poly_, E_ref, mu1, zm_run_kwargs, *,
+        def fake_eval(poly_, E_ref, mu1, *,
                       continuum_tol, crossing_tol):
             seen.append(float(mu1))
             if mu1 < 0.0:
@@ -1136,7 +1136,7 @@ class TestReviewFixes:
     def test_right_endpoint_zero_from_continuum_proxy(self, poly_A, monkeypatch):
         poly = CharPoly(*poly_A)
 
-        def fake_eval(poly_, E_ref, mu1, zm_run_kwargs, *,
+        def fake_eval(poly_, E_ref, mu1, *,
                       continuum_tol, crossing_tol):
             if mu1 == -1.0:
                 return -1.0, [], None

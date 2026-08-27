@@ -69,7 +69,7 @@ def ensure_mu2mid(zm: ZeroManager, **run_kwargs) -> "Mu2MidZM":
     if isinstance(zm, Mu2MidZM) and getattr(zm, '_analyzed', False):
         if run_kwargs:
             warnings.warn(
-                f"zm is already analyzed; zm_run_kwargs {run_kwargs} are "
+                f"zm is already analyzed; run kwargs {run_kwargs} are "
                 f"ignored (analyze() only runs once per Mu2MidZM)"
             )
         return zm
