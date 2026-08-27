@@ -1,6 +1,6 @@
 # TODO: 精确简并输入下的判定边界行为（touch/cross 通道与 MR 重启簿记）
 
-来源：Phase 2 backend 整合时 `GBZ_BACKEND=numpy` 全套测试暴露（2026-08）。
+来源：Phase 2 backend 整合时 `POLY_BACKEND=numpy` 全套测试暴露（2026-08）。
 这不是 numpy 后端的 bug——两个后端**最终 GBZ 输出完全一致**（μ₁★ 逐位相同、
 同样的 LineSubset）；暴露的是算法在"精确简并恰好落在判定边界上"时，行为由
 末位 ULP 噪声决定。更高精度算术（quad）会把同类问题放大，此项是前置排查。
@@ -47,7 +47,7 @@ touch 的语义本应是"方向不可信"（MIN_DIRECTION_DERIV 保护），但�
 
 - [ ] 两个 backend 下 `n_multiple_roots` 与 event kind 在上述两个模型上
       一致（与噪声无关）；
-- [ ] 默认全套 + `GBZ_BACKEND=numpy` 全套绿；
+- [ ] 默认全套 + `POLY_BACKEND=numpy` 全套绿；
 - [ ] 现有两个放宽断言的测试恢复严格断言（test_zero_manager.
       test_poly_A_no_generic_mr 恢复 ==1；test_sgbz.
       test_mu01_has_single_seam_event_group 恢复 =='cross'）。

@@ -15,7 +15,7 @@ Backend selection (first match wins):
   1. explicit ``CharPoly(coeffs, degs, backend=...)`` argument — a name
      (``'poly_tools'`` / ``'numpy'``) or any callable/class satisfying the
      protocol;
-  2. the ``GBZ_BACKEND`` environment variable (same names);
+  2. the ``POLY_BACKEND`` environment variable (same names);
   3. ``poly_tools`` if importable;
   4. numpy fallback (with a one-time warning).
 
@@ -54,7 +54,7 @@ __all__ = [
     "make_laurent",
 ]
 
-BACKEND_ENV_VAR = "GBZ_BACKEND"
+BACKEND_ENV_VAR = "POLY_BACKEND"
 
 # Tri-state cache for the poly_tools import probe: None = not probed yet.
 _POLY_TOOLS_AVAILABLE: Optional[bool] = None
@@ -264,7 +264,7 @@ def make_laurent(coeffs, degs, backend=None):
 
     ``backend``: ``None`` (auto), ``'poly_tools'``, ``'numpy'``, or a
     user-supplied class/callable ``backend(coeffs, degs) -> LaurentProtocol``.
-    Auto order: ``GBZ_BACKEND`` env var → poly_tools (if importable) →
+    Auto order: ``POLY_BACKEND`` env var → poly_tools (if importable) →
     numpy fallback with a one-time warning.
     """
     if backend is None:

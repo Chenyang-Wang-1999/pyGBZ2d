@@ -198,7 +198,7 @@ def test_explicit_poly_tools_backend():
 
 @needs_poly_tools
 def test_auto_prefers_poly_tools(monkeypatch):
-    monkeypatch.delenv("GBZ_BACKEND", raising=False)
+    monkeypatch.delenv("POLY_BACKEND", raising=False)
     monkeypatch.setattr(bz_backend, "_POLY_TOOLS_AVAILABLE", True)
     coeffs, degs = MODELS["hn2d_11"]
     assert isinstance(make_laurent(coeffs, degs), PolyToolsLaurent)
@@ -206,7 +206,7 @@ def test_auto_prefers_poly_tools(monkeypatch):
 
 @needs_poly_tools
 def test_auto_falls_back_to_numpy_with_one_warning(monkeypatch):
-    monkeypatch.delenv("GBZ_BACKEND", raising=False)
+    monkeypatch.delenv("POLY_BACKEND", raising=False)
     monkeypatch.setattr(bz_backend, "_POLY_TOOLS_AVAILABLE", False)
     monkeypatch.setattr(bz_backend, "_numpy_fallback_warned", False)
     coeffs, degs = MODELS["hn2d_11"]
@@ -232,7 +232,7 @@ def test_missing_poly_tools_explicit_backend_raises(monkeypatch):
 
 def test_env_var_backend(monkeypatch):
     coeffs, degs = MODELS["hn2d_11"]
-    monkeypatch.setenv("GBZ_BACKEND", "numpy")
+    monkeypatch.setenv("POLY_BACKEND", "numpy")
     assert isinstance(make_laurent(coeffs, degs), NumpyLaurent)
     # Explicit argument beats the environment variable.
     la = make_laurent(coeffs, degs, "numpy")

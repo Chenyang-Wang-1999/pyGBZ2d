@@ -23,7 +23,7 @@ brute-force-non-hermitian/
 │   ├── backend.py             # Pluggable Laurent backends: LaurentProtocol,
 │   │                          #   PolyToolsLaurent (lazy C++ import), NumpyLaurent
 │   │                          #   (pure-numpy fallback), make_laurent factory
-│   │                          #   (arg > GBZ_BACKEND env > poly_tools > numpy+warning)
+│   │                          #   (arg > POLY_BACKEND env > poly_tools > numpy+warning)
 │   ├── (constants)            # NO central config: numerical constants live in
 │   │                          #   their home modules (single-consumer locality);
 │   │                          #   the 7 cross-package ones sit in core.py with

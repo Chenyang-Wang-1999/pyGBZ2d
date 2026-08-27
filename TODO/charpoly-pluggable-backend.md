@@ -38,12 +38,12 @@
 
 - [x] `poly_backend.py`：`LaurentProtocol` + `PolyToolsLaurent`（延迟
       import）+ `NumpyLaurent` + `make_laurent`（backend=None →
-      `GBZ_BACKEND` 环境变量 → poly_tools → numpy 回退并警告一次）
+      `POLY_BACKEND` 环境变量 → poly_tools → numpy 回退并警告一次）
       —— 落地为 `src/bfgbz2d/backend.py`；
 - [x] `CharPoly(coeffs, degs, backend=None)` 接受自定义 backend；
 - [x] 双后端对拍测试进 `tests/`（eval/偏导/二阶偏导/solve_roots_1d，
       含 HN2D-10、HN2D-11、随机 Laurent）—— `tests/test_backend.py`；
-- [x] `GBZ_BACKEND=numpy pytest` 全绿（两个精确简并测试按后端不变核
+- [x] `POLY_BACKEND=numpy pytest` 全绿（两个精确简并测试按后端不变核
       断言放宽，见衍生问题文档）；
 - [x] 下游 SGBZ / amoeba / continuation / debug_tool 零改动（仅
       `core.py` 内部接入 backend）；

@@ -34,7 +34,7 @@ Backend selection (first match wins):
 
 ```python
 CharPoly(coeffs, degs, backend="numpy")        # explicit, per-polynomial
-# or the GBZ_BACKEND environment variable: "poly_tools" | "numpy"
+# or the POLY_BACKEND environment variable: "poly_tools" | "numpy"
 # or backend=None (default): poly_tools if importable, else numpy fallback
 ```
 
@@ -152,7 +152,7 @@ Detailed documentation is available in the `doc/` directory:
 pip install -e .[dev]      # or: pip install pytest
 pytest                     # slow tests are skipped by default
 pytest --run-slow          # include BerryPy-dependent slow tests
-GBZ_BACKEND=numpy pytest   # full suite on the pure-numpy backend
+POLY_BACKEND=numpy pytest   # full suite on the pure-numpy backend
 ```
 
 ## Playground Scripts
