@@ -88,30 +88,29 @@ print(f"mu1 = {result['mu1']:.6f}, mu2 = {result['mu2']:.6f}")
 
 ## Customizing Numerical Constants
 
-Every numerical constant (tolerances, step-control knobs, iteration budgets) lives in
-`bfgbz2d/config.py` — the single definition point, grouped by tuning safety:
+Every numerical constant lives in the module that consumes it (RK45
+stepper knobs in `continuation/arclength.py`, crossing tolerances in
+`sgbz/pairwise.py`, ...); the seven cross-package constants live in
+`bfgbz2d.core`.  The complete per-module reference with defaults and
+tuning guidance is [doc/constants.md](doc/constants.md).
 
-1. **Model/algorithm scale** — `CONTINUUM_TOL`, `CROSSING_TOL`, `SNAP_TOL`, ... (the knobs you usually want)
-2. **Step-size & budget** — `SAFETY`, `H0`, `AMOEBA_MAX_ITER`, ... (speed/robustness trade-offs)
-3. **Machine-precision guards** — `THETA_EQ_TOL`, `MR_STUCK_TOL`, ... (do not retune casually)
-
-Two customization layers, per-call keyword arguments always winning:
+The customization model has exactly two layers:
 
 ```python
 import bfgbz2d as bz
 
-# 1) global default for the rest of the process (live: takes effect on the
-#    next call, including inside the solvers)
-bz.config.CONTINUUM_TOL = 1e-8
+# 1) tune ONE call — a plain keyword argument (misspelled names raise
+#    TypeError; there is no catch-all options dict)
+gbz = bz.sgbz.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, continuum_tol=1e-8)
 
-# 2) temporary, exception-safe
-with bz.config.override(CROSSING_TOL=1e-12, SAFETY=0.95):
-    gbz = bz.sgbz.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j)
-
-# 3) per-call (highest precedence, unchanged from before)
-bz.amoeba.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j,
-                              solver_options={"continuum_tol": 1e-8})
+# 2) tune the WHOLE process — assign the module constant; takes effect
+#    immediately, on the next read, everywhere (including running loops)
+from bfgbz2d.sgbz import pairwise
+pairwise.CROSSING_TOL = 1e-12
 ```
+
+Process-scope note: assignments propagate to forked worker processes only
+if made **before** the pool is created.
 
 ## API Overview
 

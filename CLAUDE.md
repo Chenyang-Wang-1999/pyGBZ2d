@@ -24,9 +24,12 @@ brute-force-non-hermitian/
 │   │                          #   PolyToolsLaurent (lazy C++ import), NumpyLaurent
 │   │                          #   (pure-numpy fallback), make_laurent factory
 │   │                          #   (arg > GBZ_BACKEND env > poly_tools > numpy+warning)
-│   ├── config.py              # ALL numerical constants (single definition point,
-│   │                          #   grouped: model scale / step & budget / machine-eps
-│   │                          #   guards) + override() ctx + live_defaults decorator
+│   ├── (constants)            # NO central config: numerical constants live in
+│   │                          #   their home modules (single-consumer locality);
+│   │                          #   the 7 cross-package ones sit in core.py with
+│   │                          #   live_defaults.  Full map: doc/constants.md.
+│   │                          #   Customization: per-call kwarg OR direct module
+│   │                          #   constant assignment (live, process-wide).
 │   ├── sgbz/                  # SGBZ / average major-axis winding formulation
 │   │   ├── __init__.py        # Whitelist exports (re-exports core classes)
 │   │   ├── mu2mid.py          # ItemView + Mu2Mid piecewise-Hermite path + Mu2MidZM
@@ -57,12 +60,13 @@ brute-force-non-hermitian/
 │       ├── interpolation.py   # hermite_interp_poly (cubic Hermite kernel shared by
 │       │                      #   predict_roots_hermite and Mu2Mid pieces)
 │       ├── arclength.py       # compute_tangent, predict_roots, estimate_error,
-│       │                      #   arclength_step, StepControl (config-resolved fields)
+│       │                      #   arclength_step, StepControl (fields resolve from
+│       │                      #   this module's constants at construction)
 │       ├── multiple_roots.py  # MR detection: point/interval triggers, detect_cluster,
 │       │                      #   solve_multiple_roots_in_interval, MultipleRootInfo
 │       └── zero_manager.py    # ZeroManager orchestrator, integrate_segment, SegmentData
 ├── tests/                      # pytest: test_backend.py (dual-backend parity),
-│                               #   test_config.py (customization contract),
+│                               #   test_constants.py (live-assignment contract + AST lint),
 │                               #   test_gbz_types→core, test_sgbz, test_amoeba,
 │                               #   test_continuation, test_zero_manager,
 │                               #   test_interpolation, test_counterexamples
@@ -88,6 +92,7 @@ brute-force-non-hermitian/
 │   ├── SGBZ.md                 # SGBZ theory, architecture, API
 │   ├── amoeba.md               # Amoeba theory, algorithm, API
 │   ├── continuation.md         # Continuation module (arclength/MR/ZeroManager/interpolation)
+│   ├── constants.md           # Per-module numerical-constant reference (user-facing)
 │   ├── 拓扑匹配算法说明.md       # Topological matching algorithm
 │   ├── sn-main.tex             # Simplified paper for SGBZ, main text
 │   └── sn-supp.tex             # Simplified paper for SGBZ, supplementary information. Amoeba GBZ is discussed in section{Comparison with reported frameworks}
