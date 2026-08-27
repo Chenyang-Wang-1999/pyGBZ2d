@@ -1,39 +1,46 @@
-# brute-force-non-hermitian
+# bfGBZ2d — brute-force-non-hermitian
 
 Non-Hermitian skin effect computation for 2D tight-binding models — brute-force polynomial root-solving approaches.
 
 This package implements two complementary formulations for determining the generalized Brillouin zone (GBZ) and energy spectrum of 2D non-Hermitian lattice systems:
 
-| Module | Approach | Key Object |
+| Subpackage | Approach | Key Object |
 |--------|----------|------------|
-| `brute_force_SGBZ` | SGBZ / average major-axis winding | PMGBZ points, average winding $W(E, \mu_1)$ |
-| `brute_force_amoeba` | Amoeba / Ronkin function | Average winding numbers, Ronkin minimum $(\mu_1, \mu_2)$ |
+| `bfgbz2d.sgbz` | SGBZ / average major-axis winding | PMGBZ points, average winding $W(E, \mu_1)$ |
+| `bfgbz2d.amoeba` | Amoeba / Ronkin function | Average winding numbers, Ronkin minimum $(\mu_1, \mu_2)$ |
 
 The characteristic polynomial $f(E, \beta_1, \beta_2) = \det[E - h(\beta_1, \beta_2)]$ of a 2D non-Hermitian tight-binding model is a Laurent polynomial in $\beta_j = e^{\mu_j + i\theta_j}$. Both modules solve for the non-Bloch decay factors $(\mu_1, \mu_2)$ that satisfy the GBZ condition, but through different mathematical routes.
 
-## Prerequisites
+## Installation
 
-- Python 3.9+
-- **[poly_tools](https://atomgit.com/wangchenyang99/PolyTools)** — C-extension library for Laurent polynomial manipulation. Install separately:
+```bash
+pip install .            # from a clone, or: pip install -e . for development
+```
+
+Runtime dependencies are **numpy + scipy only** — the package is fully functional out of the box.
+
+### Optional: poly_tools acceleration
+
+Polynomial evaluation runs on a pluggable backend. The default auto-selection uses the compiled [poly_tools](https://atomgit.com/wangchenyang99/PolyTools) C++ extension when it is importable, and otherwise falls back to the built-in pure-numpy backend (numerically equivalent to ~1e-14; ~25% slower on root solving, with a one-time warning):
 
 ```bash
 git clone https://atomgit.com/wangchenyang99/PolyTools.git
 cd PolyTools/pybind
 make _poly_tools_cc.cpython-39-x86_64-linux-gnu.so   # adjust suffix to your Python version
-cp -r ../python/poly_tools /path/to/your/workdir/
+cp -r ../python/poly_tools /path/to/site-packages/    # or anywhere on PYTHONPATH
 ```
 
-- (Optional) **BerryPy** — used by the Haldane demo (`demos/Haldane-model-gainloss.py`) and by Haldane counterexample tests; those tests skip automatically when BerryPy is absent.
+Backend selection (first match wins):
 
-## Installation
-
-The repository has no packaging metadata, so `pip install -e .` is not supported. Use it in-place:
-
-```bash
-git clone <repo-url>
-cd brute-force-non-hermitian
-export PYTHONPATH="$(pwd):$PYTHONPATH"
+```python
+CharPoly(coeffs, degs, backend="numpy")        # explicit, per-polynomial
+# or the GBZ_BACKEND environment variable: "poly_tools" | "numpy"
+# or backend=None (default): poly_tools if importable, else numpy fallback
 ```
+
+A custom backend is any class satisfying the `LaurentProtocol` in `bfgbz2d/backend.py` (eval / derivative / partial_terms_1d / num_max_degrees).
+
+- (Optional) **BerryPy** — used by the Haldane playground script and Haldane counterexample tests; those tests skip automatically when BerryPy is absent.
 
 ## Quickstart
 
@@ -43,7 +50,7 @@ Polynomials use triplet encoding `[E_exponent, beta1_exponent, beta2_exponent]`.
 
 ```python
 import numpy as np
-from gbz_types import CharPoly
+from bfgbz2d import CharPoly
 
 coeffs = np.array([1, -1, -1, -1, -1], dtype=complex)
 degs = np.array([
@@ -61,7 +68,7 @@ poly = CharPoly(coeffs, degs)
 Find the critical $\mu_1$ where the average major-axis winding number vanishes:
 
 ```python
-from brute_force_SGBZ import collect_GBZ_subsets
+from bfgbz2d.sgbz import collect_GBZ_subsets
 
 # Check spectrum membership for a reference energy
 gbz = collect_GBZ_subsets(coeffs, degs, E_ref=1.0 + 0j)
@@ -73,15 +80,42 @@ print(f"In spectrum: {not gbz.is_empty}, subsets: {len(gbz.subsets)}")
 Find the Ronkin function minimum $(\mu_1, \mu_2)$ where both average windings vanish:
 
 ```python
-from brute_force_amoeba import bisect_amoeba_ronkin_min
+from bfgbz2d.amoeba import bisect_amoeba_ronkin_min
 
 result = bisect_amoeba_ronkin_min(poly, 1.0 + 0j, -0.5, 0.5, -2.0, 2.0)
 print(f"mu1 = {result['mu1']:.6f}, mu2 = {result['mu2']:.6f}")
 ```
 
+## Customizing Numerical Constants
+
+Every numerical constant (tolerances, step-control knobs, iteration budgets) lives in
+`bfgbz2d/config.py` — the single definition point, grouped by tuning safety:
+
+1. **Model/algorithm scale** — `CONTINUUM_TOL`, `CROSSING_TOL`, `SNAP_TOL`, ... (the knobs you usually want)
+2. **Step-size & budget** — `SAFETY`, `H0`, `AMOEBA_MAX_ITER`, ... (speed/robustness trade-offs)
+3. **Machine-precision guards** — `THETA_EQ_TOL`, `MR_STUCK_TOL`, ... (do not retune casually)
+
+Two customization layers, per-call keyword arguments always winning:
+
+```python
+import bfgbz2d as bz
+
+# 1) global default for the rest of the process (live: takes effect on the
+#    next call, including inside the solvers)
+bz.config.CONTINUUM_TOL = 1e-8
+
+# 2) temporary, exception-safe
+with bz.config.override(CROSSING_TOL=1e-12, SAFETY=0.95):
+    gbz = bz.sgbz.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j)
+
+# 3) per-call (highest precedence, unchanged from before)
+bz.amoeba.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j,
+                              solver_options={"continuum_tol": 1e-8})
+```
+
 ## API Overview
 
-### `brute_force_SGBZ`
+### `bfgbz2d.sgbz`
 
 | Function | Description |
 |----------|-------------|
@@ -91,11 +125,11 @@ print(f"mu1 = {result['mu1']:.6f}, mu2 = {result['mu2']:.6f}")
 | `detect_continuum_simple(zm, poly)` | Continuum detection (presence only) |
 | `detect_crossings_simple(zm, poly)` | Crossing detection + charge classification |
 | `compute_average_winding(zm, poly, charges)` | Compute average major-axis winding number |
-| `CharPoly(coeffs, degs)` | Characteristic polynomial wrapper |
+| `CharPoly(coeffs, degs, backend=None)` | Characteristic polynomial wrapper |
 
 `Mu2MidZM.analyze()` runs a pre-crossing mesh refinement before the pairwise scan: intervals whose cubic-Hermite interpolants predict two or more crossings are sub-divided (disable with `refine_multi_crossings=False`).
 
-### `brute_force_amoeba`
+### `bfgbz2d.amoeba`
 
 | Function | Description |
 |----------|-------------|
@@ -116,20 +150,21 @@ Detailed documentation is available in the `doc/` directory:
 ## Running Tests
 
 ```bash
-pip install pytest scipy numpy
-pytest tests/ -v            # slow tests are skipped by default
-pytest tests/ -v --run-slow # include BerryPy-dependent slow tests
+pip install -e .[dev]      # or: pip install pytest
+pytest                     # slow tests are skipped by default
+pytest --run-slow          # include BerryPy-dependent slow tests
+GBZ_BACKEND=numpy pytest   # full suite on the pure-numpy backend
 ```
 
-## Running Demos
+## Playground Scripts
 
 ```bash
-python demos/demo_unified.py               # GBZResult API for both modules
-python demos/Haldane-model-gainloss.py     # Haldane sweeps / plots / failed-E recompute
-python demos/demo_zero_manager.py          # ZeroManager root tracking
+python playground/demo_unified.py               # GBZResult API for both modules
+python playground/Haldane-model-gainloss.py     # Haldane sweeps / plots / failed-E recompute
+python playground/demo_zero_manager.py          # ZeroManager root tracking
 ```
 
-See `demos/` for the full set of runnable scripts.
+See `playground/` for the full set of runnable scripts (unofficial, not part of the package).
 
 ## Spectrum Inclusion Relation
 

@@ -1,6 +1,6 @@
-# brute_force_amoeba — Amoebic Spectrum Calculation
+# bfgbz2d.amoeba — Amoebic Spectrum Calculation
 
-Non-Hermitian spectrum computation based on the amoeba formulation. Complementary to the SGBZ formulation (`brute_force_SGBZ/`).
+Non-Hermitian spectrum computation based on the amoeba formulation. Complementary to the SGBZ formulation (`bfgbz2d/sgbz/`).
 
 The zero-solving backend is `continuation.ZeroManager` (wrapped as `AmoebaZeroManager`); subset extraction and winding computation live in `zm_extract.py`. There is no separate `tracks.py` module — root tracking via Hungarian matching is now handled inside `ZeroManager`.
 
@@ -199,9 +199,9 @@ At some energies (particularly near zero-plateau boundaries in next-nearest-neig
 **Pre-check** (three lightweight conditions, all must be satisfied to trigger the expensive probe; non-continuum case only):
 1. `w1_area < plateau_area_threshold`: the a1 non-zero winding interval is tiny.
 2. `w2_area < plateau_area_threshold`: same for a2.
-3. `_check_zeros_are_clustered`: every zero has another zero within `plateau_area_threshold × 2π` distance on the $(\theta_1, \theta_2)$-torus (thin adapter over `gbz_types.check_points_clustered_on_torus`, dropping the trailing `jump`).
+3. `_check_zeros_are_clustered`: every zero has another zero within `plateau_area_threshold × 2π` distance on the $(\theta_1, \theta_2)$-torus (thin adapter over `bfgbz2d.core.check_points_clustered_on_torus`, dropping the trailing `jump`).
 
-**Probe** (`_probe_zero_plateau_near_mu1`, amoeba.py:59): shared `gbz_types.probe_zero_plateau` driver. Steps away from the candidate $\mu_1$ in both directions; at each step, re-runs the inner $\mu_2$ bisection and tests the strict plateau signature — `success`, `not is_continuum`, `zero_count == 0`, and $|w1| \le$ `winding_tol`. If found, the result is classified as non-amoeba (empty subsets).
+**Probe** (`_probe_zero_plateau_near_mu1`, amoeba.py:59): shared `bfgbz2d.core.probe_zero_plateau` driver. Steps away from the candidate $\mu_1$ in both directions; at each step, re-runs the inner $\mu_2$ bisection and tests the strict plateau signature — `success`, `not is_continuum`, `zero_count == 0`, and $|w1| \le$ `winding_tol`. If found, the result is classified as non-amoeba (empty subsets).
 
 This check is applied only in the non-continuum case. Continuum results skip plateau detection since continuum bands are genuinely part of the GBZ.
 
@@ -399,11 +399,11 @@ coeffs.append(-1.0);  degs.extend([ 0,  0, -1])   # -beta2^{-1}
 
 | Function | Purpose |
 |----------|---------|
-| `_check_zeros_are_clustered` | Thin adapter over `gbz_types.check_points_clustered_on_torus` (drops the trailing `jump`). |
+| `_check_zeros_are_clustered` | Thin adapter over `bfgbz2d.core.check_points_clustered_on_torus` (drops the trailing `jump`). |
 | `_is_zero_plateau_probe` | Plateau probe criterion: `success`, `not is_continuum`, `zero_count == 0`, $|w_1| \le$ tol. |
-| `_probe_zero_plateau_near_mu1` | Walk away from candidate $\mu_1$, re-run inner bisection at each step; uses shared `gbz_types.probe_zero_plateau`. |
+| `_probe_zero_plateau_near_mu1` | Walk away from candidate $\mu_1$, re-run inner bisection at each step; uses shared `bfgbz2d.core.probe_zero_plateau`. |
 
-### Shared utilities (from `gbz_types`)
+### Shared utilities (from `bfgbz2d.core`)
 
 | Function | Purpose |
 |----------|---------|
@@ -418,7 +418,7 @@ coeffs.append(-1.0);  degs.extend([ 0,  0, -1])   # -beta2^{-1}
 ## 6. Package Structure
 
 ```
-brute_force_amoeba/
+bfgbz2d/amoeba/
 ├── __init__.py            # Public API exports (10 symbols)
 ├── amoeba.py              # 240 lines — collect_GBZ_subsets, plateau detection
 ├── bisect.py              # 541 lines — μ₂ and μ₁ bisection solvers, continuum resolution
@@ -430,10 +430,10 @@ Public API (`__init__.py`): `CharPoly`, `bisect_amoeba_ronkin_min`, `AmoebaZeroM
 
 ## 7. Demo
 
-Run `demos/demo_unified.py`:
+Run `playground/demo_unified.py`:
 
 ```bash
-python demos/demo_unified.py
+python playground/demo_unified.py
 ```
 
 Demo contents:
@@ -443,6 +443,6 @@ Demo contents:
 4. LineSubset lazy loading: `fill_beta2()` on-demand for continuum intervals
 
 Additional demos:
-- `demos/replication-ZWang.py` — parallel E-mesh sweep with multiprocessing
-- `demos/Haldane-model-gainloss.py` — non-Hermitian Haldane model with gain/loss
-- `demos/imaginary-degeneracy-splitting.py` — next-nearest-neighbor model with plateau detection
+- `playground/replication-ZWang.py` — parallel E-mesh sweep with multiprocessing
+- `playground/Haldane-model-gainloss.py` — non-Hermitian Haldane model with gain/loss
+- `playground/imaginary-degeneracy-splitting.py` — next-nearest-neighbor model with plateau detection

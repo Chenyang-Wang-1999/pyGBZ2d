@@ -11,7 +11,7 @@
 一次调用返回两种方法在固定 (E_ref, mu1) 的全部 GBZ subsets：
 
 ```python
-from gbz_types import CharPoly
+from bfgbz2d import CharPoly
 from debug_tool import collect_debug_subsets, plot_winding_debug
 
 poly = CharPoly(coeffs, degs)
@@ -96,6 +96,6 @@ python debug_tool/demo_debug_tool.py --theta2 0.5 2.5 4.5 --methods sgbz --save 
 
 - **不修补模块输出**：gap check 出现 `mismatch`、amoeba 根计数与积分不一致、
   loop 不可靠等，本身就是该暴露的 bug 信号，本工具只呈现不掩盖。
-- SGBZ loop 复用 `brute_force_SGBZ.winding._loop_winding_quad / _loop_min_f`，
+- SGBZ loop 复用 `bfgbz2d.sgbz.winding._loop_winding_quad / _loop_min_f`，
   amoeba 计数与 `_get_average_winding_from_zeros` 同一公式 —— 调试数字与求解器
   内部使用的严格可比。
