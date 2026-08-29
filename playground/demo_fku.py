@@ -252,32 +252,6 @@ def main():
             _print_strip(Ea, Eb, info)
         print()
 
-    # Compare with Hultquist (greedy) on the same pairs.
-    from demo_advance_front import advance_front
-    print("FKU vs Hultquist (greedy) — total perimeter cost:")
-    print(f"  {'pair':>8} {'br':>3} {'FKU':>12} {'Hultquist':>12} {'greedy_over':>12}")
-    worst_fku, worst_hul = float("inf"), float("inf")
-    for k in range(len(E_list)):
-        for branch, (La, Lb) in enumerate(pairs[k]):
-            _, _, ifku = fku_triangulate(La, Lb)
-            # Hultquist: recompute total perimeter from its triangles.
-            vhul, thul, ihul = advance_front(La, Lb)
-            hul_perim = 0.0
-            for t in thul:
-                hul_perim += (_chordal(vhul[t[0]][2], vhul[t[1]][2])
-                              + _chordal(vhul[t[1]][2], vhul[t[2]][2])
-                              + _chordal(vhul[t[0]][2], vhul[t[2]][2]))
-            worst_fku = min(worst_fku, ifku["min_interior_edge"])
-            worst_hul = min(worst_hul, ihul["min_edge"])
-            if k < 6:
-                over = hul_perim - ifku["total_cost"]
-                print(f"  {k:>8} {branch:>3} {ifku['total_cost']:>12.4f} "
-                      f"{hul_perim:>12.4f} {over:>+12.4f}")
-
-    print("\nDegenerate-cell check (interior edges, all pairs):")
-    print(f"  FKU global interior min edge = {worst_fku:.3e}")
-    print(f"  Hultquist global interior min edge = {worst_hul:.3e}")
-    print(f"  (anchor-endpoint near-zero edges excluded; FKU is globally optimal)")
     print("=" * 64)
 
 
