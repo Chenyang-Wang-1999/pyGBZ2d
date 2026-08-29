@@ -51,34 +51,6 @@ def load():
         return pickle.load(fp)
 
 
-def get_line_pairs():
-    """Return (E_list, line_pairs).
-
-    line_pairs[k] = (LineSubset_a, LineSubset_b) for the k-th matched branch
-    pair across adjacent E slices, matched by the demo_topo_match line matcher.
-    Only slices with index (0, 2) are kept.
-    """
-    data = load()
-    E_grid = data["E_grid"]
-    results = data["results"]
-
-    # import lazily to avoid circular demo import at module load
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from demo_topo_match import match_gbz_results
-
-    E_list = []
-    valid = [r for r in results if r.success and r.index == (0, 2)]
-    valid_E = [float(E_grid[i]) for i, r in enumerate(results)
-               if r.success and r.index == (0, 2)]
-
-    pairs = []
-    for k in range(len(valid) - 1):
-        res = match_gbz_results(valid[k], valid[k + 1])
-        pairs.append(res["lines"])  # list of (La, Lb) per branch
-        E_list.append((valid_E[k], valid_E[k + 1]))
-    return E_list, pairs
-
-
 if __name__ == "__main__":
     d = build(force=True)
     print(f"cached {len(d['results'])} results to {CACHE_PATH}")

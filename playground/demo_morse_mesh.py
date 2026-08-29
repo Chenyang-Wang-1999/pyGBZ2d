@@ -583,6 +583,457 @@ def _passage_ends(loop: Loop, P_th, k_spacing: float = 2.5,
     return (lo_i, hi_i)
 
 
+# ---------------------------------------------------------------------------
+# Critical interval via GREEDY DELAUNAY GROWTH from the existing mesh
+#
+# The FKU-grown bulk meshes end at the flank loops; growth continues them
+# triangle by triangle over the refined critical cloud: for each boundary
+# (front) edge, pick the candidate third point with smallest circumradius
+# (computable from the three chordal distances alone — no chart, no
+# tangent estimation, torus-periodicity safe), constrained to the outward
+# half-space defined by the edge's existing adjacent triangle.  Fronts
+# from both flanks advance, meet, and close — the seam problem does not
+# exist because there is no separate patch.  Vertices are never moved:
+# degenerate configurations are resolved by deterministic tie-breaks.
+# ---------------------------------------------------------------------------
+
+def _r3_of_coord(coord):
+    from pygbz2d.core import to_sphere_r3
+    E, b1, b2 = coord
+    return np.concatenate([to_sphere_r3(np.array([b1]))[0],
+                           to_sphere_r3(np.array([b2]))[0]])
+
+
+def grow_region(seed_slices, probe_Es, builder, oracle, extra_pts=(),
+                point_slices=(), verbose=True):
+    """Greedy Delaunay growth over a cloud built from seed slices, oracle
+    probes, and extra vertices.
+
+    Seed front = boundary edges of the CURRENT mesh on the seed slices —
+    used both for interior critical patches (two seed slices, probes in
+    between) and spectrum-edge caps (one seed slice, probes toward the
+    edge, the cap/extremum point in extra_pts).
+    """
+    import heapq
+    from collections import Counter, defaultdict
+    from scipy.spatial import cKDTree
+
+    seed_Es = {sl.E for sl in seed_slices}
+    slices = list(seed_slices)
+    # point-only members: pinched (self-touching) slices are useless as
+    # FKU boundaries but perfectly good SURFACE SAMPLES — the growth
+    # cloud only cares about positions, so near-critical density joins
+    # the cloud without any loop semantics
+    for sl in point_slices:
+        builder.register_slice(sl)
+        slices.append(sl)
+    for Em in probe_Es:
+        sm = oracle(Em)
+        # register ONLY usable probes — registering a filtered slice
+        # leaves its vertices isolated in the mesh (measured: 918 such
+        # orphans once).  The filter includes the self-touch check: a
+        # pinched loop (strands closer than the local sampling) cannot
+        # be triangulated across and only poisons the cloud.
+        if (not sm.is_critical) and sm.loops and not self_touches(sm):
+            builder.register_slice(sm)
+            slices.append(sm)
+    cloud_gids = []
+    for sl in slices:
+        for j, loop in enumerate(sl.loops):
+            for k in range(loop.n):
+                cloud_gids.append(builder.gid(sl.E, j,
+                                              int(loop.perm[k])))
+    for E, b1, b2 in extra_pts:
+        cloud_gids.append(builder.add_vertex(E, b1, b2,
+                                             note="cap point"))
+    r3_all = np.array([_r3_of_coord(builder.coords[g]) for g in cloud_gids])
+    if point_slices:
+        # cloud-level dedupe: pinch probes at |E| below the strand-separation
+        # scale create near-coincident points across slices; they poison the
+        # emptiness test.  SEED vertices are never dropped (the front must
+        # keep every flank vertex — a merged-away seed vertex once raised
+        # KeyError in the seed-front lookup); non-seed points are dropped
+        # only when a survivor already sits within tolerance.
+        from scipy.spatial import cKDTree as _KDT
+        _t = _KDT(r3_all)
+        _nn, _ = _t.query(r3_all, k=2)
+        _tol = 0.6 * float(np.median(_nn[:, 1]))
+        seed_gids = set()
+        for sl in seed_slices:
+            for j, loop in enumerate(sl.loops):
+                for pos in range(loop.n):
+                    seed_gids.add(builder.gid(sl.E, j, int(loop.perm[pos])))
+        is_seed = np.array([g in seed_gids for g in cloud_gids])
+        keep = list(np.where(is_seed)[0])
+        kept_r3 = r3_all[keep]
+        _kt = _KDT(kept_r3)
+        for idx in range(len(r3_all)):
+            if is_seed[idx]:
+                continue
+            near = _kt.query_ball_point(r3_all[idx], _tol)
+            if not near:
+                keep.append(idx)
+                _kt = _KDT(r3_all[keep])     # rebuild lazily (small clouds)
+        keep = sorted(set(keep))
+        cloud_gids = [cloud_gids[i] for i in keep]
+        r3 = r3_all[keep]
+        n_pts = len(cloud_gids)
+        if n_pts < 4:
+            return 0, 0
+        tree = cKDTree(r3)
+        nn_dist, _ = tree.query(r3, k=2)
+    else:
+        r3 = r3_all
+        n_pts = len(cloud_gids)
+        tree = cKDTree(r3)
+        nn_dist, _ = tree.query(r3, k=2)
+
+    # ---- current edge incidence / adjacent triangles of the whole mesh
+    inc = Counter()
+    adj_tri = defaultdict(list)
+    for t in builder.tris:
+        if len(set(t)) < 3:
+            continue
+        for a, b in ((t[0], t[1]), (t[1], t[2]), (t[0], t[2])):
+            e = (min(a, b), max(a, b))
+            inc[e] += 1
+            adj_tri[e].append(t)
+
+    # ---- seed front: boundary edges lying on the seed slices
+    idx_of_gid = {g: i for i, g in enumerate(cloud_gids)}
+    front = set()
+    for e, c in inc.items():
+        if c == 1 and all(builder.coords[v][0] in seed_Es
+                          for v in e):
+            front.add((idx_of_gid[e[0]], idx_of_gid[e[1]]))
+    if verbose:
+        rng = " ".join(f"{sl.E:+.5f}" for sl in seed_slices)
+        print(f"    [grow] seeds [{rng}]: {n_pts} cloud pts, "
+              f"{len(front)} seed front edges")
+
+    def cdist(i, j):
+        return float(np.linalg.norm(r3[i, :3] - r3[j, :3])
+                     + np.linalg.norm(r3[i, 3:] - r3[j, 3:]))
+
+    def circumradius(dab, dbc, dca):
+        s = 0.5 * (dab + dbc + dca)
+        area2 = s * (s - dab) * (s - dbc) * (s - dca)
+        if area2 <= 1e-30:
+            return np.inf
+        return dab * dbc * dca / (4.0 * np.sqrt(area2))
+
+    def tangent_frame(i, j):
+        """2D frame at front edge (i,j) from its existing adjacent
+        triangle (the mesh itself supplies the local tangent plane)."""
+        e = (min(cloud_gids[i], cloud_gids[j]),
+             max(cloud_gids[i], cloud_gids[j]))
+        tris = adj_tri.get(e)
+        if not tris:
+            return None
+        t = tris[-1]
+        l_gid = next(v for v in t if v not in (cloud_gids[i],
+                                               cloud_gids[j]))
+        rl = (r3[idx_of_gid[l_gid]] if l_gid in idx_of_gid
+              else _r3_of_coord(builder.coords[l_gid]))
+        ri, rj = r3[i], r3[j]
+        e1 = rj - ri
+        ne1 = np.linalg.norm(e1)
+        if ne1 < 1e-15:
+            return None
+        e1 = e1 / ne1
+        w = rl - ri
+        e2 = w - (w @ e1) * e1
+        ne2 = np.linalg.norm(e2)
+        if ne2 < 1e-15:
+            return None
+        return ri, e1, e2 / ne2
+
+    def _meb(i, j, k):
+        """(center, R) of the minimal enclosing ball of 3 cloud points.
+
+        The chordal metric lives in the flat Euclidean R^6 (Riemann
+        sphere x Riemann sphere), so the MEB is exact: half the longest
+        side for obtuse triangles, the circumcenter otherwise.  No
+        tangent planes, no projections — the projected circle this
+        replaces misfired exactly at the high-curvature spots (saddle
+        corridors, cap cones) and rejected correct triangles.
+        """
+        pts = [r3[i], r3[j], r3[k]]
+        sides = [(np.linalg.norm(pts[b] - pts[a]), a, b)
+                 for a, b in ((0, 1), (1, 2), (0, 2))]
+        c_len, ca, cb = max(sides)
+        others = [s[0] for s in sides if s is not max(sides)]
+        if c_len ** 2 >= others[0] ** 2 + others[1] ** 2 + 1e-30:
+            center = 0.5 * (pts[ca] + pts[cb])
+            return center, 0.5 * c_len
+        p0 = pts[0]
+        u = pts[1] - p0
+        v = pts[2] - p0
+        A = 2.0 * np.array([[u @ u, u @ v], [u @ v, v @ v]])
+        b = np.array([pts[1] @ pts[1] - p0 @ p0,
+                      pts[2] @ pts[2] - p0 @ p0])
+        try:
+            alpha, beta = np.linalg.solve(A, b)
+        except np.linalg.LinAlgError:
+            center = 0.5 * (pts[ca] + pts[cb])
+            return center, 0.5 * c_len
+        center = p0 + alpha * u + beta * v
+        return center, float(np.linalg.norm(center - p0))
+
+    def empty_ball(i, j, k):
+        """Emptiness in the FRONT EDGE's tangent frame (best measured).
+
+        Two ambient variants were tried and were strictly WORSE here:
+        the minimal-enclosing-ball rejects every skinny cross-row bridge
+        (same-row neighbours intrude into the half-longest-side ball:
+        3098 leftover cap edges), and the own-plane circumsphere lost
+        the COHERENT comparison frame the front-edge tangent plane
+        provides to competing candidates (7637 vs 78 hole edges).  The
+        frame comes from the mesh itself (the edge's adjacent triangle).
+        """
+        frame = tangent_frame(i, j)
+        if frame is None:
+            return False
+        ri, e1, e2 = frame
+
+        def proj(p):
+            q = p - ri
+            return np.array([q @ e1, q @ e2])
+
+        pi, pj, pk = proj(r3[i]), proj(r3[j]), proj(r3[k])
+        ax, ay = pi; bx, by = pj; cx, cy = pk
+        d = 2.0 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+        if abs(d) < 1e-15:
+            return False
+        ux = ((ax * ax + ay * ay) * (by - cy)
+              + (bx * bx + by * by) * (cy - ay)
+              + (cx * cx + cy * cy) * (ay - by)) / d
+        uy = ((ax * ax + ay * ay) * (cx - bx)
+              + (bx * bx + by * by) * (ax - cx)
+              + (cx * cx + cy * cy) * (bx - ax)) / d
+        center = np.array([ux, uy])
+        rad2 = ((pi - center) ** 2).sum()
+        c3 = ri + ux * e1 + uy * e2
+        margin = 3.0 * max(nn_dist[i, 1], nn_dist[j, 1])
+        for m in tree.query_ball_point(c3, np.sqrt(rad2) + margin):
+            m = int(m)
+            if m in (i, j, k):
+                continue
+            pm = proj(r3[m])
+            if ((pm - center) ** 2).sum() < rad2 - 1e-12:
+                return False
+        return True
+
+    def outward_ok(i, j, k):
+        """k on the outward side of front edge (i,j).
+
+        The edge's existing adjacent triangle supplies the local tangent
+        frame and the inward direction; the candidate must project to the
+        opposite side (this is the no-flip / no-back-growth constraint).
+        """
+        e = (min(cloud_gids[i], cloud_gids[j]),
+             max(cloud_gids[i], cloud_gids[j]))
+        tris = adj_tri.get(e)
+        if not tris:
+            return False
+        t = tris[0]
+        l_gid = next(v for v in t if v not in (cloud_gids[i],
+                                               cloud_gids[j]))
+        l = idx_of_gid.get(l_gid)
+        if l is None:
+            # adjacent triangle vertex outside the cloud (the FKU side):
+            # use its stored coordinate directly
+            rl = _r3_of_coord(builder.coords[l_gid])
+        else:
+            rl = r3[l]
+        ri, rj = r3[i], r3[j]
+        e1 = rj - ri
+        ne1 = np.linalg.norm(e1)
+        if ne1 < 1e-15:
+            return False
+        e1 = e1 / ne1
+        w = rl - ri
+        e2 = w - (w @ e1) * e1
+        ne2 = np.linalg.norm(e2)
+        if ne2 < 1e-15:
+            return False
+        e2 = e2 / ne2
+        y_l = (rl - ri) @ e2
+        y_k = (r3[k] - ri) @ e2
+        return y_k * y_l < 0.0 and abs(y_k) > 1e-12
+
+    existing_tris = {tuple(sorted(t)) for t in builder.tris
+                     if len(set(t)) == 3}
+
+    def local_inc(i, j):
+        return inc.get((min(cloud_gids[i], cloud_gids[j]),
+                        max(cloud_gids[i], cloud_gids[j])), 0)
+
+    heap = []
+
+    def push_edge(ij):
+        i, j = ij
+        dij = cdist(i, j)
+        # SECTOR-QUOTA candidate selection.  A plain k-nearest pool is
+        # density-biased: along-strand samples outnumber cross-strand
+        # ones, so bridging candidates never enter the heap and the
+        # front stalls into long SLITS along the corridors (measured:
+        # the 4 saddle "holes" are 16-20-edge slits).  Quotas per angular
+        # sector of the outward half-plane make coverage
+        # density-independent.
+        frame = tangent_frame(i, j)
+        if frame is None:
+            return
+        ri, e1, e2 = frame
+        e_gid = (min(cloud_gids[i], cloud_gids[j]),
+                 max(cloud_gids[i], cloud_gids[j]))
+        tris_adj = adj_tri.get(e_gid)
+        if not tris_adj:
+            return
+        t0 = tris_adj[-1]
+        l_gid = next(v for v in t0 if v not in (cloud_gids[i],
+                                                cloud_gids[j]))
+        rl = (r3[idx_of_gid[l_gid]] if l_gid in idx_of_gid
+              else _r3_of_coord(builder.coords[l_gid]))
+        y_l = (rl - ri) @ e2
+        sgn = 1.0 if y_l >= 0 else -1.0     # inward side sign
+
+        _, pool = tree.query(0.5 * (r3[i] + r3[j]), k=min(96, n_pts))
+        pool = np.atleast_1d(pool)
+        mid3 = 0.5 * (r3[i] + r3[j])
+        cand = []
+        for m in pool:
+            m = int(m)
+            if m in (i, j):
+                continue
+            q = r3[m] - ri
+            x, y = q @ e1, q @ e2
+            y_out = -sgn * y                # outward-positive ordinate
+            if y_out <= 1e-12:              # outward half-plane only
+                continue
+            cand.append((np.hypot(x - (mid3 - ri) @ e1,
+                                  y - (mid3 - ri) @ e2),
+                         np.arctan2(y_out, x), m))
+        n_sec, per_sec = 5, 5
+        sec_bins = [[] for _ in range(n_sec)]
+        for d2, ang, m in sorted(cand):
+            s = min(n_sec - 1, int((ang % np.pi) / np.pi * n_sec))
+            if len(sec_bins[s]) < per_sec:
+                sec_bins[s].append((d2, m))
+        picked = {m for b in sec_bins for _, m in b}
+        for m in picked:
+            k = int(m)
+            R_c = circumradius(dij, cdist(j, k), cdist(k, i))
+            if np.isfinite(R_c):
+                heapq.heappush(heap, (R_c, (i, j, k)))
+
+    for e in list(front):
+        push_edge(e)
+
+    n_added = 0
+    while heap:
+        R_c, (i, j, k) = heapq.heappop(heap)
+        if (i, j) not in front:
+            continue
+        if local_inc(i, k) > 1 or local_inc(j, k) > 1:
+            continue                       # would exceed manifold valence
+        tri_gids = tuple(sorted((cloud_gids[i], cloud_gids[j],
+                                 cloud_gids[k])))
+        if tri_gids in existing_tris:
+            continue
+        if not empty_ball(i, j, k):
+            continue                       # ambient emptiness (no overlap)
+        # accept
+        new_tri = (cloud_gids[i], cloud_gids[j], cloud_gids[k])
+        builder.tris.append(new_tri)
+        existing_tris.add(tri_gids)
+        n_added += 1
+        for a, b in ((i, j), (j, k), (i, k)):
+            e = (min(cloud_gids[a], cloud_gids[b]),
+                 max(cloud_gids[a], cloud_gids[b]))
+            inc[e] += 1
+            adj_tri[e].append(new_tri)
+            front.discard((a, b))
+            front.discard((b, a))
+            if inc[e] == 1:
+                front.add((a, b))
+                push_edge((a, b))
+    leftover = len(front)
+    if verbose:
+        print(f"    [grow] added {n_added} triangles; "
+              f"leftover front edges (holes): {leftover}")
+    return n_added, leftover
+
+
+def grow_patch(sa: Slice, sb: Slice, oracle, builder, n_probes: int = 12,
+               extra_pts=(), point_slices=(), verbose=True):
+    """Critical-interval wrapper: probes linearly between the flanks.
+
+    extra_pts typically carries the CRITICAL POINTS (strand crossings of
+    the critical fiber): bridging triangles across a saddle can never be
+    Delaunay-empty amid both strands' dense corner samples — a vertex AT
+    the crossing turns the local fan into clean small triangles.
+    """
+    probe_Es = [sa.E + (sb.E - sa.E) * k / (n_probes + 1)
+                for k in range(1, n_probes + 1)]
+    return grow_region([sa, sb], probe_Es, builder, oracle,
+                       extra_pts=extra_pts, point_slices=point_slices,
+                       verbose=verbose)
+
+
+def grow_cap(edge_slice: Slice, direction: int, oracle, builder,
+             n_probes: int = 8, tol_edge: float = 1e-4, verbose=True):
+    """Close the mesh at a spectrum edge (loop shrinks to an extremum).
+
+    Bisects outward from the last slice until the fiber disappears —
+    the index change (0,n)->(0,0) IS the spectrum boundary.  The cap
+    point is the chordal centroid of the tightest surviving loop (the
+    loop radius shrinks like sqrt(E_edge - E), so at the bisection
+    tolerance it is already sub-sampling); growth then closes the cone.
+    """
+    E0 = edge_slice.E
+    lo, hi = E0, E0 + direction * 0.3
+    tightest = edge_slice
+    for _ in range(40):
+        Em = 0.5 * (lo + hi)
+        sm = oracle(Em)
+        has = (not sm.is_critical) and bool(sm.loops)
+        if has:
+            tightest = sm
+            lo = Em
+        else:
+            hi = Em
+        if abs(hi - lo) < tol_edge:
+            break
+    E_edge = 0.5 * (lo + hi)
+    builder.register_slice(tightest)
+    pts = np.concatenate([l.chordal_r3() for l in tightest.loops])
+
+    # cap point = centroid of the tightest loop on the Riemann spheres,
+    # stereographically inverted back to beta coordinates
+    mean_r3 = pts.mean(axis=0)
+
+    def inv_stereo(v):
+        x, y, z = v
+        denom = 1.0 - z
+        if abs(denom) < 1e-12:
+            return None
+        return complex(x / denom, y / denom)
+
+    b1 = inv_stereo(mean_r3[:3])
+    b2 = inv_stereo(mean_r3[3:])
+    if verbose:
+        print(f"    [cap] edge at {E_edge:+.5f} (from {E0:+.2f}, "
+              f"dir {direction:+d}); cap beta1={b1:.4f} beta2={b2:.4f}")
+    # probes clustered toward the edge (t = 1-(1-u)^2): the loops shrink
+    # like sqrt(E_edge - E), so the last stretch needs the densest
+    # sampling or the final fan to the cap point spans a large gap
+    probe_Es = [E0 + (E_edge - E0) * (1.0 - (1.0 - k / (n_probes + 1)) ** 2)
+                for k in range(1, n_probes + 1)]
+    return grow_region([edge_slice], probe_Es, builder, oracle,
+                       extra_pts=[(E_edge, b1, b2)], verbose=verbose)
+
+
 def glue_critical(sa: Slice, sb: Slice, sc: Slice, builder):
     """Glue flanking clean slices through the critical fiber sc.
 
@@ -1244,83 +1695,3 @@ def validate(builder):
     }
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-def main():
-    from trivial_line_cache import load
-    from trivial_model import get_model, DEFAULT_PARAMS
-    from pygbz2d.core import LineSubset as LS
-
-    data = load()
-    E_grid, results = data["E_grid"], data["results"]
-
-    all_slices = []
-    for i, r in enumerate(results):
-        lines = [s for s in r.subsets if isinstance(s, LS)]
-        if lines:
-            all_slices.append(nexus_to_slice(float(E_grid[i]),
-                                             build_nexus(
-                                                 _sorted_lines(lines),
-                                                 tol=1e-12)))
-
-    # far-field component count (mode of the counts) to flag critical fibers
-    from collections import Counter
-    far_count = Counter(len(s.loops) for s in all_slices).most_common(1)[0][0]
-
-    # critical slices never participate as stitching endpoints — they only
-    # supply critical-point structure via glue_critical
-    slices = [s for s in all_slices
-              if not is_critical_slice(s, far_count=far_count)]
-    n_crit_removed = len(all_slices) - len(slices)
-    print(f"{len(all_slices)} slices, {n_crit_removed} critical removed, "
-          f"far_count={far_count}")
-
-    for k in range(len(slices) - 1):
-        sa, sb = slices[k], slices[k + 1]
-        for i, j in match_components(sa.loops, sb.loops):
-            sb.loops[j] = orient_pair(sa.loops[i], sb.loops[j])
-
-    model = get_model(**DEFAULT_PARAMS)
-    coeffs, degs = model.get_characteristic_polynomial_data()
-    oracle = make_oracle(coeffs, degs)
-
-    builder = MeshBuilder()
-    for sl in slices:
-        builder.register_slice(sl)
-
-    log = []
-    for k in range(len(slices) - 1):
-        mesh_interval(slices[k], slices[k + 1], oracle, builder,
-                      log=log, far_count=far_count)
-
-    # spectrum-edge caps: the (0,n)->(0,0) index change marks the band
-    # boundary; close the surface with cone caps at the two extrema
-    grow_cap(slices[0], -1, oracle, builder)
-    grow_cap(slices[-1], +1, oracle, builder)
-
-    # guarded hole filling (mesh repair): closes sub-sampling-scale
-    # boundary cycles, refuses and reports anything structural
-    fill_holes(builder)
-
-    for line in log:
-        print(line)
-
-    stats = validate(builder)
-    print("\n=== validation ===")
-    for k, v in stats.items():
-        print(f"  {k}: {v}")
-
-    out = Path(__file__).resolve().parent / "gbz_morse_mesh.pkl"
-    with open(out, "wb") as f:
-        pickle.dump({"verts": builder.vertex_array(),
-                     "tris": np.array(builder.tris, dtype=int),
-                     "coords": builder.coords,
-                     "crit_info": builder.crit_info,
-                     "stats": stats}, f)
-    print(f"\nsaved mesh -> {out}")
-
-
-if __name__ == "__main__":
-    main()

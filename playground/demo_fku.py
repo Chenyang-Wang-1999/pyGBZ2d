@@ -61,16 +61,6 @@ def _oriented(line: LineSubset):
     return th, b2
 
 
-def _chordal(a: complex, b: complex) -> float:
-    p = to_sphere_r3(np.array([a, b]))
-    return float(np.linalg.norm(p[0] - p[1]))
-
-
-def _tri_perim(p, i, j, k):
-    return (_chordal(p[i], p[j]) + _chordal(p[j], p[k])
-            + _chordal(p[i], p[k]))
-
-
 def _info(verts, tris, m, n, base, total_cost, th_a, th_b, D=None):
     """Build the diagnostics dict, recomputing the distance matrix if needed."""
     if D is None:
@@ -227,33 +217,3 @@ def fku_triangulate(La: LineSubset, Lb: LineSubset):
                               float(cost[m - 1, n - 1]), th_a, th_b, D=D)
 
 
-def _print_strip(Ea, Eb, info):
-    print(f"  E_a={Ea:+.2f} E_b={Eb:+.2f}  |A|={info['m']} |B|={info['n']} "
-          f"th1_a={info['th1_a_range']} th1_b={info['th1_b_range']}")
-    print(f"    triangles={info['n_tri']}  total_perim_cost={info['total_cost']:.4f}  "
-          f"edge[min_int]={info['min_interior_edge']:.3e} "
-          f"edge[max]={info['max_edge']:.3e} "
-          f"anchor[min]={info['min_anchor_edge']:.3e}")
-
-
-def main():
-    from trivial_line_cache import get_line_pairs
-    E_list, pairs = get_line_pairs()
-
-    print("=" * 64)
-    print("Fuchs–Kedem–Uselton optimal contour triangulation (trivial_model)")
-    print("  interpolation-free: all vertices are original LineSubset samples")
-    print("=" * 64)
-
-    for k, (Ea, Eb) in enumerate(E_list[:6]):
-        for branch, (La, Lb) in enumerate(pairs[k]):
-            verts, tris, info = fku_triangulate(La, Lb)
-            print(f"[pair {k}, branch {branch}]")
-            _print_strip(Ea, Eb, info)
-        print()
-
-    print("=" * 64)
-
-
-if __name__ == "__main__":
-    main()
