@@ -7,13 +7,13 @@ Ronkin-function winding helpers for amoeba GBZ.
 
 The mesh-based winding source (``_compute_winding_from_tracks`` and friends)
 was removed when the zero-solving layer moved to ``continuation.ZeroManager``;
-the winding is now computed from ZM zeros via ``zm_extract.amoeba_windings``.
+the winding is now computed from ZM zeros via
+``zm_extract.calculate_a2_average_winding``.
 
 Retained here are the zero- and polynomial-level primitives that the new
 pipeline still consumes:
   - ``_find_exact_crossing``         fsolve refinement of a (θ₁, θ₂) crossing.
   - ``_get_average_winding_from_zeros``  average winding from a zero partition.
-  - ``_compute_zero_dtheta1_dmu2``   dθ₁/dμ₂ at a refined zero (Newton step).
 """
 
 from typing import Optional
@@ -39,7 +39,8 @@ def _find_exact_crossing(
     theta2_guess: float,
 ) -> Optional[tuple[float, float]]:
     """
-    Refine a crossing point using scipy.optimize.root with the exact Jacobian.
+    Refine a crossing point using ``scipy.optimize.fsolve`` with the exact
+    Jacobian.
 
     Solves f(E, exp(mu1 + i*t1), exp(mu2 + i*t2)) = 0 for (t1, t2).
 
@@ -156,37 +157,3 @@ def _get_average_winding_from_zeros(
         non_zero_area += abs(u) * width
 
     return total / (TWO_PI), non_zero_area / (TWO_PI)
-
-
-def _compute_zero_dtheta1_dmu2(
-    poly: CharPoly,
-    E_ref: complex,
-    mu1: float,
-    mu2: float,
-    theta1: float,
-    theta2: float,
-) -> float:
-    """Compute d(theta1)/d(mu2) at a refined zero (theta1, theta2).
-
-    From the implicit equation f(E, beta1, beta2) = 0 with beta_j = exp(mu_j + i*theta_j),
-    treating theta1, theta2 as functions of mu2:
-
-        i*a*theta1_dot + i*b*theta2_dot = -b
-
-    where a = df/dbeta1 * beta1, b = df/dbeta2 * beta2.
-
-    Solves the 2x2 real linear system for theta1_dot.
-    Uses eval_partials data that is already computed during fsolve refinement.
-    """
-    beta1 = exp(mu1 + 1j * theta1)
-    beta2 = exp(mu2 + 1j * theta2)
-    partials = poly.eval_partials((E_ref, beta1, beta2))
-    a = partials[1] * beta1  # df/dbeta1 * beta1
-    b = partials[2] * beta2  # df/dbeta2 * beta2
-
-    # Solve [[Re(a), Re(b)], [Im(a), Im(b)]] * [theta1_dot, theta2_dot] = [-Im(b), Re(b)]
-    det = a.real * b.imag - a.imag * b.real
-    if abs(det) < 1e-30:
-        return 0.0
-    # Cramer's rule for theta1_dot
-    return float(-(b.real * b.real + b.imag * b.imag) / det)

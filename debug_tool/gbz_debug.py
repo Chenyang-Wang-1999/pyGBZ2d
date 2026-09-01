@@ -72,8 +72,12 @@ from pygbz2d.sgbz.winding import (
     _loop_winding_quad, _loop_min_f, WindingFun, get_winding_number,
 )
 from pygbz2d.sgbz.pairwise import CROSSING_TOL as _CROSSING_TOL
+from pygbz2d.amoeba.amoeba import (
+    _assemble_continuum_subsets,
+    _assemble_discrete_subsets,
+)
 from pygbz2d.amoeba.bisect import _find_mu2_for_w2_zero
-from pygbz2d.amoeba.zm_extract import AmoebaZeroManager, extract_amoeba_subsets
+from pygbz2d.amoeba.zm_extract import AmoebaZeroManager
 from pygbz2d.amoeba.ronkin_winding import _get_average_winding_from_zeros
 
 
@@ -322,7 +326,14 @@ def _collect_amoeba(
         _zm=zm, **options,
     )
     mu2 = float(inner["mu2"])
-    subsets = extract_amoeba_subsets(zm, poly, E_ref, mu1, mu2, mode="solve")
+    if inner["is_continuum"]:
+        subsets = _assemble_continuum_subsets(
+            zm, E_ref, mu1, mu2, inner,
+        )
+    else:
+        subsets = _assemble_discrete_subsets(
+            E_ref, mu1, mu2, inner.get("zeros") or [],
+        )
 
     if inner["is_continuum"]:
         w1 = None

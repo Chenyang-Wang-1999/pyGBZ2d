@@ -4,6 +4,9 @@ date:          2026-05-19
 Copyright © Department of Physics, Tsinghua University. All rights reserved
 '''
 
+from __future__ import annotations
+
+from cmath import exp
 from typing import Optional
 import numpy as np
 
@@ -12,8 +15,12 @@ from pygbz2d.core import live_defaults
 
 #: Plateau-probe non-zero-winding area threshold.
 PLATEAU_AREA_THRESHOLD: float = 1e-2
+#: θ₁ snap radius: a discrete PointSubset closer than this to a continuum
+#: LineSubset is removed as the line's own edge point.
+SNAP_TOL: float = 1e-3
 from pygbz2d.core import (
     PointSubset, LineSubset, GBZResult, CharPoly,
+    JoinableLinePiece, is_mr_cluster_endpoint, TWO_PI,
     check_points_clustered_on_torus, probe_zero_plateau,
 )
 
@@ -23,7 +30,7 @@ from .bisect import (
 from .ronkin_winding import (
     _get_average_winding_from_zeros,
 )
-from .zm_extract import extract_amoeba_subsets
+from .zm_extract import find_crossings
 
 
 # ---- plateau pre-check helpers ----
@@ -145,6 +152,193 @@ def _probe_zero_plateau_near_mu1(
     return res
 
 
+# ---- GBZ subset assembly ----
+
+def _assemble_discrete_subsets(
+    E_ref: complex,
+    mu1: float,
+    mu2: float,
+    zeros: list[tuple[float, float]],
+) -> list[PointSubset]:
+    """Turn discrete (θ₁, θ₂) zeros into PointSubsets."""
+    points: list[PointSubset] = []
+    for t1, t2 in zeros:
+        points.append(PointSubset(
+            E=E_ref,
+            beta1=exp(mu1 + 1j * float(t1)),
+            beta2=exp(mu2 + 1j * float(t2)),
+        ))
+    return points
+
+
+def _splice_continuum_pieces(
+    zm,
+    pieces: list[JoinableLinePiece],
+) -> list[JoinableLinePiece]:
+    """Splice per-segment continuum pieces that meet end-to-end.
+
+    Interior MR boundaries share one track frame; the θ=0≡2π seam is
+    translated through ``zm.boundary_perm``.  A piece whose boundary track is
+    in the MR cluster is a genuine terminator and is not spliced.
+    """
+    n_seg = len(zm.segments)
+    if n_seg <= 1:
+        return pieces
+
+    def _mod(k: int) -> int:
+        return k % n_seg
+
+    def find_by_left(seg_s: int, root: complex) -> int | None:
+        for idx, p in enumerate(pieces):
+            if p.ml == seg_s and np.abs(p.beta2_arr[0] - root) < 1e-9:
+                return idx
+        return None
+
+    def find_by_right(seg_s: int, root: complex) -> int | None:
+        for idx, p in enumerate(pieces):
+            if p.mr == seg_s and np.abs(p.beta2_arr[-1] - root) < 1e-9:
+                return idx
+        return None
+
+    def _match_column_right(cur_s: int, prev_s: int, col: int) -> int:
+        if cur_s == 0 and prev_s == n_seg - 1:
+            return int(zm.boundary_perm[int(col)])
+        return int(col)
+
+    while True:
+        changed = False
+        for s in range(n_seg):
+            seg = zm.segments[s]
+            prev = _mod(s - 1)
+            prev_seg = zm.segments[prev]
+
+            left_mr = seg.left_mr
+            right_mr = prev_seg.right_mr
+            is_circle_seam = (left_mr < 0 and right_mr < 0)
+            if not is_circle_seam and left_mr != right_mr:
+                continue
+
+            left_b = seg.tracked_roots[0, :]
+            right_b = prev_seg.tracked_roots[-1, :]
+
+            for j_l in range(zm.K):
+                root = complex(left_b[j_l])
+                if is_mr_cluster_endpoint(zm, seg, 'left', int(j_l)):
+                    continue
+                li_idx = find_by_left(s, root)
+                if li_idx is None:
+                    continue
+                j_prev = _match_column_right(s, prev, int(j_l))
+                root_prev = complex(right_b[j_prev])
+                if is_mr_cluster_endpoint(zm, prev_seg, 'right', j_prev):
+                    raise ValueError(
+                        f"Continuum track {j_l} of segment {s} ends at the MR "
+                        f"at θ₁={seg.theta1_arr[0]:.4f} as a non-cluster root, "
+                        f"but the matched root (track {j_prev}) of segment "
+                        f"{prev} is a cluster root there."
+                    )
+                pi_idx = find_by_right(prev, root_prev)
+                if pi_idx is None or pi_idx == li_idx:
+                    continue
+
+                _splice_two(pieces, pi_idx, li_idx,
+                            cyclic=(s == 0 and prev == n_seg - 1))
+                changed = True
+                break
+            if changed:
+                break
+        if not changed:
+            break
+    return pieces
+
+
+def _splice_two(
+    pieces: list[JoinableLinePiece],
+    prev_idx: int,
+    cur_idx: int,
+    *,
+    cyclic: bool,
+) -> None:
+    """Merge pieces[prev_idx] (right side) with pieces[cur_idx] (left side)."""
+    rp = pieces[prev_idx]
+    cp = pieces[cur_idx]
+    th = np.concatenate([rp.theta1_arr, cp.theta1_arr[1:]])
+    b2 = np.concatenate([rp.beta2_arr, cp.beta2_arr[1:]])
+    if cyclic:
+        n_rp = len(rp.theta1_arr)
+        th[n_rp:] += TWO_PI
+    merged = JoinableLinePiece(
+        E=cp.E, mu1=cp.mu1, theta1_arr=th, beta2_arr=b2,
+        ml=rp.ml, mr=cp.mr,
+    )
+    keep = [i for i in range(len(pieces)) if i not in (prev_idx, cur_idx)]
+    pieces[:] = [pieces[i] for i in keep] + [merged]
+
+
+def _assemble_continuum_subsets(
+    zm,
+    E_ref: complex,
+    mu1: float,
+    mu2: float,
+    amoeba_res: dict,
+) -> list:
+    """Assemble LineSubsets + PointSubsets for a continuum GBZ point.
+
+    The continuum members from the bisection are materialised as LineSubset
+    pieces and spliced end-to-end where they meet.  All other tracks are
+    searched for discrete crossings of ``ln|β₂| = μ₂`` (with the continuum
+    members passed as ``avoided_segments``) and converted to PointSubsets.
+    """
+    members = amoeba_res.get("_continuum_members") or []
+    if not members:
+        raise ValueError("No continuum members found, but is_continuum=True.")
+
+    pieces: list[JoinableLinePiece] = []
+    for s, j in members:
+        seg = zm.segments[s]
+        pieces.append(JoinableLinePiece(
+            E=E_ref, mu1=mu1,
+            theta1_arr=seg.theta1_arr.copy(),
+            beta2_arr=seg.tracked_roots[:, int(j)].copy(),
+            ml=s, mr=s,
+        ))
+    pieces = _splice_continuum_pieces(zm, pieces)
+
+    subsets: list = [
+        LineSubset(E=p.E, mu1=p.mu1,
+                   theta1_arr=p.theta1_arr, beta2_arr=p.beta2_arr)
+        for p in pieces
+    ]
+    line_subsets = subsets.copy()
+
+    crossings = find_crossings(
+        zm, mu1, mu2,
+        avoided_segments=members,
+        return_refined=True,
+    )
+    for b1, b2 in crossings:
+        point = PointSubset(E=E_ref, beta1=b1, beta2=b2)
+        if _point_near_any_line(point, line_subsets, SNAP_TOL):
+            continue
+        subsets.append(point)
+
+    return subsets
+
+
+def _point_near_any_line(
+    point: PointSubset,
+    lines: list[LineSubset],
+    snap_tol: float,
+) -> bool:
+    """Whether *point* is within ``snap_tol`` (circular θ₁) of a LineSubset."""
+    t1 = point.theta1
+    for line in lines:
+        d = np.abs((line.theta1_arr - t1 + np.pi) % (TWO_PI) - np.pi)
+        if np.any(d < snap_tol):
+            return True
+    return False
+
+
 # ---- main entry point ----
 
 @live_defaults(continuum_tol="core:CONTINUUM_TOL", continuum_perturb="core:CONTINUUM_PERTURB",
@@ -207,13 +401,10 @@ def collect_GBZ_subsets(
         )
 
         # Reuse the ZeroManager built inside the bisection at the solved
-        # mu1 — subset extraction runs on the same adaptive tracks, no
-        # second ZeroManager run.
+        # mu1 — subset assembly runs on the same adaptive tracks, no second
+        # ZeroManager run.
         zm = amoeba_res["_zm"]
         mu1, mu2 = amoeba_res["mu1"], amoeba_res["mu2"]
-        subsets = extract_amoeba_subsets(
-            zm, char_poly, E_ref, mu1, mu2, mode='solve',
-        )
 
         # Determine if this is actually a zero plateau (no GBZ)
         is_amoeba = True
@@ -267,6 +458,15 @@ def collect_GBZ_subsets(
 
         if not is_amoeba:
             subsets = []
+        elif amoeba_res["is_continuum"]:
+            subsets = _assemble_continuum_subsets(
+                zm, E_ref, mu1, mu2,
+                amoeba_res,
+            )
+        else:
+            subsets = _assemble_discrete_subsets(
+                E_ref, mu1, mu2, amoeba_res["zeros"],
+            )
 
         n_0d = sum(1 for s in subsets if isinstance(s, PointSubset))
         n_1d = sum(1 for s in subsets if isinstance(s, LineSubset))

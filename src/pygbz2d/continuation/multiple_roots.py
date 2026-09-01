@@ -25,6 +25,7 @@ from pygbz2d.core import (
     cost_from_sphere_r3,
 )
 from .arclength import (
+    _is_singular_root,
     compute_tangent,
     predict_roots_hermite,
 )
@@ -56,11 +57,22 @@ def snap_clusters_to_mean(
     numerical roots that land in a cluster are only approximately equal
     (finite solver tolerance, θ₁ bracketing error, etc.).  This enforces
     exact degeneracy by replacing every root in a cluster with the cluster's
-    complex mean.  The standard deviation of the *original* roots in each
-    cluster — ``sqrt(mean(|β − mean|²))``, a real RMS distance from the
-    mean — is returned so the caller can record how loose the cluster was.
+    geometric mean: branch-unwrapped ``ln β₂`` is averaged, then ``exp``
+    maps the mean back to β₂.  The standard deviation of the *original*
+    branch-unwrapped ``ln β₂`` values is returned so the caller can record
+    how loose the cluster was.
 
     Roots not in any cluster are left untouched.
+
+    **Guard for 0/∞ padding roots.**  A cluster containing a singular root
+    (exact ``0`` / ``∞`` padding, or a root classified by
+    :func:`_is_singular_root`) is left untouched and its ``cluster_stds``
+    entry is ``nan``.  These are degree-deficiency roots at the boundary of
+    the β₂-sphere, not finite branch points; snapping them is meaningless
+    (``np.mean`` over ``∞`` yields ``∞+nanj``) and, worse, a mixed cluster
+    such as ``[0, 1e-5]`` or ``[∞, 2e4]`` would drag a genuine finite root
+    to a fake mean.  ZeroManager only needs finite MRs to prevent track
+    swapping, so these clusters are deliberately not snapped.
 
     Parameters
     ----------
@@ -73,18 +85,37 @@ def snap_clusters_to_mean(
     Returns
     -------
     snapped_roots : np.ndarray
-        Copy of *roots* with each cluster's entries replaced by their mean.
+        Copy of *roots* with each finite cluster's entries replaced by their
+        geometric mean ``exp(mean(ln β₂))``; clusters containing a 0/∞
+        padding root are left unchanged.
     cluster_stds : list[float]
-        Per-cluster standard deviation, same order as *cluster_indices*.
-        Empty when *cluster_indices* is empty.
+        Per-cluster standard deviation of the branch-unwrapped ``ln β₂``
+        values, same order as *cluster_indices*.  ``nan`` for clusters
+        skipped by the 0/∞ guard.  Empty when *cluster_indices* is empty.
     """
     snapped = roots.copy()
     stds: list[float] = []
     for indices in cluster_indices:
         idx = np.array(indices, dtype=int)
         cluster_roots = roots[idx]
-        mean = cluster_roots.mean()
-        stds.append(float(np.std(cluster_roots)))
+
+        # Guard: do not snap clusters involving 0/∞ padding roots.  See the
+        # docstring for the mixed-cluster corruption this prevents.
+        if any(_is_singular_root(r) for r in cluster_roots):
+            stds.append(float('nan'))
+            continue
+
+        # Geometric mean via branch-unwrapped log.  Plain np.log uses the
+        # principal branch, so a cluster straddling the negative real axis
+        # would have log imag parts split across ±π; unwrapping relative to
+        # the first member puts all log values on the same branch before
+        # averaging.
+        logs = np.log(cluster_roots)
+        ref_imag = float(logs[0].imag)
+        shifts = 1j * TWO_PI * np.round((ref_imag - logs.imag) / (TWO_PI))
+        unwrapped = logs + shifts
+        mean = np.exp(unwrapped.mean())
+        stds.append(float(np.std(unwrapped)))
         snapped[idx] = mean
     return snapped, stds
 
@@ -221,11 +252,19 @@ def detect_cluster(
     *,
     cluster_tol: Optional[float] = None,
 ) -> list[tuple[int, ...]]:
-    """Find all root clusters as connected components of the proximity graph.
+    """Find all finite-root clusters as connected components of the proximity graph.
 
     Two roots are connected when their chordal distance is below
     *cluster_tol*.  Clusters are the connected components of this graph,
     computed via :func:`scipy.sparse.csgraph.connected_components`.
+
+    Roots classified as singular by :func:`_is_singular_root` — exact
+    ``0`` / ``∞`` padding roots and roots next to them — are excluded from
+    the proximity graph.  The MR solver only models finite branch points;
+    a 0/∞ padding root would otherwise cluster with a nearby finite root
+    (e.g. ``[0, 1e-5]`` or ``[∞, 2e4]``) and drag it into a fake MR whose
+    snapping step corrupts the finite root.  Excluding them keeps 0/∞-side
+    degeneracies out of the MR flow entirely.
 
     Parameters
     ----------
@@ -238,10 +277,19 @@ def detect_cluster(
     Returns
     -------
     list[tuple[int, ...]]
-        Each tuple holds the sorted indices of one cluster.  Empty list
-        when all roots are well-separated.
+        Each tuple holds the sorted ORIGINAL indices of one finite-root
+        cluster.  Empty list when all roots are well-separated, or when
+        fewer than two finite (non-singular) roots exist.
     """
-    r3 = to_sphere_r3(roots)
+    roots = np.asarray(roots)
+    finite_positions = np.flatnonzero(
+        [not _is_singular_root(r) for r in roots]
+    )
+    if finite_positions.size < 2:
+        return []
+
+    finite_roots = roots[finite_positions]
+    r3 = to_sphere_r3(finite_roots)
     pw = cost_from_sphere_r3(r3, r3)
 
     adj = pw < cluster_tol
@@ -251,9 +299,9 @@ def detect_cluster(
 
     clusters: list[tuple[int, ...]] = []
     for label in range(n_components):
-        indices = np.where(labels == label)[0]
-        if len(indices) >= 2:
-            clusters.append(tuple(indices))
+        local_indices = np.where(labels == label)[0]
+        if len(local_indices) >= 2:
+            clusters.append(tuple(finite_positions[local_indices]))
 
     return clusters
 

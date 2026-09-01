@@ -197,29 +197,25 @@ def test_explicit_poly_tools_backend():
 
 
 @needs_poly_tools
-def test_auto_prefers_poly_tools(monkeypatch):
+def test_auto_prefers_numpy_by_default(monkeypatch):
+    """The default backend is numpy even when poly_tools is importable
+    (poly_tools has known multiple-root issues)."""
     monkeypatch.delenv("POLY_BACKEND", raising=False)
     monkeypatch.setattr(bz_backend, "_POLY_TOOLS_AVAILABLE", True)
     coeffs, degs = MODELS["hn2d_11"]
-    assert isinstance(make_laurent(coeffs, degs), PolyToolsLaurent)
+    assert isinstance(make_laurent(coeffs, degs), NumpyLaurent)
 
 
-@needs_poly_tools
-def test_auto_falls_back_to_numpy_with_one_warning(monkeypatch):
+def test_auto_is_numpy_without_warning(monkeypatch):
     monkeypatch.delenv("POLY_BACKEND", raising=False)
     monkeypatch.setattr(bz_backend, "_POLY_TOOLS_AVAILABLE", False)
-    monkeypatch.setattr(bz_backend, "_numpy_fallback_warned", False)
     coeffs, degs = MODELS["hn2d_11"]
 
-    with pytest.warns(UserWarning, match="pure-numpy Laurent backend"):
-        la = make_laurent(coeffs, degs)
-    assert isinstance(la, NumpyLaurent)
-
-    # One-time: the second construction stays silent.
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        make_laurent(coeffs, degs)
+        la = make_laurent(coeffs, degs)
+    assert isinstance(la, NumpyLaurent)
 
 
 @needs_poly_tools

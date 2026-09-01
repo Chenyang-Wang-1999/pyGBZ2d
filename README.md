@@ -135,8 +135,8 @@ if made **before** the pool is created.
 | `collect_GBZ_subsets(coeffs, degs, E_ref, ...)` | Main entry point — check amoeba condition for reference energy |
 | `bisect_amoeba_ronkin_min(char_poly, E_ref, ...)` | Find $(\mu_1, \mu_2)$ where both average windings vanish |
 | `AmoebaZeroManager(poly, E_ref, mu1)` | Adaptive $\beta_2$ root tracks via `continuation.ZeroManager` |
-| `extract_amoeba_subsets(zm, poly, E, mu1, mu2)` | Extract GBZ subsets from track crossings of $\ln|\beta_2| = \mu_2$ |
-| `amoeba_windings(zm, poly, E, mu1, mu2)` | Average windings (a1/a2) and refined zero list |
+| `find_crossings(zm, mu1, mu2, ...)` | Find all $\ln|\beta_2| = \mu_2$ crossings (optional refine / segment avoidance) |
+| `calculate_a2_average_winding(zm, mu1, mu2, ...)` | a2 average winding from crossings |
 
 ## Documentation
 
@@ -152,7 +152,8 @@ Detailed documentation is available in the `doc/` directory:
 pip install -e .[dev]      # or: pip install pytest
 pytest                     # slow tests are skipped by default
 pytest --run-slow          # include BerryPy-dependent slow tests
-POLY_BACKEND=numpy pytest   # full suite on the pure-numpy backend
+# The pure-numpy Laurent backend is the default.  To use the C++ backend:
+POLY_BACKEND=poly_tools pytest
 ```
 
 ## Playground Scripts

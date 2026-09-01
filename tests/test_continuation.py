@@ -34,6 +34,7 @@ from pygbz2d.continuation.multiple_roots import (
     MultipleRootIntervalTrigger,
     _closest_pair_deriv,
     detect_cluster,
+    snap_clusters_to_mean,
     solve_multiple_roots_in_interval,
 )
 from pygbz2d.continuation.zero_manager import (
@@ -469,6 +470,69 @@ class TestDetectCluster:
         clusters = detect_cluster(roots, cluster_tol=1e-6)
         assert len(clusters) >= 1
         assert len(clusters[0]) >= 2
+
+
+# ===========================================================================
+# detect_cluster 0/∞ exclusion
+# ===========================================================================
+
+class TestDetectClusterSingularExclusion:
+    def test_zero_root_not_clustered_with_small_finite(self):
+        roots = np.array([0.0 + 0j, 1e-5 + 0j, 1.0 + 0j])
+        assert detect_cluster(roots) == []
+
+    def test_inf_root_not_clustered_with_large_finite(self):
+        roots = np.array([np.inf + 0j, 2e4 + 0j, 1.0 + 0j])
+        assert detect_cluster(roots) == []
+
+    def test_multiple_inf_not_clustered(self):
+        roots = np.array([np.inf + 0j, np.inf + 0j, 1.0 + 0j])
+        assert detect_cluster(roots) == []
+
+    def test_finite_cluster_still_detected(self):
+        roots = np.array([1.0 + 0j, 1.0 + 1e-7j, 2.0 + 0j])
+        clusters = detect_cluster(roots, cluster_tol=1e-6)
+        assert len(clusters) == 1
+        assert tuple(sorted(clusters[0])) == (0, 1)
+
+
+# ===========================================================================
+# snap_clusters_to_mean 0/∞ guard
+# ===========================================================================
+
+class TestSnapClustersToMeanSingularGuard:
+    def test_finite_cluster_still_snapped(self):
+        roots = np.array([1.0 + 0j, 1.0 + 1e-6j, 2.0 + 0j])
+        snapped, stds = snap_clusters_to_mean(roots, [(0, 1)])
+        assert snapped[0] == snapped[1]
+        assert np.isfinite(snapped[0])
+        assert np.isfinite(stds[0])
+
+    def test_zero_padding_cluster_not_snapped(self):
+        roots = np.array([0.0 + 0j, 1e-5 + 0j, 1.0 + 0j])
+        snapped, stds = snap_clusters_to_mean(roots, [(0, 1)])
+        np.testing.assert_array_equal(snapped, roots)
+        assert np.isnan(stds[0])
+
+    def test_inf_padding_cluster_not_snapped(self):
+        roots = np.array([np.inf + 0j, np.inf + 0j])
+        snapped, stds = snap_clusters_to_mean(roots, [(0, 1)])
+        np.testing.assert_array_equal(snapped, roots)
+        assert np.isnan(stds[0])
+
+    def test_mixed_inf_finite_cluster_not_snapped(self):
+        roots = np.array([np.inf + 0j, 2e4 + 0j, 1.0 + 0j])
+        snapped, stds = snap_clusters_to_mean(roots, [(0, 1)])
+        np.testing.assert_array_equal(snapped, roots)
+        assert np.isnan(stds[0])
+
+    def test_negative_real_axis_cluster_uses_unwrapped_log_mean(self):
+        roots = np.array([-1.0 - 1e-6j, -1.0 + 1e-6j])
+        snapped, stds = snap_clusters_to_mean(roots, [(0, 1)])
+        assert snapped[0] == snapped[1]
+        assert np.isfinite(snapped[0])
+        assert abs(snapped[0] - (-1.0 + 0j)) < 1e-5
+        assert np.isfinite(stds[0])
 
 
 # ===========================================================================

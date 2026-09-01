@@ -43,8 +43,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from BerryPy import TightBinding as tb
 from pygbz2d.core import CharPoly
 from pygbz2d.amoeba.bisect import bisect_amoeba_ronkin_min
-from pygbz2d.amoeba.zm_extract import AmoebaZeroManager
-from pygbz2d.amoeba.zm_extract import amoeba_windings
+from pygbz2d.amoeba.zm_extract import (
+    AmoebaZeroManager, calculate_a2_average_winding, find_crossings,
+)
 import pygbz2d.amoeba as bfa
 
 
@@ -136,7 +137,8 @@ def main():
         res = bisect_amoeba_ronkin_min(poly, E)
         zm = res['_zm']
         mu1, mu2 = res['mu1'], res['mu2']
-        w2, zs, hc, _ = amoeba_windings(zm, poly, E, mu1, mu2, refine=False)
+        w2 = calculate_a2_average_winding(zm, mu1, mu2)
+        zs = find_crossings(zm, mu1, mu2)
         gbz = bfa.collect_GBZ_subsets(coeffs, degs, E, 0.0, True)
         results[name] = dict(poly=poly, zm=zm, mu1=mu1, mu2=mu2,
                              w2=w2, n_cross=len(zs), gbz=gbz)

@@ -521,7 +521,7 @@ def loop_chart_spacing(loop):
     return float(np.median(d))
 
 
-def slab_ready(left, right, factor=2.0):
+def slab_ready(left, right, factor=1.0):
     """True when every flank loop's saddle gap is comparable to its
     local sampling spacing."""
     for sl in (left, right):

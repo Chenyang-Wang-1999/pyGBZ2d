@@ -34,8 +34,9 @@ from BerryPy import TightBinding as tb
 from pygbz2d.core import CharPoly, PointSubset, LineSubset
 import pygbz2d.amoeba as bfa
 from pygbz2d.amoeba.bisect import bisect_amoeba_ronkin_min
-from pygbz2d.amoeba.zm_extract import AmoebaZeroManager
-from pygbz2d.amoeba.zm_extract import amoeba_windings
+from pygbz2d.amoeba.zm_extract import (
+    AmoebaZeroManager, calculate_a2_average_winding, find_crossings,
+)
 from pygbz2d.amoeba.ronkin_winding import _get_average_winding_from_zeros
 from pygbz2d.amoeba.amoeba import _check_zeros_are_clustered
 
@@ -118,13 +119,11 @@ def main():
               f"|d|_min={np.min(np.abs(d)):.3e}  {side}")
 
     # ---- 4. winding from ZM tracks ----
-    w2, zeros, has_cont, dW = amoeba_windings(
-        zm, char_poly, E, mu1, mu2, refine=False,
-    )
-    print(f"\n[4] amoeba_windings @ (mu1, mu2):")
+    w2 = calculate_a2_average_winding(zm, mu1, mu2)
+    crossings = find_crossings(zm, mu1, mu2)
+    print(f"\n[4] calculate_a2_average_winding @ (mu1, mu2):")
     print(f"    w2           = {w2}")
-    print(f"    n_zeros      = {len(zeros)}")
-    print(f"    has_continuum= {has_cont}")
+    print(f"    n_crossings  = {len(crossings)}")
 
     # ---- 5. plateau pre-check conditions ----
     zeros_ref = res["zeros"]

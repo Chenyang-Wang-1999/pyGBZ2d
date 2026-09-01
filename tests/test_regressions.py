@@ -2,9 +2,9 @@
 
 Each test pins the exact failure mode found in the review:
 
-* H1 — ZeroManager MR restart ping-pong (infinite loop, same MR re-recorded):
-  the restart distance must be branch-point safe for the (h0, min_dtheta)
-  pair, and a no-forward-progress refinement must raise, not loop.
+* H1 — ZeroManager MR restart ping-pong at a β₂=0 branch point: 0/∞ roots
+  are now excluded from the MR flow entirely, so run() must terminate
+  cleanly with no MR records instead of re-recording the same MR forever.
 * H2 — _join_runs_across_mrs merge budget: joining a 3-fold continuum over
   2 segments needs 3 merges, one more than the old n_seg-capped loop allowed.
 * M4 — interval MR trigger blinded by nan-sentinel singular roots.
@@ -15,7 +15,6 @@ Each test pins the exact failure mode found in the review:
 import signal
 import numpy as np
 import pytest
-from math import pi
 from types import SimpleNamespace
 
 from pygbz2d.core import CharPoly, TWO_PI
@@ -27,14 +26,18 @@ from pygbz2d.continuation.arclength import estimate_error
 
 
 def _make_pingpong_poly():
-    """f = β₂² − (β₁ − i): double root at θ₁ = π/2, β₂ = 0 (branch point)."""
+    """f = β₂² − (β₁ − i): double root at θ₁ = π/2, β₂ = 0 (branch point).
+
+    The branch point sits at β₂ = 0, which is now deliberately excluded from
+    the MR flow; this poly is the historical ping-pong reproducer.
+    """
     coeffs = np.array([-1, 1j, 1], dtype=complex)
     degs = np.array([[0, 1, 0], [0, 0, 0], [0, 0, 2]], dtype=int)
     return CharPoly(coeffs, degs)
 
 
 class TestH1MrRestartPingpong:
-    """The MR restart distance must clear both step-collapse scales."""
+    """The β₂=0 branch point must not re-enter the MR flow (old ping-pong)."""
 
     @pytest.mark.parametrize("h0,min_dtheta", [
         (0.5, 1e-6),   # original repro: 3572 duplicate MRs in 45 s
@@ -42,7 +45,7 @@ class TestH1MrRestartPingpong:
         (0.2, 1e-4),
         (1.0, 1e-6),
     ])
-    def test_run_terminates_with_single_mr(self, h0, min_dtheta):
+    def test_run_terminates_without_zero_mr(self, h0, min_dtheta):
         poly = _make_pingpong_poly()
         zm = ZeroManager(poly, 0.5 + 0j, 0.0)
 
@@ -57,11 +60,11 @@ class TestH1MrRestartPingpong:
             signal.signal(signal.SIGALRM, old)
 
         thetas = [m.theta1 for m in zm.multiple_roots]
-        assert len(thetas) == 1, f"expected 1 MR, got {thetas}"
-        assert thetas[0] == pytest.approx(pi / 2, abs=1e-5)
+        assert len(thetas) == 0, f"expected no 0/∞ MR, got {thetas}"
 
     def test_no_duplicate_mr_thetas(self):
-        """Even if several segments appear, no two MR records share θ₁."""
+        """No MR records are created for the β₂=0 branch point; if MRs ever
+        reappear, none may share θ₁."""
         poly = _make_pingpong_poly()
         zm = ZeroManager(poly, 0.5 + 0j, 0.0)
         zm.run(h0=0.5, min_dtheta=1e-6)

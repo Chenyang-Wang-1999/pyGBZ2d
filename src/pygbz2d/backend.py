@@ -16,8 +16,8 @@ Backend selection (first match wins):
      (``'poly_tools'`` / ``'numpy'``) or any callable/class satisfying the
      protocol;
   2. the ``POLY_BACKEND`` environment variable (same names);
-  3. ``poly_tools`` if importable;
-  4. numpy fallback (with a one-time warning).
+  3. ``NumpyLaurent`` by default (``poly_tools`` is no longer auto-selected;
+     it must be requested explicitly or via ``POLY_BACKEND=poly_tools``).
 
 Protocol contract (what CharPoly consumes):
 
@@ -85,7 +85,12 @@ class LaurentProtocol(Protocol):
 # ---------------------------------------------------------------------------
 
 class PolyToolsLaurent:
-    """Laurent polynomial on the compiled ``poly_tools`` extension."""
+    """Laurent polynomial on the compiled ``poly_tools`` extension.
+
+    KNOWN ISSUES: with the ``poly_tools`` backend the solver can miss some
+    multiple roots.  This backend is therefore NOT the default; use
+    ``NumpyLaurent`` unless you explicitly need the C++ implementation.
+    """
 
     def __init__(self, coeffs, degs):
         import poly_tools as pt  # lazy: keeps numpy+scipy the only hard deps
@@ -262,27 +267,25 @@ def _warn_numpy_fallback_once() -> None:
 def make_laurent(coeffs, degs, backend=None):
     """Build a Laurent-polynomial object on the selected *backend*.
 
-    ``backend``: ``None`` (auto), ``'poly_tools'``, ``'numpy'``, or a
+    ``backend``: ``None`` (default), ``'poly_tools'``, ``'numpy'``, or a
     user-supplied class/callable ``backend(coeffs, degs) -> LaurentProtocol``.
-    Auto order: ``POLY_BACKEND`` env var → poly_tools (if importable) →
-    numpy fallback with a one-time warning.
+    Default order: ``POLY_BACKEND`` env var → ``numpy``.
+    ``poly_tools`` is used only when explicitly requested (argument or env
+    var), because it has known issues with multiple roots.
     """
     if backend is None:
-        backend = os.environ.get(BACKEND_ENV_VAR, "auto")
+        backend = os.environ.get(BACKEND_ENV_VAR, "numpy")
 
     if isinstance(backend, str):
-        if backend == "numpy":
+        if backend in ("numpy", "auto"):
             return NumpyLaurent(coeffs, degs)
-        if backend in ("auto", "poly_tools"):
+        if backend == "poly_tools":
             if _poly_tools_ok():
                 return PolyToolsLaurent(coeffs, degs)
-            if backend == "poly_tools":
-                raise ImportError(
-                    "backend='poly_tools' requested but the poly_tools "
-                    "package is not importable"
-                )
-            _warn_numpy_fallback_once()
-            return NumpyLaurent(coeffs, degs)
+            raise ImportError(
+                "backend='poly_tools' requested but the poly_tools "
+                "package is not importable"
+            )
         raise ValueError(
             f"unknown backend {backend!r}; expected 'poly_tools', 'numpy' "
             f"or a callable"

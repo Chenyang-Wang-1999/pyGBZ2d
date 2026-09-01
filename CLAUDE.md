@@ -23,7 +23,8 @@ brute-force-non-hermitian/
 │   ├── backend.py             # Pluggable Laurent backends: LaurentProtocol,
 │   │                          #   PolyToolsLaurent (lazy C++ import), NumpyLaurent
 │   │                          #   (pure-numpy fallback), make_laurent factory
-│   │                          #   (arg > POLY_BACKEND env > poly_tools > numpy+warning)
+│   │                          #   (arg > POLY_BACKEND env > numpy default;
+│   │                          #    poly_tools only when explicitly requested)
 │   ├── (constants)            # NO central config: numerical constants live in
 │   │                          #   their home modules (single-consumer locality);
 │   │                          #   the 7 cross-package ones sit in core.py with
@@ -51,10 +52,11 @@ brute-force-non-hermitian/
 │   │   └── sgbz_solver.py     # solve_SGBZ_for_E, collect_GBZ_subsets (returns GBZResult)
 │   ├── amoeba/                # Amoeba / Ronkin function formulation
 │   │   ├── __init__.py        # Whitelist exports (re-exports core classes)
-│   │   ├── ronkin_winding.py  # Ronkin winding (avg windings from zeros, non-zero area)
-│   │   ├── bisect.py          # Bisection + Newton refinement (bisect_amoeba_ronkin_min)
-│   │   ├── zm_extract.py      # extract_amoeba_subsets from track crossings of ln|β₂|=μ₂
-│   │   └── amoeba.py          # collect_GBZ_subsets (returns GBZResult), plateau check, orchestration
+│   │   ├── ronkin_winding.py  # fsolve crossing refinement, avg winding from zeros
+│   │   ├── bisect.py          # μ₁/μ₂ bisection, fast μ₂ gap test, continuum handling
+│   │   ├── zm_extract.py      # AmoebaZeroManager, detect_continuum, find_crossings,
+│   │   │                      #   calculate_a2_average_winding
+│   │   └── amoeba.py          # collect_GBZ_subsets, subset assembly, plateau check
 │   └── continuation/          # Pseudo-arclength continuation for β₂-root tracking along θ₁
 │       ├── __init__.py        # Public API re-exports
 │       ├── interpolation.py   # hermite_interp_poly (cubic Hermite kernel shared by
@@ -92,10 +94,7 @@ brute-force-non-hermitian/
 │   ├── SGBZ.md                 # SGBZ theory, architecture, API
 │   ├── amoeba.md               # Amoeba theory, algorithm, API
 │   ├── continuation.md         # Continuation module (arclength/MR/ZeroManager/interpolation)
-│   ├── constants.md           # Per-module numerical-constant reference (user-facing)
-│   ├── 拓扑匹配算法说明.md       # Topological matching algorithm
-│   ├── sn-main.tex             # Simplified paper for SGBZ, main text
-│   └── sn-supp.tex             # Simplified paper for SGBZ, supplementary information. Amoeba GBZ is discussed in section{Comparison with reported frameworks}
+│   └── constants.md           # Per-module numerical-constant reference (user-facing)
 ├── TODO/                       # Optimization checklists + engineering plans
 │                               #   (exact-degeneracy-boundary-behavior.md — open;
 │                               #   warm-start ZM — open; resolved items are
@@ -111,4 +110,8 @@ brute-force-non-hermitian/
 
 - Ask WHY before HOW. Check the FACT before reach the CONCLUSION. Never assert a bug before you get the solid evidence.
 
-- 遇到与预期不符的结果时，要立刻汇报。
+- 遇到与预期不符的结果时，要立刻停止并汇报。
+
+- 修改计划需要我批准后再执行。
+
+- You can answer either in Chinese or English. I can understand both.

@@ -105,6 +105,9 @@ def main():
     ap.add_argument("--mode", choices=["strip", "full"], default="strip")
     ap.add_argument("--flank-E", type=float, default=0.05,
                     help="flank distance for strip mode")
+    ap.add_argument("--pickle", default=None,
+                    help="mesh pickle for full mode "
+                         "(default: gbz_morse_mesh.pkl)")
     ap.add_argument("--screenshot", default=None)
     args = ap.parse_args()
 
@@ -150,7 +153,8 @@ def main():
         pl.add_legend(bcolor="white")
 
     else:
-        src = Path(__file__).resolve().parent / "gbz_morse_mesh.pkl"
+        src = (Path(args.pickle) if args.pickle else
+               Path(__file__).resolve().parent / "gbz_morse_mesh.pkl")
         with open(src, "rb") as f:
             m = pickle.load(f)
         E = m["verts"][:, 0]
@@ -160,12 +164,22 @@ def main():
         mesh = faces_polydata(pts, m["tris"])
         pl.add_mesh(mesh, scalars=E, cmap="coolwarm",
                     scalar_bar_args={"title": "E"})
-        # pl.add_mesh(mesh, color="blue")
-        # crit = np.array([g for g, _, _ in m["crit_info"]], dtype=int)
-        # if len(crit):
-        #     pl.add_mesh(pv.PolyData(pts[crit]), color="black",
-        #                 point_size=15, render_points_as_spheres=True)
-        print(f"full mesh: {len(m['tris'])} triangles")
+
+        # saddle fan overlay, same colouring as the old slab viewer
+        saddle_gids = {g for g, _, note in m.get("crit_info", [])
+                       if "crit E~" in str(note)}
+        fan_tris = [t for t in m["tris"] if set(t) & saddle_gids]
+        if fan_tris:
+            m_fan = faces_polydata(pts, fan_tris)
+            pl.add_mesh(m_fan, color="orange", opacity=0.55,
+                        show_edges=True, edge_color="darkorange",
+                        label=f"fan tris ({len(fan_tris)})")
+        for g in saddle_gids:
+            pl.add_mesh(pv.Sphere(0.05, center=pts[g]), color="black")
+        if fan_tris:
+            pl.add_legend(bcolor="white")
+        print(f"full mesh: {len(m['tris'])} triangles, "
+              f"fan tris: {len(fan_tris)}")
 
     if args.screenshot:
         pl.screenshot(args.screenshot)

@@ -39,6 +39,11 @@ MIN_STEP: float = 1e-12
 #: |β₂| below/above which a root is a singular 0/∞ padding root.
 ZERO_THRESHOLD: float = 1e-6
 INF_THRESHOLD: float = 1e6
+#: |Vⱼ · Δθ₁| above which the tangent prediction is held fixed.  The
+#: first-order extrapolation is only meaningful for arguments ≲ 1, and
+#: pre-checking the magnitude avoids ``exp`` overflow from a finite but
+#: divergent tangent times a large step.
+PREDICT_MAX_ABS_ARG: float = 1.0
 from pygbz2d.core import (
     CharPoly,
     hungarian_match_indices,
@@ -191,12 +196,16 @@ def predict_roots(
         if not np.isfinite(V[j]):
             predicted[j] = beta2
             continue
+        # Pre-check the extrapolation argument before calling exp: a finite
+        # but divergent tangent times a large step can otherwise overflow
+        # exp() into inf/nan.  Past |V·Δθ| ≳ 1 the first-order prediction
+        # carries no information anyway, so hold the root fixed
+        # (singular-root semantics) instead of feeding nan into the
+        # Hungarian match.
+        if abs(V[j]) * abs(dtheta1) > PREDICT_MAX_ABS_ARG:
+            predicted[j] = beta2
+            continue
         cand = beta2 * np.exp(V[j] * dtheta1)
-        # A divergent-but-finite tangent times a large step can overflow
-        # exp() into inf/nan.  The tangent extrapolation is only valid for
-        # |V·Δθ| ≲ 1 anyway; past that the prediction carries no
-        # information, so hold the root fixed (singular-root semantics)
-        # instead of feeding nan into the Hungarian match.
         if not np.isfinite(cand.real) or not np.isfinite(cand.imag):
             predicted[j] = beta2
             continue

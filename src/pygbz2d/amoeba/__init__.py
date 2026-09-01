@@ -13,8 +13,7 @@ from .bisect import (
 )
 from .zm_extract import (
     AmoebaZeroManager,
-    extract_amoeba_subsets,
-    amoeba_windings,
+    calculate_a2_average_winding,
 )
 from .amoeba import (
     collect_GBZ_subsets,
@@ -24,8 +23,7 @@ __all__ = [
     "CharPoly",
     "bisect_amoeba_ronkin_min",
     "AmoebaZeroManager",
-    "extract_amoeba_subsets",
-    "amoeba_windings",
+    "calculate_a2_average_winding",
     "collect_GBZ_subsets",
     "PointSubset",
     "LineSubset",

@@ -5,112 +5,419 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 
 Bisection algorithms for amoeba Ronkin function critical-point search.
 
-The winding source is now ``continuation.ZeroManager`` (via
-``AmoebaZeroManager`` + ``zm_extract.amoeba_windings``) rather than the old
-fixed-grid Hungarian tracks.  Each ``(E, μ₁)`` builds one
-``AmoebaZeroManager`` and reuses it across all μ₂ evaluations (~30×).
+The μ₂ bisection is now continuum-first:
 
-Provides μ₂ bisection (w2 winding crossing) and the outer μ₁/μ₂ bisection
-for the Ronkin minimum.
+  1. ``_try_fast_mu2``      — cheap gap test at θ₁=0 (no continuum involved).
+  2. ``detect_continuum``   — std-based flat-track detection, run up front.
+  3. continuum probes       — for each merged μ₂_c, perturb by ±ε and test
+     whether w2 straddles zero.  If yes the inner solve returns the continuum
+     boundary; if no, the signed probe points tighten the μ₂ bracket.
+  4. ``_bisect_mu2_discrete`` — plain discrete μ₂ bisection on the tightened
+     bracket, using ``calculate_a2_average_winding`` (which is
+     continuum-unaware).
+
+The outer μ₁ bisection receives ``is_continuum=True`` results and resolves
+them with μ₁ ± ε perturbations: opposite w1 signs end the search; equal signs
+update the μ₁ bracket.
 """
 
 from typing import Optional
-from pygbz2d.core import CharPoly
+import warnings
 
-from .ronkin_winding import _get_average_winding_from_zeros
+import numpy as np
+from cmath import exp
+
+from pygbz2d.core import CharPoly
+from pygbz2d.continuation.interpolation import hermite_interp_poly
+
 from pygbz2d import core
 from pygbz2d.core import live_defaults
+
+from .ronkin_winding import _get_average_winding_from_zeros
+from .zm_extract import (
+    AmoebaZeroManager,
+    calculate_a2_average_winding,
+    detect_continuum,
+    find_crossings,
+)
 
 # μ₂ bisection budget (the winding is monotonic in μ₂, so range
 # expansion guarantees a sign bracket eventually).
 BISECT_MAX_ITER: int = 60
 BISECT_XTOL: float = 1e-10
+#: Coarse-stage tolerance for the first, unrefined μ₂ bisection.
+BISECT_COARSE_XTOL: float = 1e-3
 MAX_RANGE_EXPANSIONS: int = 10
 RANGE_EXPAND_FACTOR: float = 2.0
-from .zm_extract import AmoebaZeroManager, amoeba_windings
+#: Relative tolerance for mesh-insertion dedup in extremum refinement.
+EXTREMUM_INSERT_REL_TOL: float = 1e-12
 
 
-def _refine_and_correct(
-    char_poly, E_ref, mu1, mu2_0,
-    zm, low, high, low_init, high_init,
-    continuum_tol, xtol,
-    frac,
-):
-    """Refine crossings at mu2_0, then apply Newton correction if needed.
+# ---------------------------------------------------------------------------
+# Extremum refinement for _try_fast_mu2 (Hermite prediction + mesh insertion)
+# ---------------------------------------------------------------------------
 
-    Uses the analytical dW/dmu2 computed from zero derivatives to take one
-    Newton step, avoiding re-bisection after refinement.
+def _screen_extremum_intervals(
+    zm: AmoebaZeroManager,
+    cols: np.ndarray,
+    mode: str,
+) -> list[tuple[int, int, int]]:
+    """Vectorized first screen for intervals that may contain an extremum.
+
+    Returns ``[(seg_idx, i, col), ...]`` where ``i`` is the left endpoint of a
+    suspicious interval ``[i, i+1]`` for track ``col``.  Only these intervals
+    are later processed with cubic-Hermite root solving (which is not
+    vectorizable and therefore must be kept small).
+
+    Suspicious intervals for ``mode='max'``:
+      - derivative sign changes from + to − across the interval;
+      - either endpoint derivative is exactly 0;
+      - either endpoint derivative is non-finite (divergent at an MR row).
+    ``mode='min'`` uses − to +.  Intervals adjacent to a non-finite derivative
+    row are always marked (the later refinement inserts a midpoint separator
+    there to resolve the sharp feature with an exact solve).
     """
-    w_ref, zeros_ref, has_cont, dW_dmu2 = amoeba_windings(
-        zm, char_poly, E_ref, mu1, mu2_0,
-        tol=continuum_tol, frac=frac, refine=True,
-    )
+    out: list[tuple[int, int, int]] = []
+    cols_arr = np.asarray(cols, dtype=int)
+    for s, seg in enumerate(zm.segments):
+        n = len(seg.theta1_arr)
+        if n < 2:
+            continue
+        la = zm.seg_logabs[s][:, cols_arr]
+        d = seg.tangents.real[:, cols_arr]          # (N, C)
 
-    # Defensive: refined detection may find continuum that the unrefined
-    # bisection missed (e.g. at band edges).  Return empty zeros and let
-    # the caller handle the continuum via perturbation.
-    if has_cont:
-        return {
-            "mu2": mu2_0, "zeros": [], "is_continuum": True,
-            "winding": 0.0, "_zm": zm,
-        }
+        finite = np.isfinite(d)
+        bad = ~finite                                # (N, C)
 
-    if abs(w_ref) < xtol:
-        return {
-            "mu2": mu2_0, "zeros": zeros_ref, "is_continuum": False,
-            "winding": w_ref, "_zm": zm,
-        }
+        if mode == 'max':
+            sign_change = (d[:-1] > 0) & (d[1:] < 0)
+        else:
+            sign_change = (d[:-1] < 0) & (d[1:] > 0)
 
-    # Newton correction using analytical derivative.  The 1e-15 floor on
-    # |dW/dmu2| only guards the division by an exactly-zero derivative
-    # (w_ref is O(1), so any |dW| > 1e-15 gives a finite, meaningful step);
-    # below it the derivative carries no signal and the bracket midpoint is
-    # the honest next guess.
-    if abs(dW_dmu2) > 1e-15:
-        delta = -w_ref / dW_dmu2
-        # Clamp to initial bracket with margin
-        bracket_width = high_init - low_init
-        max_step = 0.5 * bracket_width
-        delta = max(-max_step, min(max_step, delta))
-        mu2_new = mu2_0 + delta
-        # Ensure within initial bracket
-        mu2_new = max(low_init, min(high_init, mu2_new))
+        zero_deriv = (d[:-1] == 0) | (d[1:] == 0)
+        # Any interval adjacent to a non-finite derivative row is suspicious:
+        # the Hermite fallback inserts a midpoint separator there so the sharp
+        # feature gets resolved by an exact solve.  This single vectorized OR
+        # covers all bad-row cases (interior, first, last) — no per-row loop
+        # is needed.
+        bad_interval = bad[:-1] | bad[1:]
+        susp = sign_change | zero_deriv | bad_interval   # (N-1, C)
+
+        rows, cidx = np.where(susp)
+        for i, c in zip(rows, cidx):
+            out.append((s, int(i), int(cols_arr[int(c)])))
+    return out
+
+
+def _refine_track_extrema(
+    zm: AmoebaZeroManager,
+    cols: np.ndarray,
+    mode: str,
+) -> None:
+    """Insert mesh rows at predicted extrema of selected tracks.
+
+    ``mode='max'`` inserts predicted maxima; ``mode='min'`` inserts predicted
+    minima.  The heavy Hermite-polynomial work is only done on intervals that
+    survived :func:`_screen_extremum_intervals`.
+    """
+    cols_arr = np.asarray(cols, dtype=int)
+    suspicious = _screen_extremum_intervals(zm, cols_arr, mode)
+    if not suspicious:
+        return
+
+    # Current global extreme over all rows (skipping the duplicated θ=2π seam
+    # row of the last segment) — used as a cheap filter: candidates that cannot
+    # improve the current extreme are not inserted.
+    current = _extreme_over_segments(zm, cols_arr, mode)
+    if not np.isfinite(current):
+        current = -np.inf if mode == 'max' else np.inf
+
+    candidates: list[tuple[float, int, float]] = []  # (theta, seg_idx, pred)
+    for s, i, j in suspicious:
+        seg = zm.segments[s]
+        th = seg.theta1_arr
+        la = zm.seg_logabs[s]
+        h = float(th[i + 1] - th[i])
+        if not np.isfinite(h) or h <= 0.0:
+            continue
+        v0 = float(la[i, j])
+        v1 = float(la[i + 1, j])
+        d0 = float(seg.tangents.real[i, j])
+        d1 = float(seg.tangents.real[i + 1, j])
+
+        finite_deriv = bool(np.isfinite(d0) and np.isfinite(d1))
+        poly = hermite_interp_poly(h, v0, d0, v1, d1)
+
+        if not finite_deriv:
+            # Divergent tangent: the Hermite falls back to a linear piece with
+            # no interior extremum.  Insert the interval midpoint as a mesh
+            # separator so the sharp feature is resolved by an exact solve.
+            theta = float(th[i] + 0.5 * h)
+            pred = float(np.polyval(poly, 0.5 * h))
+            candidates.append((theta, s, pred))
+            continue
+
+        deriv = np.polyder(poly)
+        for root in np.roots(deriv):
+            if abs(float(root.imag)) > 1e-12 * max(1.0, h):
+                continue
+            x = float(root.real)
+            if not (0.0 < x < h):
+                continue
+            pred = float(np.polyval(poly, x))
+            if mode == 'max' and pred <= current:
+                continue
+            if mode == 'min' and pred >= current:
+                continue
+            candidates.append((float(th[i] + x), s, pred))
+
+    if not candidates:
+        return
+
+    # Insert descending per segment so earlier insertions (larger θ) do not
+    # invalidate the located intervals of later ones.  Dedup against existing
+    # mesh rows with a per-interval relative tolerance, mirroring the SGBZ
+    # refinement-grid insertion.
+    candidates.sort(key=lambda x: (x[1], -x[0]))
+    for s, grp in _group_by_segment(candidates):
+        seg = zm.segments[s]
+        th = np.asarray(seg.theta1_arr, dtype=float)
+        inserted: list[float] = []
+        for theta, _, _ in sorted(grp, key=lambda x: -x[0]):
+            tol = EXTREMUM_INSERT_REL_TOL * max(1.0, float(theta))
+            if np.any(np.abs(th - theta) <= tol):
+                continue
+            if inserted and min(abs(theta - t) for t in inserted) <= tol:
+                continue
+            try:
+                _, changed = zm.insert_solution(theta, seg_idx=s, interp='hermite')
+            except Exception as exc:
+                warnings.warn(
+                    f"extremum refinement insert failed at theta="
+                    f"{theta:.6e} in segment {s}: {exc}"
+                )
+                continue
+            if changed:
+                inserted.append(theta)
+    zm.refresh_logabs()
+
+
+def _group_by_segment(candidates):
+    """Group (theta, seg_idx, pred) candidates by segment index."""
+    by_seg: dict[int, list] = {}
+    for theta, s, pred in candidates:
+        by_seg.setdefault(s, []).append((theta, s, pred))
+    return list(by_seg.items())
+
+
+def _extreme_over_segments(
+    zm: AmoebaZeroManager,
+    cols: np.ndarray,
+    mode: str,
+) -> float:
+    """Current global extreme of selected track columns over all segments.
+
+    The last segment's final row is the θ=2π copy of the θ=0 row, but its
+    columns are permuted by ``boundary_perm``; it is skipped here because the
+    θ=0 row already covers that physical point in the correct frame.
+    """
+    parts: list[np.ndarray] = []
+    n_seg = len(zm.segments)
+    for s, seg in enumerate(zm.segments):
+        la = zm.seg_logabs[s]
+        end = len(seg.theta1_arr)
+        if s == n_seg - 1 and end > 1:
+            end -= 1
+        if end <= 0:
+            continue
+        parts.append(la[:end, cols])
+    if not parts:
+        return float('nan')
+    all_vals = np.concatenate(parts)
+    return float(np.max(all_vals) if mode == 'max' else np.min(all_vals))
+
+
+# ---------------------------------------------------------------------------
+# Step 2: cheap gap test at θ₁ = 0
+# ---------------------------------------------------------------------------
+
+def _try_fast_mu2(
+    zm: AmoebaZeroManager,
+    char_poly: CharPoly,
+) -> dict:
+    """Try the simple μ₂ gap criterion.
+
+    At θ₁ = 0, sort the roots by |β₂|.  Let ``lo_cols`` be the first M
+    columns and ``hi_cols`` the remaining N columns.  If the largest ln|β₂|
+    over all ``lo_cols`` tracks is strictly below the smallest ln|β₂| over all
+    ``hi_cols`` tracks, then any μ₂ between the two bounds has exactly M roots
+    below it everywhere, so w2 = 0 without bisection.
+
+    Returns ``{ok, A, B, lo_cols, hi_cols}``.  On failure, A and B are still
+    returned so the caller can use them to tighten the discrete μ₂ bracket.
+    """
+    M, N = char_poly.get_minor_degrees(2)
+    K = zm.K
+    if not (0 < M < K):
+        return {"ok": False, "A": float('nan'), "B": float('nan'),
+                "lo_cols": np.array([], dtype=int),
+                "hi_cols": np.array([], dtype=int)}
+
+    if len(zm.segments) == 0 or len(zm.segments[0].theta1_arr) == 0:
+        return {"ok": False, "A": float('nan'), "B": float('nan'),
+                "lo_cols": np.array([], dtype=int),
+                "hi_cols": np.array([], dtype=int)}
+
+    roots0 = zm.segments[0].tracked_roots[0, :]
+    order = np.argsort(np.abs(roots0))
+    lo_cols = order[:M].astype(int)
+    hi_cols = order[M:].astype(int)
+
+    # Refine the mesh near the extrema that determine the gap.
+    _refine_track_extrema(zm, lo_cols, 'max')
+    _refine_track_extrema(zm, hi_cols, 'min')
+
+    A = _extreme_over_segments(zm, lo_cols, 'max')
+    B = _extreme_over_segments(zm, hi_cols, 'min')
+
+    ok = bool(np.isfinite(A) and np.isfinite(B) and A < B)
+    return {"ok": ok, "A": float(A), "B": float(B),
+            "lo_cols": lo_cols, "hi_cols": hi_cols}
+
+
+# ---------------------------------------------------------------------------
+# Pure discrete μ₂ bisection
+# ---------------------------------------------------------------------------
+
+def _bisect_mu2_discrete(
+    char_poly: CharPoly,
+    E_ref: complex,
+    mu1: float,
+    mu2_low: float,
+    mu2_high: float,
+    max_iter: int,
+    xtol: float,
+    coarse_xtol: float,
+    max_range_expansions: int,
+    range_expand_factor: float,
+    _zm: AmoebaZeroManager,
+) -> dict:
+    """Two-stage discrete μ₂ bisection on a continuum-free bracket.
+
+    The caller has already run :func:`detect_continuum` and tightened the
+    bracket away from flat tracks, so this function is continuum-unaware.
+
+    Stage 1: coarse bisection with ``return_refined=False`` and tolerance
+    ``coarse_xtol`` — cheap, no fsolve.  Stage 2: fine bisection on the coarse
+    bracket with ``return_refined=True`` and tolerance ``xtol``.
+    """
+    zm = _zm
+    low, high = float(mu2_low), float(mu2_high)
+
+    def _winding_at(mu2_val, return_refined=False):
+        return calculate_a2_average_winding(
+            zm, mu1, mu2_val, return_refined=return_refined,
+        )
+
+    # Adaptive range expansion (coarse, no refine)
+    for _ in range(max_range_expansions):
+        w_low = _winding_at(low)
+        w_high = _winding_at(high)
+
+        if w_low * w_high <= 0:
+            break
+
+        width = high - low
+        low = low - range_expand_factor * width
+        high = high + range_expand_factor * width
     else:
-        # dW/dmu2 near zero — use bisection bracket midpoint
-        mu2_new = 0.5 * (low + high)
+        raise ValueError(f"Maximal range expansion reached! E_ref:{E_ref}, mu1:{mu1}, low:{low}, high:{high}")
 
-    # Avoid re-refining at essentially the same point
-    if abs(mu2_new - mu2_0) < xtol:
-        return {
-            "mu2": mu2_0, "zeros": zeros_ref, "is_continuum": False,
-            "winding": w_ref, "_zm": zm,
-        }
+    # Stage 1: coarse bisection, no refine.
+    for _ in range(max_iter):
+        mu2_mid = 0.5 * (low + high)
+        w_mid = _winding_at(mu2_mid)
 
-    # Refine at the corrected mu2
-    w_ref2, zeros_ref2, _, _ = amoeba_windings(
-        zm, char_poly, E_ref, mu1, mu2_new,
-        tol=continuum_tol, frac=frac, refine=True,
+        if (high - low) < coarse_xtol:
+            break
+
+        if w_low * w_mid <= 0:
+            high = mu2_mid
+            w_high = w_mid
+        else:
+            low = mu2_mid
+            w_low = w_mid
+    else:
+        mu2_final = 0.5 * (low + high)
+        raise RuntimeError(
+            f"mu2 coarse bisection failed to converge after {max_iter} "
+            f"iterations: E_ref={E_ref}, mu1={mu1}, mu2={mu2_final:.12g}, "
+            f"bracket=({low:.12g}, {high:.12g})"
+        )
+
+    # Stage 2: fine bisection with refined crossings.  Refinement may move
+    # the winding-zero slightly, so the coarse bracket's endpoints are not
+    # guaranteed to straddle after re-evaluating with ``return_refined=True``.
+    # Expand the fine bracket outward until the refined windings straddle
+    # (w2 is monotone in μ₂, so the required direction is known).
+    low_fine, high_fine = low, high
+    for _ in range(max_range_expansions):
+        w_low = _winding_at(low_fine, return_refined=True)
+        w_high = _winding_at(high_fine, return_refined=True)
+        if w_low * w_high <= 0:
+            break
+        if w_low > 0:
+            low_fine -= coarse_xtol
+        else:
+            high_fine += coarse_xtol
+    else:
+        raise RuntimeError(
+            f"fine μ₂ bracket expansion failed: E_ref={E_ref}, mu1={mu1}, "
+            f"coarse bracket=({low:.12g}, {high:.12g})"
+        )
+
+    for _ in range(max_iter):
+        mu2_mid = 0.5 * (low_fine + high_fine)
+        w_mid = _winding_at(mu2_mid, return_refined=True)
+
+        if abs(w_mid) < xtol or (high_fine - low_fine) < xtol:
+            crossings = find_crossings(zm, mu1, mu2_mid, return_refined=True)
+            zeros = [
+                (float(np.angle(b1) % (2.0 * np.pi)),
+                 float(np.angle(b2) % (2.0 * np.pi)))
+                for b1, b2 in crossings
+            ]
+            return {
+                "mu2": mu2_mid,
+                "zeros": zeros,
+                "is_continuum": False,
+                "winding": w_mid,
+                "_zm": zm,
+            }
+
+        if w_low * w_mid <= 0:
+            high_fine = mu2_mid
+            w_high = w_mid
+        else:
+            low_fine = mu2_mid
+            w_low = w_mid
+
+    mu2_final = 0.5 * (low_fine + high_fine)
+    raise RuntimeError(
+        f"mu2 fine bisection failed to converge after {max_iter} iterations: "
+        f"E_ref={E_ref}, mu1={mu1}, mu2={mu2_final:.12g}, winding={w_mid}"
     )
 
-    if abs(w_ref2) < xtol:
-        return {
-            "mu2": mu2_new, "zeros": zeros_ref2, "is_continuum": False,
-            "winding": w_ref2, "_zm": zm,
-        }
 
-    # Fall back: return the better of the two refined points
-    if abs(w_ref2) < abs(w_ref):
-        return {
-            "mu2": mu2_new, "zeros": zeros_ref2, "is_continuum": False,
-            "winding": w_ref2, "_zm": zm,
-        }
-    return {
-        "mu2": mu2_0, "zeros": zeros_ref, "is_continuum": False,
-        "winding": w_ref, "_zm": zm,
-    }
+# ---------------------------------------------------------------------------
+# Inner μ₂ solve: continuum-first dispatcher
+# ---------------------------------------------------------------------------
 
-
-@live_defaults(continuum_tol="core:CONTINUUM_TOL", continuum_perturb="core:CONTINUUM_PERTURB", max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL", max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS", range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR", frac="core:CONTINUUM_FRAC")
+@live_defaults(continuum_tol="core:CONTINUUM_TOL", continuum_perturb="core:CONTINUUM_PERTURB",
+               max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL",
+               coarse_xtol="amoeba.bisect:BISECT_COARSE_XTOL",
+               max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS",
+               range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR")
 def _find_mu2_for_w2_zero(
     char_poly: CharPoly,
     E_ref: complex,
@@ -121,268 +428,164 @@ def _find_mu2_for_w2_zero(
     continuum_perturb: Optional[float] = None,
     max_iter: Optional[int] = None,
     xtol: Optional[float] = None,
+    coarse_xtol: Optional[float] = None,
     max_range_expansions: Optional[int] = None,
     range_expand_factor: Optional[float] = None,
     _zm: Optional[AmoebaZeroManager] = None,
     frac: Optional[float] = None,
 ) -> dict:
-    """Find mu2 where w2 winding crosses 0, with adaptive range.
+    """Find μ₂ where w2 = 0, continuum-first.
 
-    The w2 winding is monotonic in mu2, so expanding the search range
-    guarantees a sign change will eventually be found.
-
-    Uses unrefined (cheap) winding during bisection, then refines crossings
-    at the final mu2 and applies a Newton correction using the analytical
-    derivative dW/dmu2.
-
-    _zm: optionally pre-built AmoebaZeroManager at (E, mu1).  When provided,
-    avoids rebuilding root tracks (the ZM is mu2-independent).  When None,
-    a fresh one is built here.
+    Flow:
+      1. build / reuse the μ₂-independent ``AmoebaZeroManager``;
+      2. ``_try_fast_mu2`` — a wide μ₂ gap makes the answer trivial;
+      3. ``detect_continuum`` — std-based flat-track groups;
+      4. for each merged μ₂_c, probe w2 at μ₂_c ± ε:
+           opposite signs → return the continuum boundary;
+           equal signs     → tighten the μ₂ bracket with the signed probes;
+      5. run ``_bisect_mu2_discrete`` on the tightened bracket.
     """
-    low, high = float(mu2_low), float(mu2_high)
-
-    # Build ZeroManager once (independent of mu2).  Reused across ~30 mu2
-    # evaluations — the caching role the old `tracks` dict played.
     if _zm is None:
         zm = AmoebaZeroManager(char_poly, E_ref, mu1)
         zm.run()
     else:
         zm = _zm
 
-    def _winding_at(mu2_val, refine=False):
-        """Evaluate winding at mu2_val.  Strips dW_dmu2 for the bisection loop."""
-        w, z, c, _ = amoeba_windings(
-            zm, char_poly, E_ref, mu1, mu2_val,
-            tol=continuum_tol, frac=frac, refine=refine,
-        )
-        return w, z, c
+    # ---- step 2: cheap gap test ----
+    fast = _try_fast_mu2(zm, char_poly)
+    if fast["ok"]:
+        return {
+            "mu2": 0.5 * (fast["A"] + fast["B"]),
+            "zeros": [],
+            "is_continuum": False,
+            "winding": 0.0,
+            "_zm": zm,
+            "_fast": True,
+            "_fast_A": fast["A"],
+            "_fast_B": fast["B"],
+        }
 
-    # Adaptive range expansion (unrefined)
-    for _ in range(max_range_expansions):
-        w_low, _, has_cont_low = _winding_at(low)
-        w_high, _, has_cont_high = _winding_at(high)
+    # ---- bracket seed from the fast test's A / B ----
+    low, high = float(mu2_low), float(mu2_high)
+    A, B = fast["A"], fast["B"]
+    if np.isfinite(A) and np.isfinite(B) and A >= B:
+        # fast path failed ⇒ A >= B; [min(A,B), max(A,B)] = [B, A] brackets
+        # the w2 sign change.
+        if B < A and (A - B) > xtol:
+            low, high = B, A
 
-        # If either endpoint encounters a continuum subset the winding
-        # value is None — expand the range and retry.  The tolerance is
-        # O(continuum_tol), so a single expansion typically escapes it.
-        if has_cont_low or has_cont_high:
-            width = high - low
-            low = low - range_expand_factor * width
-            high = high + range_expand_factor * width
-            continue
+    # ---- continuum detection (std, up front) ----
+    groups = detect_continuum(zm, continuum_tol)
 
-        if w_low * w_high <= 0:
-            low_init, high_init = low, high
-            break
-
-        # Expand outward
-        width = high - low
-        low = low - range_expand_factor * width
-        high = high + range_expand_factor * width
-    else:
-        raise ValueError(f"Maximal range expansion reached! E_ref:{E_ref}, mu1:{mu1}, low:{low}, high:{high}")
-
-    # Bisection with unrefined winding (fast — no fsolve)
-    for _ in range(max_iter):
-        mu2_mid = 0.5 * (low + high)
-
-        w_mid, zeros, has_continuum = _winding_at(mu2_mid)
-
-        if has_continuum:
-            # Resolve the winding limits at mu2_mid ± eps.  The degenerate band
-            # is O(continuum_tol), so continuum_perturb typically escapes it;
-            # the ladder handles a wider band (mirrors _resolve_continuum Step 1).
+    if groups:
+        for mu2_c, members in groups:
             w_left = w_right = None
             for scale in core.ESCAPE_LADDER:
                 eps = continuum_perturb * scale
-                w_left, _, has_cont_left = _winding_at(mu2_mid - eps)
-                w_right, _, has_cont_right = _winding_at(mu2_mid + eps)
-                if (not has_cont_left) and (not has_cont_right):
+                w_left = calculate_a2_average_winding(
+                    zm, mu1, mu2_c - eps,
+                )
+                w_right = calculate_a2_average_winding(
+                    zm, mu1, mu2_c + eps,
+                )
+                if np.isfinite(w_left) and np.isfinite(w_right):
                     break
             else:
                 raise RuntimeError(
-                    f"continuum at mu2={mu2_mid:.8g} (E_ref={E_ref}, mu1={mu1}) "
-                    f"could not be resolved: all perturbation scales still degenerate."
+                    f"continuum at mu2_c={mu2_c:.8g} (E_ref={E_ref}, "
+                    f"mu1={mu1}) could not be resolved: all perturbation "
+                    f"scales still degenerate."
                 )
 
             if w_left * w_right < 0:
-                # At the continuum mu2 there are no discrete zeros
-                # (every point in the band satisfies |β2| ≈ exp(mu2)).
-                # Return zeros=[] so the outer bisection knows to compute
-                # w1 limits via mu1 perturbation rather than from zeros.
+                # Continuum boundary: w2 changes sign across the flat track.
                 return {
-                    "mu2": mu2_mid, "zeros": [], "is_continuum": True,
-                    "winding": (w_left, w_right), "_zm": zm,
+                    "mu2": mu2_c,
+                    "zeros": [],
+                    "is_continuum": True,
+                    "winding": (w_left, w_right),
+                    "_continuum_members": members,
+                    "_zm": zm,
                 }
-            # Non-boundary (w_left, w_right same sign): w2 is monotonic in mu2,
-            # so the w2=0 zero is OUTSIDE the band.  Keep the bracket endpoint
-            # at the degenerate mu2_mid but pair it with w_left — deliberately
-            # NOT w_right.  w_right can sit exactly ON the w2=0 plateau (a =0
-            # limit here means "w2=0", which is the inner bisection's own
-            # target, NOT a "not-a-GBZ-point" signal — that distinction belongs
-            # to the μ₁-level continuum logic).  Setting the bracket winding to
-            # a 0 from w_right would break the sign invariant (w_low<0<w_high)
-            # and send the bisection off to a spurious μ₂.
-            if w_low * w_left > 0:
-                low = mu2_mid
-                w_low = w_left
+
+            # w2 not opposite: signed probe.  w2 is monotone increasing in μ₂,
+            # so both positive ⇒ the zero lies below the flat band; both
+            # negative ⇒ it lies above.
+            if w_left > 0:
+                high = min(high, mu2_c - eps)
             else:
-                high = mu2_mid
-                w_high = w_left
-            continue
+                low = max(low, mu2_c + eps)
 
-        if abs(w_mid) < xtol or (high - low) < xtol:
-            # --- Post-refinement + Newton correction ---
-            return _refine_and_correct(
-                char_poly, E_ref, mu1, mu2_mid,
-                zm, low, high, low_init, high_init,
-                continuum_tol, xtol, frac,
-            )
+    # ---- bracket sanity after continuum tightening ----
+    if not (np.isfinite(low) and np.isfinite(high)) or low >= high:
+        low, high = float(mu2_low), float(mu2_high)
 
-        if w_low * w_mid < 0:
-            high = mu2_mid
-            w_high = w_mid
-        else:
-            low = mu2_mid
-            w_low = w_mid
-
-    # Max iterations exhausted — the μ₂ bisection failed to converge.  Raise
-    # with the best-known point's state (no silent mid-bracket "success").
-    mu2_final = 0.5 * (low + high)
-    w_final, zeros_final, has_cont_final = _winding_at(mu2_final)
-    n_zeros = len(zeros_final) if zeros_final is not None else 0
-    raise RuntimeError(
-        f"mu2 bisection failed to converge after {max_iter} iterations: "
-        f"E_ref={E_ref}, mu1={mu1}, mu2={mu2_final:.12g}, "
-        f"len(subsets)={n_zeros}, is_continuum={has_cont_final}, "
-        f"winding={w_final}"
+    return _bisect_mu2_discrete(
+        char_poly, E_ref, mu1, low, high,
+        max_iter, xtol, coarse_xtol,
+        max_range_expansions, range_expand_factor,
+        _zm=zm,
     )
 
 
-@live_defaults(continuum_perturb="core:CONTINUUM_PERTURB", continuum_tol="core:CONTINUUM_TOL", max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL", max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS", range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR", frac="core:CONTINUUM_FRAC")
-def _resolve_continuum(
+# ---------------------------------------------------------------------------
+# Continuum handling for the outer μ₁ bisection
+# ---------------------------------------------------------------------------
+
+def _handle_continuum(
     char_poly: CharPoly,
     E_ref: complex,
-    mu1: float,
-    mu2: float,
-    zm: AmoebaZeroManager,
-    mu2_low: float = -1.0,
-    mu2_high: float = 1.0,
-    continuum_perturb: Optional[float] = None,
-    continuum_tol: Optional[float] = None,
-    max_iter: Optional[int] = None,
-    xtol: Optional[float] = None,
-    max_range_expansions: Optional[int] = None,
-    range_expand_factor: Optional[float] = None,
-    frac: Optional[float] = None,
+    mu1_val: float,
+    mu2_c: float,
+    *,
+    continuum_perturb: float,
 ) -> dict:
-    """Resolve a continuum point by computing winding left/right limits.
+    """Resolve a continuum inner result by perturbing μ₁.
 
-    Step 1 — a2 axis: perturb mu2 ± ε, compute w2 winding at each.
-    If the two values have opposite signs, the mu2 jump crosses 0 →
-    this mu2 is the w2=0 boundary.
+    Keeps ``μ₂`` fixed at the continuum level.  At each of ``mu1_val ± eps``
+    a fresh ZM is built and ``find_crossings`` locates the zeros of
+    ``ln|β₂| = μ₂``; those zeros are then fed to the a1 average-winding
+    integral.  Returns:
 
-    Step 2 — a1 axis (only when Step 1 succeeds): perturb mu1 ± ε,
-    re-run the full inner mu2 bisection at each perturbed mu1, then
-    compute w1 winding from the resulting (mu2, zeros).  If the two
-    w1 values straddle zero, this (mu1, mu2) is the Ronkin minimum.
-
-    Returns a dict with keys:
-        w2_left:      float | None
-        w2_right:     float | None
-        w2_opposite:  bool
-        w1_left:      float | None
-        w1_right:     float | None
-        w1_opposite:  bool | None
-        is_boundary:  bool
-        w1_resolved:  bool
+      - ``is_boundary``: w1_left and w1_right have opposite signs — this μ₁ is
+        a Ronkin-minimum continuum boundary.
+      - ``w1_left`` / ``w1_right``: the two limits.
     """
-    # ---- Step 1: w2 limits via mu2 perturbation ----
-    # The continuum band is O(continuum_tol), so continuum_perturb
-    # (default 1e-4) should escape it.  If the perturbed mu2 still
-    # falls in the band, expand the perturbation and retry.
-    w2_left = None
-    w2_right = None
-    w2_opposite = False
+    eps = continuum_perturb
 
-    for scale in core.ESCAPE_LADDER:
-        eps = continuum_perturb * scale
-
-        w_left, _, has_cont_left, _ = amoeba_windings(
-            zm, char_poly, E_ref, mu1, mu2 - eps,
-            tol=continuum_tol, frac=frac, refine=False,
+    def _w1_at(mu1_probe: float) -> float:
+        zm = AmoebaZeroManager(char_poly, E_ref, mu1_probe)
+        zm.run()
+        crossings = find_crossings(zm, mu1_probe, mu2_c)
+        zeros = [
+            (float(np.angle(b1) % (2.0 * np.pi)),
+             float(np.angle(b2) % (2.0 * np.pi)))
+            for b1, b2 in crossings
+        ]
+        w1, _ = _get_average_winding_from_zeros(
+            char_poly, E_ref, mu1_probe, mu2_c, zeros, direction=1,
         )
-        w_right, _, has_cont_right, _ = amoeba_windings(
-            zm, char_poly, E_ref, mu1, mu2 + eps,
-            tol=continuum_tol, frac=frac, refine=False,
-        )
+        return w1
 
-        if (not has_cont_left) and (not has_cont_right):
-            w2_left, w2_right = w_left, w_right
-            w2_opposite = bool(
-                w2_left * w2_right < 0
-            )
-            break
-    else:
-        # All perturbation scales fell inside the continuum band.
-        return {
-            "w2_left": None, "w2_right": None, "w2_opposite": False,
-            "w1_left": None, "w1_right": None, "w1_opposite": None,
-            "is_boundary": False, "w1_resolved": False,
-        }
-
-    # ---- Step 2: w1 limits via mu1 perturbation ----
-    if not w2_opposite:
-        return {
-            "w2_left": w2_left, "w2_right": w2_right, "w2_opposite": False,
-            "w1_left": None, "w1_right": None, "w1_opposite": None,
-            "is_boundary": False, "w1_resolved": False,
-        }
-
-    # Re-run inner mu2 bisection at mu1 ± ε.  Each perturbed mu1 builds
-    # its own ZeroManager.  If the perturbed mu1 also yields continuum
-    # (is_continuum=True), the zeros list is empty —
-    # _get_average_winding_from_zeros falls back to single-point sampling,
-    # which is correct: with no zeros the winding is constant on the full
-    # theta2 circle.
-    inner_left = _find_mu2_for_w2_zero(
-        char_poly, E_ref, mu1 - continuum_perturb, mu2_low, mu2_high,
-        continuum_tol=continuum_tol,
-        continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
-        max_range_expansions=max_range_expansions,
-        range_expand_factor=range_expand_factor, frac=frac,
-    )
-    inner_right = _find_mu2_for_w2_zero(
-        char_poly, E_ref, mu1 + continuum_perturb, mu2_low, mu2_high,
-        continuum_tol=continuum_tol,
-        continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
-        max_range_expansions=max_range_expansions,
-        range_expand_factor=range_expand_factor, frac=frac,
-    )
-
-    zeros_left = inner_left.get("zeros") or []
-    zeros_right = inner_right.get("zeros") or []
-
-    w1_left, _ = _get_average_winding_from_zeros(
-        char_poly, E_ref, mu1 - continuum_perturb, inner_left["mu2"],
-        zeros_left, direction=1,
-    )
-    w1_right, _ = _get_average_winding_from_zeros(
-        char_poly, E_ref, mu1 + continuum_perturb, inner_right["mu2"],
-        zeros_right, direction=1,
-    )
-
-    w1_opposite = bool(w1_left * w1_right < 0)
+    w1_left = _w1_at(mu1_val - eps)
+    w1_right = _w1_at(mu1_val + eps)
 
     return {
-        "w2_left": w2_left, "w2_right": w2_right, "w2_opposite": w2_opposite,
-        "w1_left": w1_left, "w1_right": w1_right, "w1_opposite": w1_opposite,
-        "is_boundary": w2_opposite and w1_opposite,
-        "w1_resolved": True,
+        "is_boundary": bool(w1_left * w1_right < 0),
+        "w1_left": w1_left,
+        "w1_right": w1_right,
+        "mu2_c": mu2_c,
     }
 
 
-@live_defaults(continuum_tol="core:CONTINUUM_TOL", continuum_perturb="core:CONTINUUM_PERTURB", max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL", max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS", range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR", frac="core:CONTINUUM_FRAC")
+# ---------------------------------------------------------------------------
+# Outer μ₁ bisection for the Ronkin minimum
+# ---------------------------------------------------------------------------
+
+@live_defaults(continuum_tol="core:CONTINUUM_TOL", continuum_perturb="core:CONTINUUM_PERTURB",
+               max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL",
+               max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS",
+               range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR")
 def bisect_amoeba_ronkin_min(
     char_poly: CharPoly,
     E_ref: complex,
@@ -398,30 +601,14 @@ def bisect_amoeba_ronkin_min(
     range_expand_factor: Optional[float] = None,
     frac: Optional[float] = None,
 ) -> dict:
-    """
-    Find the Ronkin function minimum by bisecting mu1 and mu2.
+    """Find the Ronkin function minimum by bisecting μ₁ and μ₂.
 
-    Outer loop: bisect mu1.
-    Inner loop: for each mu1, build an AmoebaZeroManager (μ₂-independent,
-    reused across all μ₂ evaluations), then find mu2 where a2 average
-    winding = 0, then evaluate w1 average winding at (mu1, mu2).
+    Outer loop: bisect μ₁.
+    Inner loop: ``_find_mu2_for_w2_zero`` (continuum-first).
 
-    The Ronkin minimum satisfies w1 = w2 = 0 simultaneously.
-
-    Continuum handling:
-    - When w1 is degenerate at (mu1_mid, mu2_0), perturb mu1 ± epsilon.
-      For each perturbed mu1, re-run the inner mu2 bisection to find w2=0,
-      then compute w1.
-      * Opposite signs → this is the boundary, stop.
-      * Same sign → use the sign to continue the outer bisection.
-
-    Returns a dict with keys:
-        mu1: critical mu1 value
-        mu2: critical mu2 value
-        zeros: list of (theta1, theta2, jump) crossing pairs at the critical point
-        is_continuum: whether the result is a continuum point
-        _zm: the AmoebaZeroManager built at the solved mu1 (reused by
-             collect_GBZ_subsets for subset extraction, avoiding a 2nd run)
+    When the inner solve returns a continuum boundary, the outer loop resolves
+    it with μ₁ ± ε perturbations: opposite w1 signs end the search; equal
+    signs update the μ₁ bracket.
     """
     # Evaluate w1 at the mu1 endpoints, with adaptive range expansion
     low, high = float(mu1_low), float(mu1_high)
@@ -434,24 +621,62 @@ def bisect_amoeba_ronkin_min(
             continuum_tol=continuum_tol,
             continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
             max_range_expansions=max_range_expansions,
-            range_expand_factor=range_expand_factor, frac=frac,
+            range_expand_factor=range_expand_factor,
         )
         inner_high = _find_mu2_for_w2_zero(
             char_poly, E_ref, high, mu2_low, mu2_high,
             continuum_tol=continuum_tol,
             continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
             max_range_expansions=max_range_expansions,
-            range_expand_factor=range_expand_factor, frac=frac,
+            range_expand_factor=range_expand_factor,
         )
 
-        w1_low, _ = _get_average_winding_from_zeros(
-            char_poly, E_ref, low, inner_low["mu2"],
-            inner_low["zeros"], direction=1,
-        )
-        w1_high, _ = _get_average_winding_from_zeros(
-            char_poly, E_ref, high, inner_high["mu2"],
-            inner_high["zeros"], direction=1,
-        )
+        # Every inner return may be a continuum boundary.  For an endpoint we
+        # only need a scalar w1 sign; if the endpoint itself is a w1 boundary,
+        # it is already the solution.
+        if inner_low["is_continuum"]:
+            hc_low = _handle_continuum(
+                char_poly, E_ref, low, inner_low["mu2"],
+                continuum_perturb=continuum_perturb,
+            )
+            if hc_low["is_boundary"]:
+                return {
+                    "mu1": low, "mu2": hc_low["mu2_c"], "zeros": [],
+                    "is_continuum": True,
+                    "_mu1_bracket": (low, high),
+                    "_w1_bracket": (hc_low["w1_left"], hc_low["w1_right"]),
+                    "_exit_reason": "continuum_boundary",
+                    "_continuum_members": inner_low.get("_continuum_members"),
+                    "_zm": inner_low.get("_zm"),
+                }
+            w1_low = hc_low["w1_right"]  # interior-side limit
+        else:
+            w1_low, _ = _get_average_winding_from_zeros(
+                char_poly, E_ref, low, inner_low["mu2"],
+                inner_low["zeros"], direction=1,
+            )
+
+        if inner_high["is_continuum"]:
+            hc_high = _handle_continuum(
+                char_poly, E_ref, high, inner_high["mu2"],
+                continuum_perturb=continuum_perturb,
+            )
+            if hc_high["is_boundary"]:
+                return {
+                    "mu1": high, "mu2": hc_high["mu2_c"], "zeros": [],
+                    "is_continuum": True,
+                    "_mu1_bracket": (low, high),
+                    "_w1_bracket": (hc_high["w1_left"], hc_high["w1_right"]),
+                    "_exit_reason": "continuum_boundary",
+                    "_continuum_members": inner_high.get("_continuum_members"),
+                    "_zm": inner_high.get("_zm"),
+                }
+            w1_high = hc_high["w1_left"]  # interior-side limit
+        else:
+            w1_high, _ = _get_average_winding_from_zeros(
+                char_poly, E_ref, high, inner_high["mu2"],
+                inner_high["zeros"], direction=1,
+            )
 
         if w1_low * w1_high <= 0:
             break
@@ -470,7 +695,7 @@ def bisect_amoeba_ronkin_min(
         mu1_mid = 0.5 * (mu1_low + mu1_high)
 
         # Build the ZeroManager once for this mu1_mid — reused across all
-        # mu2 evaluations in the inner bisection.
+        # μ₂ evaluations in the inner bisection.
         zm = AmoebaZeroManager(char_poly, E_ref, mu1_mid)
         zm.run()
 
@@ -479,83 +704,49 @@ def bisect_amoeba_ronkin_min(
             continuum_tol=continuum_tol,
             continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
             max_range_expansions=max_range_expansions,
-            range_expand_factor=range_expand_factor, frac=frac, _zm=zm,
+            range_expand_factor=range_expand_factor, _zm=zm,
         )
 
         mu2_mid = inner_mid["mu2"]
 
         # ---- continuum path ----
-        # When the inner bisection hits a continuum, zeros are [] and
-        # w1 cannot be computed from them.  Compute w1 left/right limits
-        # via mu1 perturbation instead.
-        w1_area = 0.0  # plateau pre-check area (only meaningful in non-continuum path)
         if inner_mid["is_continuum"]:
-            resolved = _resolve_continuum(
-                char_poly, E_ref, mu1_mid, mu2_mid, zm,
-                mu2_low=mu2_low, mu2_high=mu2_high,
+            hc = _handle_continuum(
+                char_poly, E_ref, mu1_mid, mu2_mid,
                 continuum_perturb=continuum_perturb,
-                continuum_tol=continuum_tol,
-                max_iter=max_iter, xtol=xtol,
-                max_range_expansions=max_range_expansions,
-                range_expand_factor=range_expand_factor, frac=frac,
             )
 
-            if resolved["is_boundary"]:
-                # Both w2 and w1 limits straddle zero → Ronkin minimum.
+            if hc["is_boundary"]:
+                # Both axes straddle zero → Ronkin minimum at the continuum
+                # boundary.  Outer bisection ends here.
                 return {
-                    "mu1": mu1_mid, "mu2": mu2_mid, "zeros": [],
+                    "mu1": mu1_mid, "mu2": hc["mu2_c"], "zeros": [],
                     "is_continuum": True,
                     "_mu1_bracket": (mu1_low, mu1_high),
                     "_w1_bracket": (w1_low, w1_high),
                     "_exit_reason": "continuum_boundary",
+                    "_continuum_members": inner_mid.get("_continuum_members"),
                     "_zm": zm,
                 }
 
-            if resolved["w1_resolved"]:
-                # w2 opposite but w1 not — same sign or a zero limit: the w1
-                # zero is OUTSIDE (or at the edge of) the band.  w1_left == 0
-                # is a zero-plateau signal at mu1_mid−ε, NOT a GBZ point;
-                # returning that =0 edge lets the bisection converge there and
-                # the discrete path handle it.  w1_left/w1_right were computed
-                # at mu1_mid ∓ ε (ε = continuum_perturb, _resolve_continuum
-                # Step 2).  Set the bracket endpoint to the band edge nearest
-                # the zero — INCLUDING the =0 edge — paired with ITS winding,
-                # not the degenerate mu1_mid with a proxy bolted on.
-                w1_left = resolved["w1_left"]
-                w1_right = resolved["w1_right"]
-                if w1_left >= 0:
-                    mu1_high = mu1_mid - continuum_perturb
-                    w1_high = w1_left
-                else:
-                    mu1_low = mu1_mid + continuum_perturb
-                    w1_low = w1_right
-                continue
+            # w1 not opposite: update the μ₁ bracket by the sign of w1.
+            if hc["w1_left"] >= 0:
+                mu1_high = mu1_mid - continuum_perturb
+                w1_high = hc["w1_left"]
+            else:
+                mu1_low = mu1_mid + continuum_perturb
+                w1_low = hc["w1_right"]
+            continue
 
-            # _resolve_continuum could not pin down the w1 sign at this
-            # continuum: either w2 itself did not straddle zero, or every
-            # mu1-perturbation scale stayed inside the continuum band
-            # (resolved["w1_left"] is None in both).  This should not happen
-            # in a well-conditioned bisection — the inner mu2 bisection
-            # already confirmed a2 opposite via w_left * w_right < 0.  A
-            # silent 0.0 here would be mistaken for a converged Ronkin
-            # minimum, so raise instead (the top-level collect_GBZ_subsets
-            # turns this into a failed GBZResult, not a fake success).
-            raise RuntimeError(
-                f"Continuum at mu1={mu1_mid:.8g} could not be resolved: "
-                f"w1_resolved=False, w2_opposite={resolved['w2_opposite']}, "
-                f"w1_left={resolved['w1_left']}. The bisection's inner "
-                f"w2 straddle check and the continuum resolution disagree."
-            )
-        else:
-            # ---- normal (non-continuum) path ----
-            zeros_mid = inner_mid["zeros"]
+        # ---- normal (discrete) path ----
+        zeros_mid = inner_mid["zeros"]
 
-            # Compute w1 at (mu1_mid, mu2_mid), reusing zeros from the
-            # inner bisection — no extra root tracking needed.
-            w1_mid, w1_area = _get_average_winding_from_zeros(
-                char_poly, E_ref, mu1_mid, mu2_mid,
-                zeros_mid, direction=1,
-            )
+        # Compute w1 at (mu1_mid, mu2_mid), reusing zeros from the
+        # inner bisection — no extra root tracking needed.
+        w1_mid, w1_area = _get_average_winding_from_zeros(
+            char_poly, E_ref, mu1_mid, mu2_mid,
+            zeros_mid, direction=1,
+        )
 
         if abs(w1_mid) < xtol or (mu1_high - mu1_low) < xtol:
             exit_reason = "w1_zero" if abs(w1_mid) < xtol else "bracket_xtol"
@@ -579,7 +770,6 @@ def bisect_amoeba_ronkin_min(
             w1_low = w1_mid
 
     # Max iterations exhausted — the outer μ₁ bisection failed to converge.
-    # Raise with the best-known state (do not return a mid-bracket "success").
     mu1_final = 0.5 * (mu1_low + mu1_high)
     zeros_final = (inner_mid.get("zeros") or []) if inner_mid is not None else []
     raise RuntimeError(

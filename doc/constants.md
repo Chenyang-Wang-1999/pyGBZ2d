@@ -76,6 +76,7 @@ so assigning `arclength.SAFETY` reaches every controller built afterwards.
 | `STEP_MAX_ITER` | 20 | Rejection iterations allowed inside one step. |
 | `MAX_STEP` / `MIN_STEP` | 0.5 / 1e-12 | Hard step bounds. ⚠ `MIN_STEP` is machine-anchored. |
 | `ZERO_THRESHOLD` / `INF_THRESHOLD` | 1e-6 / 1e6 | \|β₂\| below/above which a root is a singular 0/∞ padding root. |
+| `PREDICT_MAX_ABS_ARG` | 1.0 | \|Vⱼ · Δθ₁\| above which the tangent prediction is held fixed (prevents `exp` overflow). |
 
 ## `pygbz2d.continuation.multiple_roots` — MR detection
 
@@ -138,19 +139,14 @@ together.
 | `MU1_MAX_ITER` | 60 | Iteration budget of the μ₁ bisection. |
 | `MAX_BRACKET_EXPANSIONS` | 10 | Cap on μ₁ bracket-expansion steps (error past this). |
 
-## `pygbz2d.amoeba.zm_extract`
-
-| Constant | Default | Meaning |
-|---|---|---|
-| `SNAP_TOL` | 1e-3 | A crossing θ₁ within this of a continuum LineSubset endpoint snaps to the continuum/MR boundary (deliberately decoupled from `CONTINUUM_TOL`: snap radius vs. band sensitivity). |
-| `ROOT_TOL` | 1e-9 | Root-match radius of the curve-consistency screen (shared MR rows match to machine precision; unrelated tracks differ by O(1)). |
-
 ## `pygbz2d.amoeba.bisect`
 
 | Constant | Default | Meaning |
 |---|---|---|
 | `BISECT_MAX_ITER` | 60 | μ₂ bisection budget. |
-| `BISECT_XTOL` | 1e-10 | μ₂ bisection x-tolerance. |
+| `BISECT_XTOL` | 1e-10 | μ₂ bisection fine-stage x-tolerance. |
+| `BISECT_COARSE_XTOL` | 1e-6 | μ₂ bisection coarse-stage tolerance (unrefined crossings). |
+| `EXTREMUM_INSERT_REL_TOL` | 1e-12 | Mesh-insert dedup tolerance for extremum refinement. |
 | `MAX_RANGE_EXPANSIONS` | 10 | μ₂ search-range expansion cap. |
 | `RANGE_EXPAND_FACTOR` | 2.0 | Range growth per expansion step. |
 
@@ -167,6 +163,7 @@ together.
 | Constant | Default | Meaning |
 |---|---|---|
 | `PLATEAU_AREA_THRESHOLD` | 1e-2 | Non-zero-winding-area fraction below which the plateau pre-check arms (a separate quantity from `PLATEAU_CLUSTER_TOL`: area fraction vs. torus radius). |
+| `SNAP_TOL` | 1e-3 | θ₁ snap radius: a PointSubset closer than this to a continuum LineSubset is removed. |
 
 ---
 
