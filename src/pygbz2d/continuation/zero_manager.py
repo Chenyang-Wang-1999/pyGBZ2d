@@ -29,6 +29,10 @@ MIN_DTHETA: float = 1e-10
 MR_JUMP: float = 1e-6
 MR_RESTART_FACTOR_H0: float = 10.0
 MR_RESTART_FACTOR_ABS: float = 100.0
+#: Same-MR re-detection retry: each retry multiplies the restart jump by
+#: this factor (bounded by MR_REDETECT_MAX_RETRIES).
+MR_REDETECT_RETRY_FACTOR: float = 2.0
+MR_REDETECT_MAX_RETRIES: int = 4
 #: Refined MR θ₁ closer than this to the previous one = no forward progress.
 MR_STUCK_TOL: float = 1e-12
 #: |θ − 2π| below which a boundary MR is pinned to exactly 2π.
@@ -271,6 +275,21 @@ def integrate_segment(
 def _normalize_theta(theta: float) -> float:
     """Normalize to [0, 2π)."""
     return float(theta % (TWO_PI))
+
+
+def _same_mr_cluster(
+    cluster_a: list[tuple[int, ...]],
+    cluster_b: list[tuple[int, ...]],
+) -> bool:
+    """Whether two MR cluster-index lists describe the same cluster set.
+
+    The comparison is order-independent (both the list of clusters and the
+    column tuples inside each cluster), because the track order on a
+    re-detection may be permuted by the restart matching.
+    """
+    norm_a = frozenset(frozenset(c) for c in cluster_a)
+    norm_b = frozenset(frozenset(c) for c in cluster_b)
+    return norm_a == norm_b
 
 
 # ---------------------------------------------------------------------------
@@ -528,6 +547,9 @@ class ZeroManager:
         # integrator's own and need a post-loop fallback.
         boundary_perm_set = False
 
+        # Same-MR re-detection retry counter (see the MR branch below).
+        redetect_retries = 0
+
         # ---- Integrate segments ----
         # `for` with a hard cap instead of `while theta < 2π`: the integrator
         # already advances θ to 2π (completed) or an MR; the cap only catches
@@ -604,6 +626,33 @@ class ZeroManager:
                 if cluster:
                     if verbose:
                         print("Find multiple roots. Cluster = ", cluster)
+                    # Same-MR re-detection guard: when the restart row still
+                    # lands inside the previous MR's degenerate neighbourhood
+                    # and the same cluster is detected again, do not append a
+                    # duplicate MR.  Restart farther away and retry.
+                    if left_mr >= 0:
+                        prev_mr = self.multiple_roots[left_mr]
+                        same_cluster = _same_mr_cluster(
+                            cluster, prev_mr.cluster_indices)
+                        if (same_cluster
+                                and theta1_mr <= prev_mr.theta1 + mr_jump_eff):
+                            redetect_retries += 1
+                            if redetect_retries > MR_REDETECT_MAX_RETRIES:
+                                raise RuntimeError(
+                                    f"Same MR re-detected {redetect_retries} "
+                                    f"times at θ≈{theta1_mr!r} (prev "
+                                    f"θ={prev_mr.theta1!r}); the restart "
+                                    f"distance may still be too small for the "
+                                    f"current (h0, min_dtheta) pair."
+                                )
+                            jump = mr_jump_eff * (
+                                MR_REDETECT_RETRY_FACTOR ** redetect_retries)
+                            theta = min(prev_mr.theta1 + jump, TWO_PI)
+                            roots = self._to_track_order(
+                                self._solve(theta), theta,
+                                prev_mr.theta1, prev_mr.roots,
+                            )
+                            continue
                     # Forward-progress guard: the refined MR must lie strictly
                     # past the MR that closed the previous segment.  A θ₁ at or
                     # behind it means the restart landed before the MR again

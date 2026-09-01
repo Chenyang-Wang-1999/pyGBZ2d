@@ -45,9 +45,10 @@ touch 的语义本应是"方向不可信"（MIN_DIRECTION_DERIV 保护），但�
 
 ## 验收标准
 
-- [ ] 两个 backend 下 `n_multiple_roots` 与 event kind 在上述两个模型上
-      一致（与噪声无关）；
-- [ ] 默认全套 + `POLY_BACKEND=numpy` 全套绿；
-- [ ] 现有两个放宽断言的测试恢复严格断言（test_zero_manager.
-      test_poly_A_no_generic_mr 恢复 ==1；test_sgbz.
-      test_mu01_has_single_seam_event_group 恢复 =='cross'）。
+- [x] 现象 2 已修复（2026-09-01）：`test_zero_manager.
+      test_poly_A_no_generic_mr` 恢复 `== 1`，且 numpy / poly_tools 两个
+      backend 下均通过。`zero_manager.py` 新增 same-cluster re-detection
+      守卫（`MR_REDETECT_RETRY_FACTOR` / `MR_REDETECT_MAX_RETRIES`）。
+- [ ] 现象 1 仍未修复：`test_sgbz.test_mu01_has_single_seam_event_group`
+      仍为 `ev.kind in ('cross', 'touch')`，待改 pairwise touch 通道。
+- [ ] 默认全套 + `POLY_BACKEND=poly_tools` 全套绿（未重新全量跑）。

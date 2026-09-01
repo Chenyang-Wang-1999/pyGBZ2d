@@ -158,23 +158,16 @@ class TestMultipleRootDetection:
         """Poly A at μ₁=0 has a non-generic double root at 0.  The initial
         detect_cluster at θ₁=0 catches it.
 
-        The exact MR record COUNT on this non-generic model is
-        backend-noise-determined: at the restart row (θ₁ = mr_jump past the
-        MR) the true root split is below double-precision resolvability, so
-        whether the re-solve returns an exactly-equal pair (divergent
-        tangent → point trigger → same cluster recorded again) or a
-        noise-split pair is decided by last-ULP coefficient rounding.  The
-        backend-invariant content: the initial cluster IS caught, every
-        recorded MR is the same degenerate pair, and the run completes
-        without the ping-pong guard firing.
+        The restart row (θ₁ = mr_jump past the MR) can still land inside the
+        same degenerate neighbourhood and re-detect the same cluster; the
+        run loop must recognise that as a re-detection and restart farther
+        instead of appending a duplicate MR.
         """
         zm = ZeroManager(poly_A, 0j, 0.0)
-        zm.run(h0=0.1, cluster_tol=1e-4, verbose=True)
-        # Non-generic but still detectable by explicit cluster check.
-        assert zm.n_multiple_roots >= 1
+        zm.run(h0=0.1, cluster_tol=1e-4)
+        assert zm.n_multiple_roots == 1
         assert zm.multiple_roots[0].theta1 == 0.0
-        for mr in zm.multiple_roots:
-            assert list(mr.cluster_indices) == [(0, 1)]
+        assert list(zm.multiple_roots[0].cluster_indices) == [(0, 1)]
 
     def test_poly_C_no_generic_mr(self, poly_C):
         """Poly C has non-generic triple/double roots — detect_cluster
