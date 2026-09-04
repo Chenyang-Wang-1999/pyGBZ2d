@@ -574,14 +574,45 @@ def debug_y_SGBZ():
     print(bfs.collect_GBZ_subsets(coeffs, degs, E_ref, debug_mode=True))
 
 
+def Hermitian_Haldane_sweep():
+    param = (
+        1, #t1,
+        0.5, #t2,
+        pi / 3, # phi
+        3, # M
+        0 # gamma
+    )
+
+    model = Haldane_non_Hermitian_phase(*param)
+    model.InterCell += [
+        (0, 0, 2, (1,0)),
+        (0, 0, 2, (-1,0)),
+        (1, 1, 2, (1,0)),
+        (1, 1, 2, (-1,0))
+    ]
+    k = np.linspace(-0.5, 0.5, 101)
+    k1, k2 = np.meshgrid(k, k)
+    E_mesh = np.zeros((2, len(k), len(k)))
+
+    for row_ind in range(len(k)):
+        for col_ind in range(len(k)):
+            E_mesh[:, row_ind, col_ind] = la.eigh(
+                model.get_bulk_Hamiltonian_dense((k1[row_ind, col_ind], k2[row_ind, col_ind]))
+            )[0]
+    fig = plt.figure()
+    ax = fig.add_subplot(projection="3d")
+    ax.plot_surface(k1, k2, E_mesh[0, :])
+    ax.plot_surface(k1, k2, E_mesh[1, :])
+    plt.show()
+
 
 if __name__ == "__main__":
-    sweep_amoeba()
-    sweep_amoeba_multiband()
-    sweep_SGBZ_a1()
-    sweep_SGBZ_a2()
-    sweep_SGBZ_x()
-    sweep_SGBZ_y()
+    # sweep_amoeba()
+    # sweep_amoeba_multiband()
+    # sweep_SGBZ_a1()
+    # sweep_SGBZ_a2()
+    # sweep_SGBZ_x()
+    # sweep_SGBZ_y()
     # recompute_failed_SGBZ("y")
     # recompute_failed_SGBZ("y", out_fname="data/Haldane-gain-loss-y-SGBZ-recomputed.pkl")
     # recompute_failed_SGBZ("x", out_fname="data/Haldane-gain-loss-x-SGBZ-recomputed.pkl")
@@ -602,3 +633,4 @@ if __name__ == "__main__":
     # plot_index_E("-xy")
     # plt.show()
     # debug_y_SGBZ()
+    Hermitian_Haldane_sweep()
