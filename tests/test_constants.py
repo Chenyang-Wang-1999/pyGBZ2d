@@ -188,7 +188,7 @@ class TestNoMagicDefaults:
             return []
         offenders = []
         for p in SRC.rglob("*.py"):
-            for node in ast.walk(ast.parse(p.read_text())):
+            for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
                 if not isinstance(node, ast.FunctionDef):
                     continue
                 pairs = []
@@ -220,7 +220,7 @@ class TestNoConstantValueImports:
         for p in SRC.rglob("*.py"):
             if p.name == "__init__.py":
                 continue  # package re-exports are fine
-            for node in ast.walk(ast.parse(p.read_text())):
+            for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
                 if isinstance(node, ast.ImportFrom):
                     for alias in node.names:
                         if alias.name in HOME:
@@ -239,7 +239,7 @@ class TestDecoratorStructure:
     def test_params_exist_and_keys_resolve(self):
         bad = []
         for p in SRC.rglob("*.py"):
-            for node in ast.walk(ast.parse(p.read_text())):
+            for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
                 if not isinstance(node, ast.FunctionDef):
                     continue
                 for d in node.decorator_list:

@@ -57,16 +57,24 @@ brute-force-non-hermitian/
 │   │   ├── zm_extract.py      # AmoebaZeroManager, detect_continuum, find_crossings,
 │   │   │                      #   calculate_a2_average_winding
 │   │   └── amoeba.py          # collect_GBZ_subsets, subset assembly, plateau check
-│   └── continuation/          # Pseudo-arclength continuation for β₂-root tracking along θ₁
-│       ├── __init__.py        # Public API re-exports
-│       ├── interpolation.py   # hermite_interp_poly (cubic Hermite kernel shared by
-│       │                      #   predict_roots_hermite and Mu2Mid pieces)
-│       ├── arclength.py       # compute_tangent, predict_roots, estimate_error,
-│       │                      #   arclength_step, StepControl (fields resolve from
-│       │                      #   this module's constants at construction)
-│       ├── multiple_roots.py  # MR detection: point/interval triggers, detect_cluster,
-│       │                      #   solve_multiple_roots_in_interval, MultipleRootInfo
-│       └── zero_manager.py    # ZeroManager orchestrator, integrate_segment, SegmentData
+│   ├── continuation/          # Pseudo-arclength continuation for β₂-root tracking along θ₁
+│   │   ├── __init__.py        # Public API re-exports
+│   │   ├── interpolation.py   # hermite_interp_poly (cubic Hermite kernel shared by
+│   │   │                      #   predict_roots_hermite and Mu2Mid pieces)
+│   │   ├── arclength.py       # compute_tangent, predict_roots, estimate_error,
+│   │   │                      #   arclength_step, StepControl (fields resolve from
+│   │   │                      #   this module's constants at construction)
+│   │   ├── multiple_roots.py  # MR detection: point/interval triggers, detect_cluster,
+│   │   │                      #   solve_multiple_roots_in_interval, MultipleRootInfo
+│   │   └── zero_manager.py    # ZeroManager orchestrator, integrate_segment, SegmentData
+│   └── experimental/          # EXPERIMENTAL post-processing, NO stability guarantee
+│       ├── __init__.py        # explicit opt-in imports (not in top-level API)
+│       └── band_clustering.py # Radius-graph band clustering of GBZ sweep point clouds:
+│                              #   flatten_results (no line decimation) → (cos,sin) torus
+│                              #   embed → cKDTree + connected components; cluster_bands
+│                              #   entry point; eps-window diagnostics (stability scan,
+│                              #   widest plateau, inter-cluster margins); scan capped
+│                              #   (EPS_SCAN_MAX) + early-stop at full merge
 ├── tests/                      # pytest: test_backend.py (dual-backend parity),
 │                               #   test_constants.py (live-assignment contract + AST lint),
 │                               #   test_gbz_types→core, test_sgbz, test_amoeba,
