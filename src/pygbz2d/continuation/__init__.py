@@ -16,7 +16,7 @@ Polynomial interpolation:
 
 Multiple-root detection & refinement:
     multiple_root_point_trigger, MultipleRootIntervalTrigger,
-    detect_cluster, solve_multiple_roots_in_interval,
+    MRTriggerRecord, detect_cluster, solve_multiple_roots_in_interval,
     solve_multiple_roots_iterative, MultipleRootInfo
 
 Segment integration (stops at end or MR):
@@ -50,6 +50,7 @@ from .zero_manager import (
 
 from .multiple_roots import (
     MultipleRootInfo,
+    MRTriggerRecord,
     multiple_root_point_trigger,
     MultipleRootIntervalTrigger,
     detect_cluster,
@@ -66,6 +67,7 @@ __all__ = [
     "hermite_interp_poly",
     "multiple_root_point_trigger",
     "MultipleRootIntervalTrigger",
+    "MRTriggerRecord",
     "detect_cluster",
     "solve_multiple_roots_in_interval",
     "solve_multiple_roots_iterative",

@@ -88,10 +88,19 @@ points $d\beta_2/d\theta_1$ diverges, making $\|\mathbf{V}\|_2 \to \infty$ and
 $\Delta\theta_1 \to 0$, even though the tangent prediction error may remain small.
 
 The interval trigger catches **accidental multiple roots** where the tangent stays
-well-conditioned and the step size never collapses.  It tracks the closest-pair
-distance derivative across steps and triggers when the sign flips from negative
-(approaching) to positive (separating), indicating a local minimum.  The
-same-pair guard prevents spurious flips when the closest pair changes identity.
+well-conditioned and the step size never collapses.  It computes the pairwise
+distances and their $\theta_1$-derivatives for **every** root pair at once
+(vectorized `_pairwise_dist_deriv`) and tracks each pair's derivative sign
+across steps; a pair triggers when **its own** sign flips from negative
+(approaching) to positive (separating), indicating a local minimum of that
+pair's distance.  Per-pair tracking matters for **simultaneous degeneracies**:
+when two pairs merge at the same $\theta_1$ (a symmetric double MR) their
+distances are tied and the *closest-pair* identity flickers row by row — a
+single closest-pair state with a same-pair guard (the retired design) blocks
+the flip detection exactly at the sign change.  Each pair is armed only while
+its own distance stays below `MIN_DIST_THRESHOLD`.  One stop emits a
+`list[MRTriggerRecord]` — one record per flipped pair, all sharing the
+trigger bracket $(\theta_{lo}, \theta_{hi})$.
 
 **Non-generic double roots** (where both $\partial f/\partial\beta_1 = 0$ and
 $\partial f/\partial\beta_2 = 0$) have a finite tangent via l'Hôpital's rule and
@@ -103,16 +112,19 @@ Both triggers surface their result through `SegmentResult.stop_reason`:
 |---------------|---------|
 | `StopReason.completed` | Reached $\theta_1 = 2\pi$ without hitting an MR |
 | `StopReason.multiple_root_encountered` | Step-size collapsed → refine at the current $\theta_1$ |
-| `StopReason.multiple_root_in_interval` | Derivative sign flipped → bisect $[\theta_a, \theta_b]$ via Brent's method |
+| `StopReason.multiple_root_in_interval` | One or more pairs' derivative sign flipped → per-pair Brent on each record's bracket (`mr_triggers`) |
 
 ### 2.5 Multiple root refinement
 
 Two complementary approaches for locating multiple roots:
 
 **Brent-based (1D, fixed μ₁):** `solve_multiple_roots_in_interval` locates the exact
-$\theta_1$ of a multiple root via Brent's method on the closest-pair distance
-derivative.  The root pair is tracked via Hungarian matching to maintain identity
-across the bracketing interval.
+$\theta_1$ of a multiple root via Brent's method on a pairwise distance
+derivative.  With `min_pair` given, $g(\theta)$ is **that pair's own**
+derivative — continuous across closest-pair identity changes, which an
+argmin-based $g$ is not exactly at the flip; without it, the closest pair's
+derivative is used.  The root pair is tracked via Hungarian matching to
+maintain identity across the bracketing interval.
 
 **Newton-based (4D, free β₁):** `solve_multiple_roots_iterative` solves the
 $4 \times 4$ real system
@@ -145,9 +157,19 @@ components of the chordal-distance proximity graph (using
 2. **Segment loop**: call `integrate_segment` to advance toward $2\pi$.  On each stop:
    - **completed** → Hungarian-match the right boundary to the left boundary
      ($\theta_1 = 0$), store `boundary_perm`, and finish.
-   - **MR encountered / in interval** → refine via `solve_multiple_roots_in_interval`.
-     If a cluster is confirmed, record the MR and its roots; otherwise treat as a
-     false positive and merge the segments.
+   - **MR encountered** → refine via `solve_multiple_roots_iterative`; a single
+     event per stop.
+   - **MR in interval** → per triggered pair, Brent-refine that pair's own
+     derivative zero inside its bracket, then group the candidate $\theta_1$s
+     into events by **zero coincidence** (a candidate belongs to an existing
+     event when its pair is already within `CLUSTER_TOL` at that event's
+     $\theta_1$ — the same physical degeneracy reached through different track
+     columns).  Simultaneous degeneracies of different zero pairs merge into
+     ONE event with several clusters; genuinely distinct nearby MRs stay
+     separate events, bridged by segments of densely sampled regular rows
+     (spacing ≤ `MR_DENSE_MAX_STEP`, ≥ `MR_DENSE_MIN_SAMPLES` interior rows).
+     If a cluster is confirmed, record the MR and its roots; otherwise treat
+     as a false positive and merge the segments.
 3. **False-positive MR (`pending`)**: when `_refine_mr` reports `cluster=[]` — the
    trigger fired but `detect_cluster` finds no real cluster at the located $\theta_1$ —
    the segment is held back in a `_PendingSeg` (its data minus the false-MR row, plus
@@ -269,7 +291,7 @@ from continuation import (
 | `estimate_error(predicted, actual)` | `error_norm` | Chordal-distance error norm |
 | `arclength_step(poly, E_ref, mu1, theta1, roots, h, ctrl=StepControl())` | `StepResult` | One adaptive step |
 | `multiple_root_point_trigger(dtheta, *, min_dtheta=1e-10)` | `bool` | Step-size collapse check |
-| `MultipleRootIntervalTrigger(min_dist_threshold)` | callable | Sign-flip detector |
+| `MultipleRootIntervalTrigger(min_dist_threshold)` | callable | Per-pair sign-flip detector; returns `list[MRTriggerRecord]` |
 | `detect_cluster(roots, *, cluster_tol=1e-6)` | `list[tuple[int,...]]` | Connected components of close roots |
 | `solve_multiple_roots_in_interval(poly, E_ref, mu1, theta1_left, theta1_right, roots_ref, min_pair=None)` | `theta1_mr` | Brent refinement (1D, fixed μ₁) |
 | `solve_multiple_roots_iterative(poly, E_ref, beta1_approx, beta2_approx)` | `(beta1_mr, beta2_mr)` | Newton refinement (4D, free β₁) |

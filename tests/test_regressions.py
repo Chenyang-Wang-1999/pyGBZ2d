@@ -142,12 +142,16 @@ class TestM4IntervalTriggerNanBlindness:
         V2 = np.array([np.nan + 0j, 0.1 + 0j, 0.5 + 0j, 0.5 + 0j])
 
         trig = MultipleRootIntervalTrigger(min_dist_threshold=0.1)
-        ok1, _ = trig(roots1, V1, 0.0)
-        ok2, interval = trig(roots2, V2, 0.1)
-        assert not ok1
-        assert ok2, "approach→separation flip must fire despite nan sentinel"
-        assert interval == (0.0, 0.1)
-        assert np.isfinite(trig._prev_deriv) or ok2  # no nan persisted
+        recs1 = trig(roots1, V1, 0.0)
+        recs2 = trig(roots2, V2, 0.1)
+        assert recs1 == []
+        assert len(recs2) == 1, \
+            "approach→separation flip must fire despite nan sentinel"
+        assert recs2[0].pair == (2, 3)
+        assert recs2[0].theta_lo == 0.0
+        assert recs2[0].theta_hi == 0.1
+        # no nan persisted in the per-pair state
+        assert np.all(np.isfinite(trig._prev_deriv))
 
     def test_all_singular_roots_return_sentinel(self):
         d, deriv, pair = _closest_pair_deriv(

@@ -32,7 +32,9 @@ from pygbz2d.continuation.arclength import ZERO_THRESHOLD, INF_THRESHOLD
 from pygbz2d.continuation.multiple_roots import (
     multiple_root_point_trigger,
     MultipleRootIntervalTrigger,
+    MRTriggerRecord,
     _closest_pair_deriv,
+    _pairwise_dist_deriv,
     detect_cluster,
     snap_clusters_to_mean,
     solve_multiple_roots_in_interval,
@@ -751,9 +753,8 @@ class TestMultipleRootIntervalTrigger:
         trigger = MultipleRootIntervalTrigger(min_dist_threshold=0.1)
         roots = np.array([1.0 + 0j, 2.0 + 0j])  # distance 1.0 > 0.1
         V = np.array([-1.0 + 0j, 1.0 + 0j])
-        ok, interval = trigger(roots, V, 0.0)
-        assert not ok
-        assert interval is None
+        records = trigger(roots, V, 0.0)
+        assert records == []
 
     def test_trigger_on_approach_then_separate(self):
         """Same pair approaches (deriv<0) then separates (deriv>0) → trigger."""
@@ -762,33 +763,92 @@ class TestMultipleRootIntervalTrigger:
         # Step 1: roots at distance 0.05 (< 0.1), approaching.
         roots1 = np.array([0.0 + 0j, 0.05 + 0j])
         V1 = np.array([1.0 + 0j, -1.0 + 0j])
-        ok, interval = trigger(roots1, V1, 0.0)
-        assert not ok  # first call, prev_sign=0
+        records = trigger(roots1, V1, 0.0)
+        assert records == []  # first call, prev sign unset
 
         # Step 2: roots at distance 0.02, separating.
         roots2 = np.array([0.015 + 0j, 0.035 + 0j])
         V2 = np.array([-1.0 + 0j, 1.0 + 0j])
-        ok, interval = trigger(roots2, V2, 0.1)
-        assert ok
-        assert interval is not None
-        assert interval[0] == 0.0
-        assert interval[1] == 0.1
+        records = trigger(roots2, V2, 0.1)
+        assert len(records) == 1
+        rec = records[0]
+        assert rec.pair == (0, 1)
+        assert rec.theta_lo == 0.0
+        assert rec.theta_hi == 0.1
+        assert rec.deriv_lo < 0
+        assert rec.deriv_hi > 0
 
     def test_no_trigger_on_pair_change(self):
-        """Closest pair changes identity between steps → no trigger."""
+        """A pair that was unarmed at the previous step cannot fire.
+
+        Per-pair tracking replaced the old same-pair guard: the closest
+        pair changing identity no longer blocks OTHER pairs.  In this
+        data pair (1,2) was above the threshold at step 1 (unarmed), so
+        its separation at step 2 still does not fire.
+        """
         trigger = MultipleRootIntervalTrigger(min_dist_threshold=0.1)
 
-        # Step 1: pair (0,1) closest, approaching.
+        # Step 1: pair (0,1) closest, approaching; pair (1,2) far apart.
         roots1 = np.array([0.0 + 0j, 0.05 + 0j, 1.0 + 0j])
         V1 = np.array([0.0 + 0j, -1.0 + 0j, 0.0 + 0j])
-        ok, _ = trigger(roots1, V1, 0.0)
-        assert not ok
+        records = trigger(roots1, V1, 0.0)
+        assert records == []
 
         # Step 2: pair (1,2) now closest (different pair), separating.
         roots2 = np.array([0.0 + 0j, 0.03 + 0j, 0.04 + 0j])
         V2 = np.array([0.0 + 0j, 0.0 + 0j, 1.0 + 0j])
-        ok, _ = trigger(roots2, V2, 0.1)
-        assert not ok  # pair changed → no trigger
+        records = trigger(roots2, V2, 0.1)
+        assert records == []  # (1,2) was unarmed at step 1
+
+    def test_simultaneous_two_pair_flip(self):
+        """Two pairs flipping in the same step → two records, one interval.
+
+        The simultaneous-degeneracy case (e.g. symmetric double MR) that
+        the old single-closest-pair state missed: with both pairs' fires
+        in one record set the caller can refine each pair separately.
+        """
+        trigger = MultipleRootIntervalTrigger(min_dist_threshold=0.1)
+
+        # Step 1: pairs (0,1) and (2,3) both approaching.
+        roots1 = np.array([0.00 + 0j, 0.05 + 0j,
+                           2.00 + 0j, 2.05 + 0j])
+        V1 = np.array([1.0 + 0j, -1.0 + 0j, 1.0 + 0j, -1.0 + 0j])
+        records = trigger(roots1, V1, 0.0)
+        assert records == []
+
+        # Step 2: both pairs separating.
+        roots2 = np.array([0.015 + 0j, 0.035 + 0j,
+                           2.015 + 0j, 2.035 + 0j])
+        V2 = np.array([-1.0 + 0j, 1.0 + 0j, -1.0 + 0j, 1.0 + 0j])
+        records = trigger(roots2, V2, 0.1)
+        assert len(records) == 2
+        pairs = {rec.pair for rec in records}
+        assert pairs == {(0, 1), (2, 3)}
+        # Both share the trigger interval.
+        for rec in records:
+            assert rec.theta_lo == 0.0
+            assert rec.theta_hi == 0.1
+
+    def test_tied_distances_argmin_flicker_still_fires(self):
+        """The regression shape: two near-tied pairs whose argmin identity
+        alternates row by row — per-pair tracking still fires both."""
+        trigger = MultipleRootIntervalTrigger(min_dist_threshold=0.1)
+
+        # Step 1: (0,1) marginally the closest pair, both approaching.
+        roots1 = np.array([0.00 + 0j, 0.050 + 0j,
+                           3.00 + 0j, 3.051 + 0j])
+        V1 = np.array([1.0 + 0j, -1.0 + 0j, 1.0 + 0j, -1.0 + 0j])
+        records = trigger(roots1, V1, 0.0)
+        assert records == []
+
+        # Step 2: (2,3) marginally the closest now, both separating —
+        # the argmin changed identity exactly at the flip, which the old
+        # same-pair guard treated as a spurious flip.
+        roots2 = np.array([0.015 + 0j, 0.0355 + 0j,
+                           3.015 + 0j, 3.0350 + 0j])
+        V2 = np.array([-1.0 + 0j, 1.0 + 0j, -1.0 + 0j, 1.0 + 0j])
+        records = trigger(roots2, V2, 0.1)
+        assert {rec.pair for rec in records} == {(0, 1), (2, 3)}
 
     def test_state_reset_above_threshold(self):
         """Distance exceeds threshold → state reset, no false trigger."""
@@ -797,20 +857,42 @@ class TestMultipleRootIntervalTrigger:
         # Step 1: roots close, approaching.
         roots1 = np.array([0.0 + 0j, 0.05 + 0j])
         V1 = np.array([1.0 + 0j, -1.0 + 0j])
-        ok, _ = trigger(roots1, V1, 0.0)
-        assert not ok
+        records = trigger(roots1, V1, 0.0)
+        assert records == []
 
         # Step 2: roots far apart (> threshold) → state reset.
         roots2 = np.array([0.0 + 0j, 1.0 + 0j])
         V2 = np.array([0.0 + 0j, 0.0 + 0j])
-        ok, _ = trigger(roots2, V2, 0.1)
-        assert not ok
+        records = trigger(roots2, V2, 0.1)
+        assert records == []
 
-        # Step 3: roots close again, separating → no trigger (prev_sign=0).
+        # Step 3: roots close again, separating → no trigger (prev unset).
         roots3 = np.array([0.04 + 0j, 0.05 + 0j])
         V3 = np.array([1.0 + 0j, 1.0 + 0j])
-        ok, _ = trigger(roots3, V3, 0.2)
-        assert not ok
+        records = trigger(roots3, V3, 0.2)
+        assert records == []
+
+    def test_per_pair_threshold_reset(self):
+        """A pair above the threshold resets independently of others."""
+        trigger = MultipleRootIntervalTrigger(min_dist_threshold=0.1)
+
+        # Step 1: (0,1) armed approaching; (2,3) far above threshold.
+        roots1 = np.array([0.00 + 0j, 0.05 + 0j, 5.0 + 0j, 6.0 + 0j])
+        V1 = np.array([1.0 + 0j, -1.0 + 0j, 0.0 + 0j, 0.0 + 0j])
+        assert trigger(roots1, V1, 0.0) == []
+
+        # Step 2: (2,3) drops below threshold already separating — no
+        # prev sign → no trigger; (0,1) still approaching → no trigger.
+        roots2 = np.array([0.010 + 0j, 0.045 + 0j, 5.0 + 0j, 5.05 + 0j])
+        V2 = np.array([1.0 + 0j, -1.0 + 0j, -1.0 + 0j, 1.0 + 0j])
+        assert trigger(roots2, V2, 0.1) == []
+
+        # Step 3: (0,1) separating now — prev(0,1) < 0 → fires; (2,3)
+        # approaching, prev(2,3) > 0 → no fire.
+        roots3 = np.array([0.020 + 0j, 0.025 + 0j, 5.01 + 0j, 5.04 + 0j])
+        V3 = np.array([-1.0 + 0j, 1.0 + 0j, 1.0 + 0j, -1.0 + 0j])
+        records = trigger(roots3, V3, 0.2)
+        assert [rec.pair for rec in records] == [(0, 1)]
 
     def test_closest_pair_deriv_returns_pair(self):
         """_closest_pair_deriv returns the correct closest-pair indices."""
@@ -825,3 +907,49 @@ class TestMultipleRootIntervalTrigger:
         """Point trigger fires when dtheta < min_dtheta."""
         assert multiple_root_point_trigger(1e-12, min_dtheta=1e-10)
         assert not multiple_root_point_trigger(1e-8, min_dtheta=1e-10)
+
+    def test_pairwise_dist_deriv_matches_scalar(self):
+        """Vectorized _pairwise_dist_deriv == the retired scalar loop."""
+        rng = np.random.default_rng(20260904)
+        for _ in range(20):
+            n = int(rng.integers(2, 7))
+            roots = (rng.normal(size=n) + 1j * rng.normal(size=n)) * 2
+            V = rng.normal(size=n) + 1j * rng.normal(size=n)
+            # Sprinkle nan/inf tangents (0/∞ padding and branch points).
+            for j in range(n):
+                r = rng.random()
+                if r < 0.15:
+                    V[j] = np.nan + 0j
+                elif r < 0.3:
+                    V[j] = np.inf + 0j
+
+            finite = [j for j in range(n)
+                      if np.isfinite(V[j].real) and np.isfinite(V[j].imag)]
+            expected = {}
+            for a in range(len(finite)):
+                for b in range(a + 1, len(finite)):
+                    i, j = finite[a], finite[b]
+                    d = abs(roots[i] - roots[j])
+                    beta_dot_i = V[i] * roots[i]
+                    beta_dot_j = V[j] * roots[j]
+                    dv = 2.0 * np.real(
+                        (beta_dot_i - beta_dot_j)
+                        * np.conj(roots[i] - roots[j]))
+                    expected[(i, j)] = (d, dv)
+
+            pairs, dist, deriv = _pairwise_dist_deriv(roots, V)
+            got = {(int(pairs[k, 0]), int(pairs[k, 1])):
+                   (float(dist[k]), float(deriv[k]))
+                   for k in range(len(pairs))}
+            assert set(got) == set(expected)
+            for key in expected:
+                assert got[key][0] == pytest.approx(expected[key][0])
+                assert got[key][1] == pytest.approx(expected[key][1])
+
+    def test_pairwise_dist_deriv_singular_only(self):
+        """Fewer than two finite-tangent roots → empty pair list."""
+        pairs, dist, deriv = _pairwise_dist_deriv(
+            np.array([0j, 1j]), np.array([np.nan + 0j, np.inf + 0j]))
+        assert len(pairs) == 0
+        assert len(dist) == 0
+        assert len(deriv) == 0

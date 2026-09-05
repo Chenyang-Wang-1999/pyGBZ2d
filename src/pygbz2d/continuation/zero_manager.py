@@ -41,6 +41,13 @@ BOUNDARY_THETA_TOL: float = 1e-6
 MR_GAUGE_TOL: float = 0.1
 #: Hard cap on segment count (runaway protection).
 MAX_SEGMENTS: int = 10000
+#: Dense sampling between MR events found inside ONE trigger bracket:
+#: maximum θ₁ spacing of the regular rows sampled between two
+#: consecutive events.
+MR_DENSE_MAX_STEP: float = 1e-4
+#: Dense sampling between bracket events: minimum number of interior
+#: sample rows between two consecutive events.
+MR_DENSE_MIN_SAMPLES: int = 8
 from pygbz2d.core import (
     TWO_PI,
     CharPoly,
@@ -57,6 +64,7 @@ from .arclength import (
 from . import multiple_roots
 from .multiple_roots import (
     MultipleRootInfo,
+    MRTriggerRecord,
     multiple_root_point_trigger,
     MultipleRootIntervalTrigger,
     detect_cluster,
@@ -99,17 +107,19 @@ class SegmentResult(NamedTuple):
     * ``'multiple_root_encountered'`` — step size collapsed or integrator
       rejected; a multiple root is at or very near *mr_approx_theta*.
       ZeroManager should refine directly.
-    * ``'multiple_root_in_interval'`` — closest-pair distance derivative
-      flipped sign, so a local minimum (multiple root) lies in
-      [*mr_interval_start*, *mr_interval_end*].  ZeroManager should bisect
-      the interval to locate it, then refine.
+    * ``'multiple_root_in_interval'`` — one or more root pairs had their
+      closest-pair distance derivative flip sign, so each flipped pair
+      has a local minimum (multiple root) in
+      [*mr_triggers[k].theta_lo*, *mr_triggers[k].theta_hi*].
+      ZeroManager should bisect each pair's interval to locate its MR,
+      then refine.
 
     For both MR stop reasons, *mr_ref* is the MR-adjacent regular endpoint
     (the segment's last accepted row) — used as the single-endpoint
     prediction anchor for ``multiple_root_encountered``.  For
-    ``multiple_root_in_interval``, *mr_ref2* is the interval's other
-    endpoint so the caller can build a two-endpoint cubic Hermite anchor
-    straddling the bracketed MR.
+    ``multiple_root_in_interval``, *mr_ref2* is the trigger interval's
+    other endpoint so the caller can build a two-endpoint cubic Hermite
+    anchor straddling the bracketed MRs.
     """
     theta1_arr: np.ndarray
     tracked_roots: np.ndarray
@@ -122,9 +132,10 @@ class SegmentResult(NamedTuple):
     mr_ref: Optional[_MREndpoint] = None
     # Other endpoint of the trigger interval (only for in_interval).
     mr_ref2: Optional[_MREndpoint] = None
-    # Valid only for 'multiple_root_in_interval':
-    mr_interval_start: float = float('nan')
-    mr_interval_end: float = float('nan')
+    # Valid only for 'multiple_root_in_interval': one record per root pair
+    # whose own distance derivative flipped −→+ at this stop.  All records
+    # share the bracket (theta_lo, theta_hi) = (mr_ref2.theta, mr_ref.theta).
+    mr_triggers: tuple[MRTriggerRecord, ...] = ()
 
 
 def _abs_argsort(roots_2d: np.ndarray) -> np.ndarray:
@@ -185,7 +196,7 @@ def integrate_segment(
     interval_trigger = MultipleRootIntervalTrigger(min_dist_threshold)
 
     def _finish(stop_reason: StopReason, mr_approx_theta: float,
-                interval: tuple[float, float] = (float('nan'), float('nan')),
+                mr_triggers: tuple[MRTriggerRecord, ...] = (),
                 mr_ref: Optional[_MREndpoint] = None,
                 mr_ref2: Optional[_MREndpoint] = None,
                 ) -> SegmentResult:
@@ -204,8 +215,7 @@ def integrate_segment(
             n_rejected=n_rejected,
             mr_ref=mr_ref,
             mr_ref2=mr_ref2,
-            mr_interval_start=interval[0],
-            mr_interval_end=interval[1],
+            mr_triggers=tuple(mr_triggers),
         )
 
     while theta1 < theta_end:
@@ -227,22 +237,25 @@ def integrate_segment(
                                mr_ref=ref)
 
             # ---- Interval trigger: derivative sign flip ----
-            # Closest-pair distance went from shrinking to growing — a
-            # local minimum (multiple root) lies in [interval[0], interval[1]].
-            # Catches "accidental" multiple roots where the tangent stays
-            # well-conditioned and step size never collapses.
-            ok, interval = interval_trigger(roots, result.V, theta1)
-            if ok:
+            # One or more pairs went from shrinking to growing distance —
+            # each flipped pair has a local minimum (multiple root) inside
+            # [prev_theta, theta1].  Catches "accidental" multiple roots
+            # where the tangent stays well-conditioned and step size never
+            # collapses; per-pair tracking also catches simultaneous
+            # degeneracies whose closest-pair identity flickers row by row.
+            records = interval_trigger(roots, result.V, theta1)
+            if records:
                 # Two-endpoint anchor: the trigger's prev state (interval
                 # start) and the current accepted row (interval end) bracket
-                # the MR — both endpoints share the segment's track frame,
+                # the MRs — both endpoints share the segment's track frame,
                 # so a cubic Hermite between them is well-posed.
                 ref2 = _MREndpoint(interval_trigger._prev_theta,
                                    interval_trigger._prev_roots.copy(),
                                    interval_trigger._prev_V.copy())
                 ref = _MREndpoint(theta1, roots.copy(), result.V.copy())
                 return _finish(StopReason.multiple_root_in_interval, theta1,
-                               interval, mr_ref=ref, mr_ref2=ref2)
+                               mr_triggers=tuple(records),
+                               mr_ref=ref, mr_ref2=ref2)
 
             theta1_new = result.theta1_new
             h = result.h_new
@@ -290,6 +303,13 @@ def _same_mr_cluster(
     norm_a = frozenset(frozenset(c) for c in cluster_a)
     norm_b = frozenset(frozenset(c) for c in cluster_b)
     return norm_a == norm_b
+
+
+def _chordal_dist(a: complex, b: complex) -> float:
+    """Chordal distance on the Riemann sphere — the same metric as
+    detect_cluster's proximity graph, used by the zero-coincidence test
+    that groups trigger candidates into events."""
+    return abs(a - b) / np.sqrt((1.0 + abs(a) ** 2) * (1.0 + abs(b) ** 2))
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +384,35 @@ class _PendingSeg:
     theta1_arr: np.ndarray
     tracked_roots: np.ndarray
     left_mr: int
+
+
+class _MREvent(NamedTuple):
+    """One materialized multiple-root event inside a trigger bracket.
+
+    ``roots`` keeps the raw (unsnapped) track-frame roots at *theta1* so
+    later candidates can run the zero-coincidence test against them —
+    the snapped row would trivially pass it for its own clusters.
+    """
+
+    theta1: float
+    roots: np.ndarray            # unsnapped track-frame roots at theta1
+    roots_snapped: np.ndarray    # cluster-snapped closing row
+    cluster: list[tuple[int, ...]]
+    cluster_stds: list[float]
+
+
+class _MRRefine(NamedTuple):
+    """Outcome of one ``_refine_mr`` pass.
+
+    ``events`` is θ-ascending and empty when every triggered "MR" was a
+    false positive (caller holds the segment back as pending).  ``dense``
+    holds, for each pair of consecutive events, the ``(theta1_arr,
+    tracked_roots)`` rows sampled densely between them.
+    """
+    events: list[_MREvent]
+    dense: list[tuple[np.ndarray, np.ndarray]]
+    theta_temp: float
+    roots_temp: np.ndarray
 
 
 # ---------------------------------------------------------------------------
@@ -619,28 +668,34 @@ class ZeroManager:
             elif (seg.stop_reason == StopReason.multiple_root_in_interval
                   or seg.stop_reason == StopReason.multiple_root_encountered
             ):
-                theta1_mr, roots_mr, cluster, cluster_stds, theta_temp, roots_temp = self._refine_mr(
+                refined = self._refine_mr(
                     seg, new_seg_theta1, new_seg_tracked_roots,
                     mr_jump, mr_jump_eff, verbose,
                 )
-                if cluster:
+                if refined.events:
+                    ev0 = refined.events[0]
                     if verbose:
-                        print("Find multiple roots. Cluster = ", cluster)
+                        for ev in refined.events:
+                            print("Find multiple roots. θ₁ = ", ev.theta1,
+                                  " Cluster = ", ev.cluster)
                     # Same-MR re-detection guard: when the restart row still
                     # lands inside the previous MR's degenerate neighbourhood
                     # and the same cluster is detected again, do not append a
                     # duplicate MR.  Restart farther away and retry.
+                    # (Checked on the FIRST event only — later events of the
+                    # same bracket lie strictly past it, hence past the
+                    # guard window too.)
                     if left_mr >= 0:
                         prev_mr = self.multiple_roots[left_mr]
                         same_cluster = _same_mr_cluster(
-                            cluster, prev_mr.cluster_indices)
+                            ev0.cluster, prev_mr.cluster_indices)
                         if (same_cluster
-                                and theta1_mr <= prev_mr.theta1 + mr_jump_eff):
+                                and ev0.theta1 <= prev_mr.theta1 + mr_jump_eff):
                             redetect_retries += 1
                             if redetect_retries > MR_REDETECT_MAX_RETRIES:
                                 raise RuntimeError(
                                     f"Same MR re-detected {redetect_retries} "
-                                    f"times at θ≈{theta1_mr!r} (prev "
+                                    f"times at θ≈{ev0.theta1!r} (prev "
                                     f"θ={prev_mr.theta1!r}); the restart "
                                     f"distance may still be too small for the "
                                     f"current (h0, min_dtheta) pair."
@@ -657,80 +712,89 @@ class ZeroManager:
                     # past the MR that closed the previous segment.  A θ₁ at or
                     # behind it means the restart landed before the MR again
                     # (ping-pong) — fail loudly instead of looping forever.
-                    if (left_mr >= 0 and theta1_mr
+                    if (left_mr >= 0 and ev0.theta1
                             <= self.multiple_roots[left_mr].theta1 + MR_STUCK_TOL):
                         raise RuntimeError(
                             f"Multiple-root refinement made no forward "
-                            f"progress: refined θ₁={theta1_mr!r} is not past "
+                            f"progress: refined θ₁={ev0.theta1!r} is not past "
                             f"the previous MR (θ₁="
                             f"{self.multiple_roots[left_mr].theta1!r}). The "
                             f"MR restart distance may be too small for the "
                             f"current (h0, min_dtheta) pair."
                         )
-                    # Trim the segment up to the MR and close it there.
-                    seg_used = new_seg_theta1 < theta1_mr
-                    new_seg_theta1 = np.concatenate([
+                    # Trim the segment up to the FIRST event and close it
+                    # there; each later event closes the densely sampled
+                    # inter-event rows instead (see _dense_rows_between).
+                    seg_used = new_seg_theta1 < ev0.theta1
+                    seg_theta1 = np.concatenate([
                         new_seg_theta1[seg_used],
-                        [theta1_mr]
+                        [ev0.theta1]
                     ])
-                    new_seg_tracked_roots = np.vstack([
+                    seg_tracked_roots = np.vstack([
                         new_seg_tracked_roots[seg_used, :],
-                        roots_mr
+                        ev0.roots_snapped
                     ])
 
-                    if abs(theta1_mr - TWO_PI) < BOUNDARY_THETA_TOL:
-                        if verbose:
-                            print("Boundary multiple root detected. right_mr = 0")
-                        # Pin the closing row's θ to exactly 2π (the boundary
-                        # MR sits within BOUNDARY_THETA_TOL = 1e-6 of it):
-                        # leaving the refined θ_mr in the array opens a sliver
-                        # gap (θ_mr, 2π) that locate() would refuse to cover.
-                        new_seg_theta1 = np.concatenate([
-                            new_seg_theta1[:-1], [TWO_PI]
-                        ])
-                        # Same convention as 'completed': predict at 2π and
-                        # match onto left_boundary_roots BEFORE appending the
-                        # segment.  MR 0 was recorded in the θ=0 modulus-sorted
-                        # frame, while this closing row is in the final
-                        # segment's track frame; _append_segment needs
-                        # boundary_perm to translate MR-cluster columns before
-                        # marking their tangents inf.
-                        predicted_2pi = self._predict_roots_at_2pi(
-                            new_seg_theta1, new_seg_tracked_roots,
-                        )
-                        self.boundary_perm, _ = self._boundary_perm_from_right(
-                            predicted_2pi
-                        )
-                        boundary_perm_set = True
-                        self._append_segment(
-                            new_seg_theta1, new_seg_tracked_roots, left_mr, 0
-                        )
-                        # The boundary MR at θ₁_mr ≈ 2π is degenerate (the
-                        # closing row is the snapped cluster), so the Hermite
-                        # prediction degrades toward lerp / hold-fixed — no
-                        # regression versus a bare match, and the
-                        # cluster↔cluster correspondence stays ambiguous.
-                        break
-                    else:
+                    boundary_reached = False
+                    for k, ev in enumerate(refined.events):
+                        if k > 0:
+                            seg_theta1, seg_tracked_roots = refined.dense[k - 1]
+                        if abs(ev.theta1 - TWO_PI) < BOUNDARY_THETA_TOL:
+                            if verbose:
+                                print("Boundary multiple root detected. right_mr = 0")
+                            # Pin the closing row's θ to exactly 2π (the boundary
+                            # MR sits within BOUNDARY_THETA_TOL = 1e-6 of it):
+                            # leaving the refined θ_mr in the array opens a sliver
+                            # gap (θ_mr, 2π) that locate() would refuse to cover.
+                            seg_theta1 = np.concatenate([
+                                seg_theta1[:-1], [TWO_PI]
+                            ])
+                            # Same convention as 'completed': predict at 2π and
+                            # match onto left_boundary_roots BEFORE appending the
+                            # segment.  MR 0 was recorded in the θ=0 modulus-sorted
+                            # frame, while this closing row is in the final
+                            # segment's track frame; _append_segment needs
+                            # boundary_perm to translate MR-cluster columns before
+                            # marking their tangents inf.
+                            predicted_2pi = self._predict_roots_at_2pi(
+                                seg_theta1, seg_tracked_roots,
+                            )
+                            self.boundary_perm, _ = self._boundary_perm_from_right(
+                                predicted_2pi
+                            )
+                            boundary_perm_set = True
+                            self._append_segment(
+                                seg_theta1, seg_tracked_roots, left_mr, 0
+                            )
+                            # The boundary MR at θ₁_mr ≈ 2π is degenerate (the
+                            # closing row is the snapped cluster), so the Hermite
+                            # prediction degrades toward lerp / hold-fixed — no
+                            # regression versus a bare match, and the
+                            # cluster↔cluster correspondence stays ambiguous.
+                            boundary_reached = True
+                            break
                         right_mr = len(self.multiple_roots)
                         # Append the MR record BEFORE _append_segment so the
                         # tangent finalizer can look up its cluster indices
                         # and set the MR row's cluster tangents to inf.
                         self.multiple_roots.append(
                             MultipleRootInfo(
-                                theta1=theta1_mr,
-                                cluster_indices=cluster,
-                                roots=roots_mr,
-                                cluster_stds=tuple(cluster_stds),
+                                theta1=ev.theta1,
+                                cluster_indices=ev.cluster,
+                                roots=ev.roots_snapped,
+                                cluster_stds=tuple(ev.cluster_stds),
                             )
                         )
                         self._append_segment(
-                            new_seg_theta1, new_seg_tracked_roots, left_mr, right_mr
+                            seg_theta1, seg_tracked_roots, left_mr, right_mr
                         )
                         left_mr = right_mr
+                    if boundary_reached:
+                        break
                 else:
                     if verbose:
-                        print(f"No multiple roots found with cluster_tol = {self._cluster_tol: .2e}. \n Roots:", roots_mr)
+                        print(f"No multiple roots found with cluster_tol = "
+                              f"{self._cluster_tol: .2e}.")
                     # False positive: hold this segment back as pending instead
                     # of appending it with a sentinel right_mr.
                     pending = _PendingSeg(
@@ -739,8 +803,8 @@ class ZeroManager:
                         left_mr,
                     )
 
-                theta = theta_temp
-                roots = roots_temp
+                theta = refined.theta_temp
+                roots = refined.roots_temp
 
             else:
                 raise RuntimeError(
@@ -1285,20 +1349,21 @@ class ZeroManager:
         mr_jump: float,
         mr_jump_eff: float,
         verbose: bool,
-    ) -> tuple[float, np.ndarray, list, list[float], float, np.ndarray]:
-        """Locate the multiple root near *seg*'s stop point and the restart
-        point just past it.
+    ) -> _MRRefine:
+        """Locate the multiple root(s) near *seg*'s stop point and the
+        restart point just past them.
 
-        Returns ``(theta1_mr, roots_mr, cluster, cluster_stds, theta_temp,
-        roots_temp)``.  *cluster* is empty when the triggered "MR" was a
-        false positive (no roots actually touch at *theta1_mr*); the caller
-        then holds the segment back as pending instead of closing it.
+        Returns an :class:`_MRRefine`: the materialized *events*
+        (θ-ascending; empty when every triggered "MR" was a false
+        positive — the caller then holds the segment back as pending),
+        the densely sampled *dense* rows bridging consecutive events of
+        one bracket, and the restart point ``(theta_temp, roots_temp)``.
 
-        When *cluster* is non-empty, *roots_mr* is snapped to each cluster's
+        For each event, ``roots_snapped`` is snapped to each cluster's
         mean (see :func:`snap_clusters_to_mean`) so the exact-degeneracy
         correction flows into the segment's closing row, the boundary_perm
-        matching, and the MultipleRootInfo record alike.  *cluster_stds*
-        carries the per-cluster spread of the raw roots.
+        matching, and the MultipleRootInfo record alike.
+        ``cluster_stds`` carries the per-cluster spread of the raw roots.
         """
         # MR-adjacent regular endpoint — the anchor for prediction-based
         # matching.  Comes straight from integrate_segment (no dependence on
@@ -1310,82 +1375,187 @@ class ZeroManager:
         if verbose:
             print("roots_ref = ", roots_ref)
         if seg.stop_reason == StopReason.multiple_root_in_interval:
-            # Restart from the interval's right endpoint (MR-adjacent regular
-            # row).  No re-matching needed — ref.roots is already track-ordered.
+            # Restart from the interval's right endpoint (MR-adjacent
+            # regular row, past every event inside the bracket).  No
+            # re-matching needed — ref.roots is already track-ordered.
             theta_temp = ref.theta
             roots_temp = ref.roots
-            theta1_mr = solve_multiple_roots_in_interval(
-                self.poly,
-                self.E_ref,
-                self.mu1,
-                seg.mr_interval_start,
-                seg.mr_interval_end,
-                roots_ref,
-            )
-        else:
-            # multiple_root_encountered — refine with the iterative solver.
-            beta1_approx = exp(self.mu1 + 1j * seg.mr_approx_theta)
-            df2 = [self.poly.eval_partials((self.E_ref, beta1_approx, beta2))[2]
-                   for beta2 in roots_ref]
-            min_idx = np.argmin(np.abs(df2))
-            beta1, _ = solve_multiple_roots_iterative(
-                self.poly,
-                self.E_ref,
-                beta1_approx,
-                roots_ref[min_idx],
+            events = self._events_from_triggers(seg, ref, ref2, verbose)
+            dense = (self._dense_rows_between(events)
+                     if len(events) > 1 else [])
+            return _MRRefine(events, dense, theta_temp, roots_temp)
+
+        # multiple_root_encountered — refine with the iterative solver.
+        beta1_approx = exp(self.mu1 + 1j * seg.mr_approx_theta)
+        df2 = [self.poly.eval_partials((self.E_ref, beta1_approx, beta2))[2]
+               for beta2 in roots_ref]
+        min_idx = np.argmin(np.abs(df2))
+        beta1, _ = solve_multiple_roots_iterative(
+            self.poly,
+            self.E_ref,
+            beta1_approx,
+            roots_ref[min_idx],
+        )
+
+        # Fix the 2π gauge to seg.mr_approx_theta.
+        theta1_mr = np.angle(beta1 / exp(1j * seg.mr_approx_theta)) + seg.mr_approx_theta
+        if abs(theta1_mr - seg.mr_approx_theta) > MR_GAUGE_TOL:
+            warnings.warn(
+                f"Segment ends at {seg.mr_approx_theta}, "
+                f"but the iteration solver gives {theta1_mr}"
             )
 
-            # Fix the 2π gauge to seg.mr_approx_theta.
-            theta1_mr = np.angle(beta1 / exp(1j * seg.mr_approx_theta)) + seg.mr_approx_theta
-            if abs(theta1_mr - seg.mr_approx_theta) > MR_GAUGE_TOL:
-                warnings.warn(
-                    f"Segment ends at {seg.mr_approx_theta}, "
-                    f"but the iteration solver gives {theta1_mr}"
-                )
+        # Mirror the MR-adjacent point across the MR to land on the far
+        # side, then single-end tangent-extrapolate the anchor to it
+        # (consistent with the arclength integrator).
+        #
+        # The bare mirror 2θ_mr − θ_ref is only valid while θ_ref sits
+        # BEFORE the MR; once refinement places θ_mr just behind the last
+        # accepted row the mirror lands back BEFORE the MR and the restart
+        # re-detects the same MR forever.  The lower clamp θ_mr +
+        # mr_jump_eff (≥ the branch-point-safe distance, see run()) keeps
+        # the restart strictly past the MR; the upper `min` against
+        # θ_mr + mr_jump preserves the original behaviour of not jumping
+        # farther than mr_jump when the mirror is distant.
+        theta_temp = max(
+            min(2 * theta1_mr - ref.theta, theta1_mr + mr_jump),
+            theta1_mr + mr_jump_eff,
+        )
+        roots_temp = self._to_track_order(
+            self._solve(theta_temp), theta_temp, theta_ref, roots_ref,
+            ref_V=ref.V,
+        )
 
-            # Mirror the MR-adjacent point across the MR to land on the far
-            # side, then single-end tangent-extrapolate the anchor to it
-            # (consistent with the arclength integrator).
-            #
-            # The bare mirror 2θ_mr − θ_ref is only valid while θ_ref sits
-            # BEFORE the MR; once refinement places θ_mr just behind the last
-            # accepted row the mirror lands back BEFORE the MR and the restart
-            # re-detects the same MR forever.  The lower clamp θ_mr +
-            # mr_jump_eff (≥ the branch-point-safe distance, see run()) keeps
-            # the restart strictly past the MR; the upper `min` against
-            # θ_mr + mr_jump preserves the original behaviour of not jumping
-            # farther than mr_jump when the mirror is distant.
-            theta_temp = max(
-                min(2 * theta1_mr - ref.theta, theta1_mr + mr_jump),
-                theta1_mr + mr_jump_eff,
-            )
-            roots_temp = self._to_track_order(
-                self._solve(theta_temp), theta_temp, theta_ref, roots_ref,
-                ref_V=ref.V,
-            )
-
-        # Locate the MR itself.
-        #   multiple_root_in_interval → θ₁_mr is interior to the trigger
-        #     bracket [ref2.theta, ref.theta] whose endpoints both come from
-        #     integrate_segment and share the segment's track frame:
-        #     two-endpoint cubic Hermite.
-        #   multiple_root_encountered → θ₁_mr sits just past the last accepted
-        #     row; only the MR-adjacent regular point is nearby: single-end
-        #     tangent extrapolation, consistent with arclength.
-        if seg.stop_reason == StopReason.multiple_root_in_interval:
-            roots_mr = self._to_track_order(
-                self._solve(theta1_mr), theta1_mr,
-                ref2.theta, ref2.roots,
-                ref_theta2=ref.theta, ref_roots2=ref.roots,
-                ref_V=ref2.V, ref_V2=ref.V,
-            )
-        else:
-            roots_mr = self._to_track_order(
-                self._solve(theta1_mr), theta1_mr,
-                theta_ref, roots_ref, ref_V=ref.V,
-            )
+        # θ₁_mr sits just past the last accepted row; only the MR-adjacent
+        # regular point is nearby: single-end tangent extrapolation,
+        # consistent with arclength.
+        roots_mr = self._to_track_order(
+            self._solve(theta1_mr), theta1_mr,
+            theta_ref, roots_ref, ref_V=ref.V,
+        )
         cluster = detect_cluster(roots_mr, cluster_tol=self._cluster_tol)
         cluster_stds: list[float] = []
         if cluster:
             roots_mr, cluster_stds = snap_clusters_to_mean(roots_mr, cluster)
-        return theta1_mr, roots_mr, cluster, cluster_stds, theta_temp, roots_temp
+            events = [_MREvent(theta1_mr, roots_mr, roots_mr, cluster,
+                               list(cluster_stds))]
+        else:
+            events = []
+        return _MRRefine(events, [], theta_temp, roots_temp)
+
+    def _events_from_triggers(
+        self,
+        seg: SegmentResult,
+        ref: _MREndpoint,
+        ref2: _MREndpoint,
+        verbose: bool,
+    ) -> list[_MREvent]:
+        """Materialize the MR events of one interval-trigger stop.
+
+        Each triggered pair gets its own Brent refinement of ITS distance
+        derivative inside its bracket, then the candidate θ₁s are grouped
+        into events by ZERO COINCIDENCE, not by a θ tolerance: a candidate
+        belongs to an existing event when its triggered pair is already
+        within the cluster tolerance at that event's θ₁ — the same
+        physical degeneracy reached through different track columns.  This
+        merges simultaneous degeneracies of different zero pairs into ONE
+        event with several clusters (detect_cluster enumerates all of them
+        globally at that θ₁) while genuinely distinct nearby MRs stay
+        separate events.  Candidates whose θ₁ shows no cluster at all are
+        false positives and are dropped.
+
+        All events of one stop share the trigger bracket, hence one
+        two-endpoint Hermite anchor (ref2, ref) for the track-frame
+        mapping.
+        """
+        # Per-pair Brent over the shared bracket: several pairs may flip
+        # inside the same step (simultaneous degeneracies) — each is the
+        # root of its own continuous per-pair g(θ).
+        candidates: list[tuple[float, tuple[int, int]]] = []
+        for rec in seg.mr_triggers:
+            theta_c = solve_multiple_roots_in_interval(
+                self.poly,
+                self.E_ref,
+                self.mu1,
+                rec.theta_lo,
+                rec.theta_hi,
+                ref.roots,
+                min_pair=rec.pair,
+            )
+            candidates.append((theta_c, rec.pair))
+
+        events: list[_MREvent] = []
+        for theta_c, pair in sorted(candidates, key=lambda c: c[0]):
+            # Zero-coincidence test against earlier events: evaluate THIS
+            # candidate's pair at the EVENT's θ₁, on the unsnapped roots.
+            # The implicit θ resolution of the test, ~(CLUSTER_TOL/C)² for
+            # a √-type approach with constant C, sits between Brent noise
+            # and any physically distinct MR separation — no extra
+            # tolerance constant needed.
+            if any(_chordal_dist(ev.roots[pair[0]], ev.roots[pair[1]])
+                   < self._cluster_tol
+                   for ev in events):
+                if verbose:
+                    print(f"Trigger pair {pair}: coincides with an earlier "
+                          f"event — duplicate θ₁ dropped")
+                continue
+            roots_ev = self._to_track_order(
+                self._solve(theta_c), theta_c,
+                ref2.theta, ref2.roots,
+                ref_theta2=ref.theta, ref_roots2=ref.roots,
+                ref_V=ref2.V, ref_V2=ref.V,
+            )
+            cluster = detect_cluster(roots_ev, cluster_tol=self._cluster_tol)
+            if not cluster:
+                if verbose:
+                    print(f"Trigger pair {pair} at θ₁={theta_c!r}: "
+                          "no cluster — false positive, dropped")
+                continue
+            roots_snapped, stds = snap_clusters_to_mean(roots_ev, cluster)
+            events.append(_MREvent(theta_c, roots_ev, roots_snapped,
+                                   cluster, list(stds)))
+        return events
+
+    def _dense_rows_between(
+        self,
+        events: list[_MREvent],
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Regular rows sampled densely between consecutive bracket events.
+
+        Two events inside one bracket can sit far below the θ resolution
+        an adaptive restart could survive, so instead of restarting the
+        integrator between them we sample roots directly on a uniform
+        grid (spacing bounded by ``MR_DENSE_MAX_STEP``, at least
+        ``MR_DENSE_MIN_SAMPLES`` interior rows) and flank the grid with
+        the two MR closing rows — the same [left MR row | regular rows |
+        right MR row] shape as any integrated segment.
+
+        The first interior row is matched onto the left event's snapped
+        (degenerate) closing row: like the θ=0 boundary-MR restart, the
+        cluster columns' prediction degrades to hold-fixed there; every
+        later row anchors on a regular row.
+        """
+        dense: list[tuple[np.ndarray, np.ndarray]] = []
+        for ev_a, ev_b in zip(events[:-1], events[1:]):
+            delta = ev_b.theta1 - ev_a.theta1
+            n_interior = max(
+                MR_DENSE_MIN_SAMPLES,
+                int(np.ceil(delta / MR_DENSE_MAX_STEP)) - 1,
+            )
+            grid = np.linspace(ev_a.theta1, ev_b.theta1,
+                               n_interior + 2)[1:-1]
+            rows_theta = [ev_a.theta1]
+            rows_roots = [ev_a.roots_snapped]
+            anchor_theta, anchor_roots = ev_a.theta1, ev_a.roots_snapped
+            for theta_s in grid:
+                roots_s = self._to_track_order(
+                    self._solve(theta_s), theta_s,
+                    anchor_theta, anchor_roots,
+                )
+                rows_theta.append(theta_s)
+                rows_roots.append(roots_s)
+                anchor_theta, anchor_roots = theta_s, roots_s
+            rows_theta.append(ev_b.theta1)
+            rows_roots.append(ev_b.roots_snapped)
+            dense.append((np.array(rows_theta), np.vstack(rows_roots)))
+        return dense

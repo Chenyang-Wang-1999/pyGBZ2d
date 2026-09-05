@@ -157,90 +157,138 @@ def multiple_root_point_trigger(
     return dtheta < min_dtheta
 
 
+class MRTriggerRecord(NamedTuple):
+    """One root pair whose pairwise distance derivative flipped sign.
+
+    Emitted by :class:`MultipleRootIntervalTrigger` when a pair went from
+    approaching (deriv < 0) at *theta_lo* to separating (deriv > 0) at
+    *theta_hi*: a local minimum of that pair's distance — a multiple root
+    of those two tracks — lies inside ``(*theta_lo*, *theta_hi*)``.
+    """
+
+    pair: tuple[int, int]        # track indices (i < j)
+    theta_lo: float              # θ₁ of the previous accepted row
+    theta_hi: float              # θ₁ of the current accepted row
+    dist_hi: float               # |β_i − β_j| at theta_hi (diagnostics)
+    deriv_lo: float              # d|β_i−β_j|²/dθ₁ at theta_lo
+    deriv_hi: float              # d|β_i−β_j|²/dθ₁ at theta_hi
+
+
 class MultipleRootIntervalTrigger:
-    """Detect multiple roots by tracking the closest-pair distance derivative.
+    """Detect multiple roots by tracking EVERY pair's distance derivative.
 
-    Called after each accepted integration step.  Internally computes the
-    θ₁-derivative sign of min |β_i − β_j|² via :func:`_closest_pair_deriv`
-    and tracks it across steps.  Triggers when the sign flips from negative
-    (approaching) to positive (separating), indicating a local minimum —
-    a multiple root — in the interval between the previous and current θ₁.
+    Called after each accepted integration step.  Computes the θ₁-derivative
+    of ``|β_i − β_j|²`` for all root pairs at once (vectorized
+    :func:`_pairwise_dist_deriv`) and tracks each pair's sign across steps.
+    A pair triggers when ITS OWN derivative flips from negative
+    (approaching) to positive (separating) — a local minimum of that pair's
+    distance, i.e. a multiple root of those two tracks, lies between the
+    previous and current θ₁.
 
-    Tracking is only active when the minimum Euclidean distance among roots
-    is below *min_dist_threshold*; above it the internal state is reset.
-    This avoids triggering on trajectory wiggles among well-separated roots.
+    Per-pair tracking replaces the old single closest-pair state with its
+    same-pair guard: when two pairs degenerate simultaneously (a symmetric
+    double MR) their distances are tied, the *argmin* pair identity
+    flickers row by row, and the old guard blocked the flip detection
+    exactly at the sign change.  Each pair carrying its own state makes
+    the argmin identity irrelevant.
+
+    A pair's tracking is armed only while its own distance is below
+    *min_dist_threshold*; above it that pair's state resets, avoiding
+    triggers on trajectory wiggles among well-separated roots.
 
     Usage::
 
         trigger = MultipleRootIntervalTrigger(min_dist_threshold=0.1)
         for step in integration:
             ...
-            ok, interval = trigger(roots, V, theta1)
-            if ok:
-                bisect(*interval)  # MR candidate in [interval[0], interval[1]]
+            records = trigger(roots, V, theta1)
+            if records:
+                # one or more MRs inside (records[0].theta_lo,
+                # records[0].theta_hi); all records share that interval
     """
 
     def __init__(self, min_dist_threshold: Optional[float] = None) -> None:
         if min_dist_threshold is None:
             min_dist_threshold = MIN_DIST_THRESHOLD
         self._min_dist_threshold = min_dist_threshold
-        self._prev_deriv: int = 0          # −1=approaching, 0=unset, +1=separating
-        self._prev_pair: tuple[int, int] | None = None
+        # Distance derivative per pair, symmetric (n, n); 0 = unarmed.
+        # Floats (only their signs are consumed), matching the raw
+        # comparisons of the old single-pair state.
+        self._prev_deriv: Optional[np.ndarray] = None
         # State of the *previous* step (the interval's left endpoint when a
         # trigger fires).  roots/V are kept alongside theta so the caller
         # can build a two-endpoint Hermite anchor without re-solving or
         # re-deriving the tangent at the interval start.
-        self._prev_theta: float | None = None
-        self._prev_roots: np.ndarray | None = None
-        self._prev_V: np.ndarray | None = None
+        self._prev_theta: Optional[float] = None
+        self._prev_roots: Optional[np.ndarray] = None
+        self._prev_V: Optional[np.ndarray] = None
 
     def __call__(
         self, roots: np.ndarray, V: np.ndarray, theta1: float,
-    ) -> tuple[bool, Optional[tuple[float, float]]]:
-        """Check for sign flip.
+    ) -> list[MRTriggerRecord]:
+        """Check every armed pair for a −→+ derivative flip.
 
         Returns
         -------
-        (triggered, interval)
-            *triggered* is True when the SAME pair that was closest at the
-            previous step has its distance derivative flip from negative
-            to positive, AND the current minimum distance is below the
-            threshold.  *interval* is ``(start, end)`` — the θ₁ range
-            containing the local minimum — or None if not triggered.
+        records : list[MRTriggerRecord]
+            One record per pair whose own derivative flipped from negative
+            to positive between the previous call and this one, with its
+            distance below the threshold.  Empty when nothing flipped.
+            All records of one call share the interval
+            ``(self._prev_theta, theta1)`` — the stop happens at the first
+            step where ANY pair flips, so every simultaneous flip is caught
+            in the same record set.
 
-            On a trigger, ``self._prev_roots`` / ``self._prev_V`` /
-            ``self._prev_theta`` hold the interval's *left* endpoint state
-            (they are not overwritten before the trigger returns).
+            On a non-empty return the ``self._prev_*`` snapshot still holds
+            the interval's *left* endpoint state (not overwritten).
         """
-        min_dist, deriv, pair = _closest_pair_deriv(roots, V)
+        n = len(roots)
+        pairs, dist, deriv = _pairwise_dist_deriv(roots, V)
 
-        # Only track when roots are close enough for a meaningful signal.
-        if min_dist >= self._min_dist_threshold:
+        prev = self._prev_deriv
+        if prev is not None and prev.shape != (n, n):
+            # Root count changed between calls (defensive): stale state.
+            prev = None
+
+        new_prev = np.zeros((n, n))
+        records: list[MRTriggerRecord] = []
+        for k in range(len(pairs)):
+            i, j = int(pairs[k, 0]), int(pairs[k, 1])
+            d = float(dist[k])
+            if d >= self._min_dist_threshold:
+                continue  # unarmed this row → per-pair reset (stays 0)
+            dv = float(deriv[k])
+            new_prev[i, j] = new_prev[j, i] = dv
+            if prev is not None and prev[i, j] < 0.0 and dv > 0.0:
+                records.append(MRTriggerRecord(
+                    pair=(i, j),
+                    theta_lo=float(self._prev_theta),
+                    theta_hi=theta1,
+                    dist_hi=d,
+                    deriv_lo=float(prev[i, j]),
+                    deriv_hi=dv,
+                ))
+
+        if records:
+            # Early-return WITHOUT overwriting the snapshot: the interval's
+            # left endpoint is the previous step's state, which the caller
+            # reads.
+            self._prev_deriv = new_prev
+            return records
+
+        if not np.any(new_prev):
+            # Nothing armed → full reset (the old threshold reset).
             self._reset()
-            return False, None
+            return []
 
-        # Same-pair guard: avoid spurious sign flips when the closest pair
-        # changes identity between steps.
-        triggered = (
-            self._prev_deriv < 0 and deriv > 0
-            and pair == self._prev_pair
-        )
-        if triggered:
-            # Early-return WITHOUT overwriting prev_*: the interval's left
-            # endpoint is the previous step's state, which the caller reads.
-            return True, (self._prev_theta, theta1)
-
-        self._prev_deriv = deriv
-        self._prev_pair = pair
+        self._prev_deriv = new_prev
         self._prev_theta = theta1
         self._prev_roots = roots
         self._prev_V = V
-
-        return False, None
+        return []
 
     def _reset(self) -> None:
-        self._prev_deriv = 0
-        self._prev_pair = None
+        self._prev_deriv = None
         self._prev_theta = None
         self._prev_roots = None
         self._prev_V = None
@@ -328,12 +376,66 @@ def _pair_distance_deriv(
     )
 
 
+def _pairwise_dist_deriv(
+    roots: np.ndarray,
+    V: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """All pairwise distances and their θ₁-derivatives, vectorized.
+
+    Computes for every ``i < j`` pair of tracks
+    ``dist = |β_i − β_j|`` and
+    ``deriv = d|β_i − β_j|²/dθ₁ = 2 Re[(β̇_i − β̇_j)·(β_i − β_j)†]``
+    with ``β̇_k = V_k·β_k`` — one broadcasting block instead of a Python
+    double loop, returning ALL pairs so callers can track them per pair
+    (not just the closest one).
+
+    Roots whose tangent is nan (the 0/∞ padding roots held fixed by the
+    integrator) or inf (divergent, at a branch point) are excluded from
+    the pair list: a nan/inf derivative would poison per-pair sign state
+    (``nan < 0`` is False forever after).  The point trigger owns the
+    branch-point regime.
+
+    Returns
+    -------
+    pairs : np.ndarray (m, 2) int
+        Track index pairs ``(i, j)`` with ``i < j``, row-major order
+        (the same order — and tie-breaking — as the retired scalar loop).
+    dist : np.ndarray (m,)
+        Euclidean distances ``|β_i − β_j|``.
+    deriv : np.ndarray (m,)
+        Raw ``d|β_i − β_j|²/dθ₁`` of each pair.
+    """
+    roots = np.asarray(roots)
+    n = len(roots)
+    if n < 2:
+        return np.empty((0, 2), dtype=int), np.empty(0), np.empty(0)
+
+    finite = np.isfinite(V.real) & np.isfinite(V.imag)
+    # nan/inf tangents make their matrix rows nan on purpose (masked out
+    # below); silence the expected invalid-multiply warnings.
+    with np.errstate(invalid="ignore"):
+        diff = roots[:, None] - roots[None, :]
+        dist = np.abs(diff)
+        beta_dot = V * roots
+        beta_dot_diff = beta_dot[:, None] - beta_dot[None, :]
+        deriv = 2.0 * np.real(beta_dot_diff * np.conj(diff))
+
+    iu, ju = np.triu_indices(n, k=1)
+    ok = finite[iu] & finite[ju]
+    pairs = np.stack([iu[ok], ju[ok]], axis=1)
+    return pairs, dist[iu, ju][ok], deriv[iu, ju][ok]
+
+
 def _closest_pair_deriv(
     roots: np.ndarray,
     V: np.ndarray,
 ) -> tuple[float, float, tuple[int, int]]:
     """Compute min Euclidean distance among roots, its θ₁-derivative,
     and the pair achieving the minimum.
+
+    Thin wrapper over :func:`_pairwise_dist_deriv`, kept for callers that
+    need only the closest pair.  Tie-breaking matches the retired scalar
+    loop: the row-major first minimum wins.
 
     Roots whose tangent is nan (the 0/∞ padding roots held fixed by the
     integrator) or inf (divergent, at a branch point) are excluded from
@@ -351,29 +453,12 @@ def _closest_pair_deriv(
     pair : tuple[int, int]
         Track indices (i, j) of the closest pair, or (-1, -1) when none.
     """
-    n = len(roots)
-    finite = [
-        j for j in range(n)
-        if np.isfinite(V[j].real) and np.isfinite(V[j].imag)
-    ]
-
-    min_dist = np.inf
-    min_i, min_j = -1, -1
-
-    for a in range(len(finite)):
-        for b in range(a + 1, len(finite)):
-            i, j = finite[a], finite[b]
-            d = np.abs(roots[i] - roots[j])
-            if d < min_dist:
-                min_dist = d
-                min_i, min_j = i, j
-
-    if min_i < 0:
-        return float(min_dist), 0.0, (-1, -1)
-
-    deriv = _pair_distance_deriv(roots, V, (min_i, min_j))
-
-    return float(min_dist), deriv, (min_i, min_j)
+    pairs, dist, deriv = _pairwise_dist_deriv(roots, V)
+    if len(dist) == 0:
+        return float(np.inf), 0.0, (-1, -1)
+    k = int(np.argmin(dist))
+    return (float(dist[k]), float(deriv[k]),
+            (int(pairs[k, 0]), int(pairs[k, 1])))
 
 
 def solve_multiple_roots_in_interval(
@@ -410,11 +495,13 @@ def solve_multiple_roots_in_interval(
         the two endpoints: ``f'(left) < 0`` (approaching) and
         ``f'(right) > 0`` (separating), or vice versa.
     min_pair : tuple[int, int] or None
-        If given, the *only* root pair whose derivative is tracked.
-        A :class:`ValueError` is raised if the closest pair changes
-        identity inside the interval.  When None (default), any pair
-        is accepted — useful when the identity of the merging pair is
-        unknown ahead of time.
+        If given, the root pair whose own distance derivative drives the
+        root search (per-pair g(θ), continuous across closest-pair
+        identity changes — with several pairs degenerating together the
+        argmin flickers between them and an argmin-based g is
+        discontinuous exactly at the flip).  When None (default), the
+        closest pair's derivative is used — useful when the identity of
+        the merging pair is unknown ahead of time.
 
     Returns
     -------
@@ -434,10 +521,9 @@ def solve_multiple_roots_in_interval(
         inds = hungarian_match_indices(predicted, roots)
         roots = roots[inds]
         V_list, _ = compute_tangent(poly, E_ref, beta1, roots)
-        _, deriv, new_pair = _closest_pair_deriv(roots, V_list)
         if min_pair is not None:
-            if new_pair != min_pair:
-                raise ValueError(f"Pair {new_pair} is not the minimum pair {min_pair}")
+            return _pair_distance_deriv(roots, V_list, min_pair)
+        _, deriv, _ = _closest_pair_deriv(roots, V_list)
         return deriv
 
     if theta1_right < theta1_left:

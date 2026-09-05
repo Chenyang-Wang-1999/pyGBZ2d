@@ -82,8 +82,8 @@ so assigning `arclength.SAFETY` reaches every controller built afterwards.
 
 | Constant | Default | Meaning |
 |---|---|---|
-| `CLUSTER_TOL` | 1e-4 | Chordal-distance threshold of `detect_cluster` — the single cluster predicate. Unified 2026-08 to the run-side value (the old direct-call default 1e-6 is retired). |
-| `MIN_DIST_THRESHOLD` | 0.1 | Closest-pair distance below which the MR interval trigger arms; above it the trigger state resets. |
+| `CLUSTER_TOL` | 1e-4 | Chordal-distance threshold of `detect_cluster` — the single cluster predicate. Unified 2026-08 to the run-side value (the old direct-call default 1e-6 is retired). Also the zero-coincidence tolerance that groups per-pair Brent candidates into MR events. |
+| `MIN_DIST_THRESHOLD` | 0.1 | Pair distance below which that pair's interval-trigger tracking arms; above it the pair's state resets (per-pair, not global). |
 
 ## `pygbz2d.continuation.zero_manager` — ZM run loop
 
@@ -98,6 +98,8 @@ together.
 | `H0` | 0.1 | Initial θ₁ arclength step. |
 | `MIN_DTHETA` | 1e-10 | Step collapse threshold for the MR point trigger (neighbour of `arclength.MIN_STEP`: that is the stepper's floor, this is the MR detector's sensitivity — two roles, deliberately distinct). |
 | `MR_JUMP` | 1e-6 | Base restart distance past a refined MR. |
+| `MR_DENSE_MAX_STEP` | 1e-4 | Dense sampling between MR events of one trigger bracket: maximum θ₁ spacing of the regular rows sampled between two consecutive events. |
+| `MR_DENSE_MIN_SAMPLES` | 8 | Dense sampling between bracket events: minimum number of interior sample rows between two consecutive events. |
 | `MR_RESTART_FACTOR_H0` / `MR_RESTART_FACTOR_ABS` | 10.0 / 100.0 | Branch-point-safe floors on the restart distance (too-close restarts re-detect the same MR). |
 | `MR_STUCK_TOL` ⚠ | 1e-12 | Two refined MR θ₁ closer than this = no forward progress (error). |
 | `BOUNDARY_THETA_TOL` ⚠ | 1e-6 | \|θ − 2π\| below which a boundary MR is pinned to exactly 2π. |

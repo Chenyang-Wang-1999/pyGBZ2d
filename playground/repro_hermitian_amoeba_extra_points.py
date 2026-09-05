@@ -3,8 +3,13 @@ author:        wangchenyang <cy-wang21@mails.tsinghua.edu.cn>
 date:          2026-09-03
 Copyright © Department of Physics, Tsinghua University. All rights reserved
 
-Minimal reproduction: amoeba returns extra PointSubsets for the Hermitian
-Haldane test model at real energies E = 3.5, 4.0, 5.0.
+Minimal reproduction: amoeba used to return extra PointSubsets for the
+Hermitian Haldane test model at real energies E = 3.5, 4.0, 5.0 (up to 70
+spurious subsets).  Fixed on 2026-09-05 by the interval-trigger per-pair
+tracking change (see log/2026-09-05-interval-trigger-per-pair-tracking.md):
+the simultaneous double MR near theta1 = 4.5787 (E = 3.5) had been missed
+because the closest-pair identity flickers between the two simultaneously
+degenerating pairs and the same-pair guard rejected the derivative flip.
 
 The model is exactly the one built in ``Hermitian_Haldane_sweep`` of
 ``playground/Haldane-model-gainloss.py`` (M=3, gamma=0, plus four diagonal
@@ -16,9 +21,9 @@ Run::
     python playground/repro_hermitian_amoeba_extra_points.py
 
 Expected repro summary (observed on this checkout):
-    E = 3.5+0j : SGBZ index=(0,4) | amoeba index=(44,4)
-    E = 4.0+0j : SGBZ index=(0,4) | amoeba index=(70,4)
-    E = 5.0+0j : SGBZ index=(0,4) | amoeba index=(46,4)
+    E = 3.5+0j : SGBZ index=(0,6) | amoeba index=(0,6)
+    E = 4.0+0j : SGBZ index=(0,6) | amoeba index=(0,6)
+    E = 5.0+0j : SGBZ index=(0,6) | amoeba index=(0,6)
 '''
 
 from __future__ import annotations
