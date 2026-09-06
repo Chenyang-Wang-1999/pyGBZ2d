@@ -364,20 +364,13 @@ class GBZResult:
         error: Error message if ``success`` is False.
         subsets: List of connected subsets (PointSubset / LineSubset).
         index: (n_0D, n_1D) counts.  ``(0, 0)`` means the energy is
-               outside the GBZ — unless ``is_continuum`` is set (see below).
-        is_continuum: True when the SGBZ subset at this energy is a continuum
-               (1D).  SGBZ materializes the LineSubsets into ``subsets``
-               (``index == (0, n_1d)``); the flag additionally marks the
-               result as *in spectrum* (``is_gbz`` is True) even if
-               ``subsets`` happens to be empty.  Amoeba (which has its own
-               LineSubset extractor) never sets this flag.
+               outside the GBZ.
     """
     E_ref: complex
     success: bool = True
     error: Optional[str] = None
     subsets: list[ConnectedSubset] = None  # type: ignore[assignment]
     index: tuple[int, int] = (0, 0)
-    is_continuum: bool = False
 
     def __post_init__(self):
         if self.subsets is None:
@@ -390,7 +383,7 @@ class GBZResult:
     @property
     def is_gbz(self) -> bool:
         """True if this energy point lies on the GBZ."""
-        return self.success and (self.index != (0, 0) or self.is_continuum)
+        return self.success and self.index != (0, 0)
 
 
 ConnectedSubset = Union[PointSubset, LineSubset]

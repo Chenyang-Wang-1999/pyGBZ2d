@@ -457,7 +457,7 @@ def collect_GBZ_subsets(
 
     For continuum results (a 1D LineSubset case), the LineSubsets are
     materialised by ``extract_continuum_linesubsets`` from the built ZM and
-    returned in ``subsets`` with ``is_continuum=True`` (in spectrum).
+    returned in ``subsets`` with ``index == (0, n_1d)`` (in spectrum).
     Spectrum membership is decided by the bisection's W-zero /
     left-right-limit straddle.
 
@@ -475,10 +475,10 @@ def collect_GBZ_subsets(
         instead of being silently ignored.
 
     Returns:
-        GBZResult with connected subsets.  ``gbz.is_empty`` / ``gbz.index
-        == (0,0)`` (without ``is_continuum``) means E_ref is outside the
-        SGBZ spectrum.  ``gbz.is_continuum`` means in-spectrum; the
-        LineSubsets are materialized in ``subsets`` (``index == (0, n_1d)``).
+        GBZResult with connected subsets.  ``gbz.index == (0, 0)`` means
+        E_ref is outside the SGBZ spectrum.  A 1D continuum result carries
+        its materialized LineSubsets in ``subsets`` with
+        ``index == (0, n_1d)``.
     """
     if perc is not None:
         print("%.2f" % (perc * 100) + r"%")
@@ -497,13 +497,12 @@ def collect_GBZ_subsets(
 
         # Continuum boundary → 1D LineSubsets materialised by handle_continuum
         # (the cluster tracks where |β_M| = |β_{M+1}| holds identically, joined
-        # across MRs).  is_continuum stays True so existing spectrum-membership
-        # assertions still hold; subsets now carry the actual lines.
+        # across MRs).  Spectrum membership is carried by index == (0, n_1d).
         if is_continuum:
             line_subsets = subsets or []
             n_1d = len(line_subsets)
-            return GBZResult(E_ref=E_ref, success=True, is_continuum=True,
-                            subsets=list(line_subsets), index=(0, n_1d))
+            return GBZResult(E_ref=E_ref, success=True,
+                             subsets=list(line_subsets), index=(0, n_1d))
 
         # Discrete case: apply the plateau check before trusting the subsets.
         if subsets and plateau_check:

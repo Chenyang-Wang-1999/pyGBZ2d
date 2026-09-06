@@ -139,7 +139,7 @@ Two-stage check, unaffected by the μ₂_mid framework:
 When `|β_M| = |β_{M+1}|` holds identically over a continuous `θ₁` interval:
 - `Mu2MidZM.has_continuum` is `True` → winding undefined at that `μ₁`.
 - `_resolve_continuum_winding` computes left/right limits via perturbation.
-- If limits straddle zero: that `μ₁` is the SGBZ boundary (1D LineSubset case); `extract_continuum_linesubsets` materializes the LineSubsets from the built `zm`. `collect_GBZ_subsets` returns `GBZResult(is_continuum=True, subsets=[LineSubset, ...], index=(0, n_1d))`.
+- If limits straddle zero: that `μ₁` is the SGBZ boundary (1D LineSubset case); `extract_continuum_linesubsets` materializes the LineSubsets from the built `zm`. `collect_GBZ_subsets` returns `GBZResult(subsets=[LineSubset, ...], index=(0, n_1d))`.
 - If limits do not straddle zero: the bisection continues using the left limit as a proxy.
 
 ## 3. API Reference
@@ -328,7 +328,7 @@ Main entry point. Builds the characteristic polynomial from `(coeffs, degs)`, so
   - `"crossing_tol"` (1e-10)
   - obsolete `"N_points"` / `"xtol"` / `"max_newton"` are accepted and ignored
 
-**Returns**: `GBZResult` with connected subsets. `gbz.is_empty` means `E_ref` is outside the SGBZ spectrum. `gbz.is_continuum` means in-spectrum with 1D LineSubsets in `subsets` (`index == (0, n_1d)`). Otherwise `index == (n_0d, 0)` with `PointSubset`s.
+**Returns**: `GBZResult` with connected subsets. `gbz.index == (0, 0)` means `E_ref` is outside the SGBZ spectrum. A 1D continuum result carries its materialized `LineSubset`s in `subsets` with `index == (0, n_1d)`. Otherwise `index == (n_0d, 0)` with `PointSubset`s.
 
 ### 3.9 Other Exports
 

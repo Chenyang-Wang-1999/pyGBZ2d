@@ -70,6 +70,32 @@ print(ml.summary())                            # 各 loop 绕数 + gap check 汇
 - MR（multiple-root）θ₁ 行：紫色点划竖线。
 - `theta2_list=None` 时自动用 `auto_theta2_grid` 取各方法最宽间隙的中点。
 
+### 4. `check_mesh_orientation(verts, triangles) -> MeshOrientationReport`
+
+环面三角网格的**定向一致性检查**（只检测，不修复）。两条独立判据：
+
+1. **全局绕向普查**：每个三角形在万有覆盖里（每顶点平移到与顶点 0 相距 < π）
+   计算带符号面积，统计正/负/零——一致定向的网格所有非零符号相同。
+   仅当网格所有 torus 边长 < π 时该普查才可靠（`unwrap_valid`）。
+2. **邻接一致性**（有向边平衡）：一致定向的 2-复形中每条**内部边**必须
+   各被使用一次 (u,v) 一次 (v,u)；边界边（重数 1）天然不对称；重数 > 2
+   的边是非流形的（如 seam keep-rule 超填扇区），单独标记。
+
+```python
+from debug_tool import check_mesh_orientation
+
+rep = check_mesh_orientation(verts, triangles)
+print(rep.describe())     # 人读汇总；rep.is_ok 为总判定
+```
+
+命令行（输入为 `demo_pipeline.py` 落盘的 `mesh_cluster*.npz`）：
+
+```bash
+python debug_tool/mesh_orientation.py \
+    playground/band_cluster_out/Haldane-gain-loss-amoeba-enriched/mesh_cluster1.npz
+# 任一网格不合格时退出码 1（可挂 CI）
+```
+
 ## 命令行 demo
 
 ```bash
@@ -90,7 +116,8 @@ python debug_tool/demo_debug_tool.py --theta2 0.5 2.5 4.5 --methods sgbz --save 
 
 `tests/test_debug_tool.py`：HN-2D 模型（快）覆盖离散荷一致性、continuum 情形、
 失败捕获、绘图产物；`--run-slow` 额外跑 Haldane E=1.212 调试点
-（14 个 crossing、8 项 gap check 全部通过）。
+（14 个 crossing、8 项 gap check 全部通过）；合成环面网格覆盖
+`check_mesh_orientation` 的一致/翻转/非流形/零面积情形。
 
 ## 设计说明
 

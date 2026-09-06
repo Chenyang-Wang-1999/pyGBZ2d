@@ -31,10 +31,11 @@ the body of near-vertical arcs (theta1 ~ const, theta2 sweeping) and breaks
 chaining; see log/2026-08-27.  The performance cost is paid instead by the
 scan cap below.
 
-Scan cap: the eps stability ladder never exceeds ``EPS_SCAN_MAX`` and stops
-early at the first radius where the cloud is fully merged — beyond that
-point larger radii only multiply the query_pairs output (quadratically
-many pairs on dense 1-D E-families) without adding information.
+Scan cap: the eps stability ladder stops early at the first radius where
+the cloud is fully merged — beyond that point larger radii only multiply
+the query_pairs output (quadratically many pairs on dense 1-D E-families)
+without adding information.  The absolute cap EPS_SCAN_MAX is a safety
+net on top of the early stop.
 '''
 
 from __future__ import annotations
@@ -59,9 +60,13 @@ from pygbz2d.core import PointSubset, LineSubset, TWO_PI
 #: in the playground validation datasets (0.44 - 12.5 in scaled units).
 ALPHA_E: float = 0.25
 
-#: eps ladder bounds / resolution for the stability scan.
+#: eps ladder bounds / resolution for the stability scan.  The cap is a
+#: safety net only — the early stop at the first fully-merged radius is the
+#: real blowup guard for dense 1-D E-families, and legitimate band
+#: separations can exceed the old 1.5 cap (y-SGBZ folded bands merge only
+#: around 1.3-3.0).
 EPS_SCAN_MIN: float = 0.02
-EPS_SCAN_MAX: float = 1.5
+EPS_SCAN_MAX: float = 3.0
 N_SCAN_STEPS: int = 21
 
 #: A plateau of the cluster-count curve counts as a clustering window only
@@ -384,7 +389,9 @@ def cluster_bands(results=None, *, points: Optional[BandPoints] = None,
                   alpha_E: Optional[float] = None,
                   w_mu: Optional[float] = None,
                   max_scan_eps: Optional[float] = None,
-                  n_scan_steps: Optional[int] = None) -> BandClustering:
+                  n_scan_steps: Optional[int] = None,
+                  d_re: Optional[float] = None,
+                  d_im: Optional[float] = None) -> BandClustering:
     """Cluster an E-sweep of GBZ results into bands (radius graph).
 
     Provide exactly one of ``results`` (a list of :class:`GBZResult`) or
@@ -397,6 +404,11 @@ def cluster_bands(results=None, *, points: Optional[BandPoints] = None,
         w_mu: mu-block scale (default auto: 1/max(mu span, 1)).
         max_scan_eps, n_scan_steps: eps ladder bounds
             (defaults :data:`EPS_SCAN_MAX` / :data:`N_SCAN_STEPS`).
+        d_re, d_im: E-block grid steps.  Pass these whenever the cloud is
+            NOT a plain rectangular sweep — e.g. boundary-enriched data,
+            whose probe energies sit between grid nodes and would dilute
+            the inferred median step, inflating the E block and
+            fragmenting the clustering.  ``None`` infers from the cloud.
 
     Returns:
         BandClustering with labels and diagnostics.
@@ -412,7 +424,7 @@ def cluster_bands(results=None, *, points: Optional[BandPoints] = None,
     if n_scan_steps is None:
         n_scan_steps = N_SCAN_STEPS
 
-    X = embed(bp, alpha_E=alpha_E, w_mu=w_mu)
+    X = embed(bp, alpha_E=alpha_E, w_mu=w_mu, d_re=d_re, d_im=d_im)
     knn = knn_distance_stats(X)
     knn_pct = {f"p{q}": float(np.percentile(knn, q))
                for q in (10, 25, 50, 75, 90, 99)}

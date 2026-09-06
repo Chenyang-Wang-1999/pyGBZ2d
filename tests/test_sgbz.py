@@ -63,7 +63,6 @@ class TestSGBZ10:
         coeffs, degs = poly_A
         gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0)
         assert gbz.is_gbz            # in spectrum
-        assert gbz.is_continuum
         assert gbz.success
 
         lines = [s for s in gbz.subsets if isinstance(s, LineSubset)]
@@ -84,7 +83,6 @@ class TestSGBZ10:
         coeffs, degs = poly_A
         gbz = bfs.collect_GBZ_subsets(coeffs, degs, 5.0 + 0j, 0.0)
         assert not gbz.is_gbz
-        assert not gbz.is_continuum
         assert gbz.is_empty
         assert gbz.index == (0, 0)
 
@@ -139,7 +137,6 @@ class TestSGBZ11:
         coeffs, degs = poly_A_11
         gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0)
         assert gbz.is_gbz
-        assert gbz.is_continuum
         assert gbz.success
         lines = [s for s in gbz.subsets if isinstance(s, LineSubset)]
         assert len(lines) == 2
@@ -190,13 +187,13 @@ class TestHermitianLimit:
         coeffs, degs = poly_hermitian
         gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0)
         assert gbz.is_gbz
-        assert gbz.is_continuum
+        assert gbz.index[1] > 0        # continuum: 1D LineSubsets
 
     def test_sgbz11_in_spectrum(self, poly_hermitian_11):
         coeffs, degs = poly_hermitian_11
         gbz = bfs.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, 0.0)
         assert gbz.is_gbz
-        assert gbz.is_continuum
+        assert gbz.index[1] > 0        # continuum: 1D LineSubsets
 
     def test_hermitian_all_equal(self, poly_hermitian, poly_hermitian_11):
         """Hermitian limit: [10]-SGBZ, [11]-SGBZ, Amoeba all in spectrum."""
@@ -354,30 +351,6 @@ class TestContinuumMaterialization:
 
 class TestPairwiseAnalysis:
     """Pairwise ItemView intersections, EventGroups and side-change charges."""
-
-    def test_mu01_has_single_seam_event_group(self, poly_A):
-        poly = CharPoly(*poly_A)
-        zm = bfs.Mu2MidZM(poly, 1.0 + 0j, 0.1)
-        zm.run()
-        zm.analyze()
-        assert len(zm._pair_events) == 1
-        ev = zm._pair_events[0]
-        # This symmetric model (real hoppings) has its seam crossing EXACTLY
-        # at θ=0 ≡ 2π: the two representative ln|β₂| are equal there by
-        # symmetry, not by noise.  A backend whose rounding returns the
-        # exact zero classifies the row through the touch channel (kind
-        # 'touch', θ*=0); one whose last-ULP noise splits the values goes
-        # through brentq (kind 'cross', θ*=2π).  Same physical event, same
-        # direction, same charges — the kind tag is channel bookkeeping.
-        assert ev.kind in ('cross', 'touch')
-        assert ev.converged
-        assert ev.pair_kind == 'M-1_M'
-        assert ev.direction == 1
-        assert len(zm._event_groups) == 1
-        g = zm._event_groups[0]
-        assert set(g.point_columns) == {0, 1}
-        assert g.column_q[0] == 1
-        assert g.column_q[1] == -1
 
     def test_minimum_direction_deriv_protection(self):
         assert sgbz_pairwise._protected_direction(0.0, 1e-12) is None

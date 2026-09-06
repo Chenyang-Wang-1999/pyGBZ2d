@@ -55,8 +55,9 @@ class TestDataclasses:
         empty = GBZResult(E_ref=0j)
         assert empty.subsets == []
         assert not empty.is_gbz
-        # is_continuum alone means in-spectrum even with no subsets
-        cont = GBZResult(E_ref=0j, is_continuum=True)
+        # in-spectrum is decided by index alone: a continuum result carries
+        # (0, n_1d) with its materialized LineSubsets
+        cont = GBZResult(E_ref=0j, subsets=[], index=(0, 3))
         assert cont.is_gbz
         failed = GBZResult(E_ref=0j, success=False, index=(2, 0))
         assert not failed.is_gbz

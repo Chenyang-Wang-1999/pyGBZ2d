@@ -264,3 +264,75 @@ class TestHaldaneDebugPoint:
         ml = compute_loop_windings(report["sgbz"], grid)
         assert all(g.status == "ok" for g in ml.gap_checks)
         assert ml.W_profile == pytest.approx(report["sgbz"].W, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# check_mesh_orientation — synthetic torus meshes (no solver)
+# ---------------------------------------------------------------------------
+
+from debug_tool import MeshOrientationReport, check_mesh_orientation
+
+
+def _grid_mesh(n=4, h=0.5):
+    """Consistently CCW triangulated grid patch in [0, 2pi)^2."""
+    idx = {}
+    verts = []
+    for i in range(n):
+        for j in range(n):
+            idx[(i, j)] = len(verts)
+            verts.append((i * h, j * h))
+    tris = []
+    for i in range(n - 1):
+        for j in range(n - 1):
+            v00, v10 = idx[(i, j)], idx[(i + 1, j)]
+            v01, v11 = idx[(i, j + 1)], idx[(i + 1, j + 1)]
+            tris.append((v00, v10, v11))     # both CCW
+            tris.append((v00, v11, v01))
+    return np.array(verts), np.array(tris)
+
+
+class TestMeshOrientation:
+    def test_consistent_grid_ok(self):
+        verts, tris = _grid_mesh()
+        rep = check_mesh_orientation(verts, tris)
+        assert rep.is_ok
+        assert rep.signed_neg == 0 and rep.signed_zero == 0
+        assert rep.n_interior_edges > 0 and rep.n_boundary_edges > 0
+        assert rep.unwrap_valid
+
+    def test_seam_crossing_pair_consistent(self):
+        # a-b straddles the theta1 = 0 = 2pi seam; both triangles wind the
+        # same way on the torus (checked in the universal cover)
+        verts = np.array([[6.2, 1.0], [0.1, 1.0], [6.05, 0.5], [6.3, 1.6]])
+        a, b, c, d = 0, 1, 2, 3
+        tris = np.array([(a, b, c), (b, a, d)])
+        rep = check_mesh_orientation(verts, tris)
+        assert rep.unwrap_valid          # all torus edges < pi
+        assert rep.is_ok
+        assert rep.signed_pos == 0 and rep.signed_neg == 2   # both CW
+        assert rep.n_interior_edges == 1 and rep.n_boundary_edges == 4
+
+    def test_flipped_triangle_detected(self):
+        verts = np.array([[6.2, 1.0], [0.1, 1.0], [6.05, 0.5], [6.3, 1.6]])
+        a, b, c, d = 0, 1, 2, 3
+        tris = np.array([(a, b, c), (a, b, d)])   # same-direction shared edge
+        rep = check_mesh_orientation(verts, tris)
+        assert not rep.is_ok
+        assert rep.balance_violations == [(a, b, 2, 0)]
+        assert not rep.orientation_uniform         # one CW, one CCW
+
+    def test_nonmanifold_edge_detected(self):
+        verts = np.array([[6.2, 1.0], [0.1, 1.0], [6.05, 0.5],
+                          [6.3, 1.6], [6.25, 0.7]])
+        a, b, c, d, e = 0, 1, 2, 3, 4
+        tris = np.array([(a, b, c), (b, a, d), (a, b, e)])
+        rep = check_mesh_orientation(verts, tris)
+        assert rep.n_nonmanifold_edges == 1
+        assert rep.nonmanifold_edges == [(a, b, 3)]
+        assert not rep.is_ok
+
+    def test_zero_area_counted(self):
+        verts = np.array([[6.2, 1.0], [6.29, 1.0], [0.1, 1.0]])  # collinear
+        rep = check_mesh_orientation(verts, np.array([(0, 1, 2)]))
+        assert rep.signed_zero == 1
+        assert rep.signed_pos == 0 and rep.signed_neg == 0

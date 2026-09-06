@@ -122,10 +122,10 @@ def main():
         s_counts = _count_subsets(sgbz_res.subsets)
         print(f"\nE = {E.real:g}{E.imag:+.1f}j")
         print(f"  amoeba: success={amoeba_res.success} is_gbz={amoeba_res.is_gbz} "
-              f"index={amoeba_res.index} is_continuum={amoeba_res.is_continuum} "
+              f"index={amoeba_res.index} "
               f"subset_counts={a_counts}")
         print(f"  sgbz  : success={sgbz_res.success} is_gbz={sgbz_res.is_gbz} "
-              f"index={sgbz_res.index} is_continuum={sgbz_res.is_continuum} "
+              f"index={sgbz_res.index} "
               f"subset_counts={s_counts}")
 
         color_list = ['r', 'g', 'b', 'c', 'm', 'y', 'k']
