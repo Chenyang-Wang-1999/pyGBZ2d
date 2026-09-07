@@ -15,13 +15,14 @@ from pygbz2d.core import live_defaults
 
 #: Plateau-probe non-zero-winding area threshold.
 PLATEAU_AREA_THRESHOLD: float = 1e-2
-#: θ₁ snap radius: a discrete PointSubset closer than this to a continuum
-#: LineSubset is removed as the line's own edge point.
+#: Sample snap tolerance in circular θ₁ and chordal β₂ distance; both
+#: coordinates must match before a discrete point is removed.
 SNAP_TOL: float = 1e-3
 from pygbz2d.core import (
     PointSubset, LineSubset, GBZResult, CharPoly,
     JoinableLinePiece, is_mr_cluster_endpoint, TWO_PI,
     check_points_clustered_on_torus, probe_zero_plateau,
+    chordal_cost_matrix,
 )
 
 from .bisect import (
@@ -330,11 +331,20 @@ def _point_near_any_line(
     lines: list[LineSubset],
     snap_tol: float,
 ) -> bool:
-    """Whether *point* is within ``snap_tol`` (circular θ₁) of a LineSubset."""
+    """Match a point to a sampled line point in both coordinates.
+
+    Assembly supplies points and lines at the same mu1. Only sampled
+    coincidences are removed: interpolating across a sparsely sampled curve
+    could erase a distinct root track near a multiple root.
+    """
     t1 = point.theta1
     for line in lines:
+        if abs(point.mu1 - line.mu1) >= snap_tol:
+            continue
         d = np.abs((line.theta1_arr - t1 + np.pi) % (TWO_PI) - np.pi)
-        if np.any(d < snap_tol):
+        nearby = line.beta2_arr[d < snap_tol]
+        if len(nearby) and np.any(chordal_cost_matrix(
+                np.array([point.beta2]), nearby) < snap_tol):
             return True
     return False
 

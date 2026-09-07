@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="360" viewBox="0 0 1100 360">
+<g font-family="Arial" font-size="23" fill="#00264f">
+<path d="M365 10V335 M735 10V335" stroke="#d0edfa" stroke-width="2"/>
+<g text-anchor="middle"><text x="175" y="35">Isolated modulus tie</text><text x="550" y="35">Multiple root</text><text x="925" y="35">Continuum in modulus</text>
+<circle cx="175" cy="155" r="72" fill="none" stroke="#d0edfa" stroke-width="3"/>
+<circle cx="226" cy="104" r="9" fill="#3d8dff"/><circle cx="124" cy="206" r="9" fill="#00978a"/>
+<text x="175" y="275">|βₐ| = |βᵦ|</text><text x="175" y="310">βₐ ≠ βᵦ</text>
+<circle cx="550" cy="155" r="72" fill="none" stroke="#d0edfa" stroke-width="3"/><circle cx="601" cy="104" r="13" fill="none" stroke="#3d8dff" stroke-width="4"/><circle cx="601" cy="104" r="5" fill="#00978a"/>
+<text x="550" y="275">βₐ = βᵦ</text><text x="550" y="310">∂f / ∂β₂ = 0</text>
+<path d="M805 135H1045 M805 173H1045" stroke="#3d8dff" stroke-width="4"/><path d="M805 140H1045 M805 178H1045" stroke="#00978a" stroke-width="2" stroke-dasharray="9 5"/>
+<text x="925" y="223" font-size="18">equality over an interval</text><text x="925" y="275">SGBZ: tied tracks</text><text x="925" y="310">Amoeba: flat log modulus</text>
+</g><text x="8" y="354" fill="#626975" font-size="17">Conceptual event taxonomy. Symbols and line pairs are schematic, not computed root trajectories.</text>
+</g></svg>

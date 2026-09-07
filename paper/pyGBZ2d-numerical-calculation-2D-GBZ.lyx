@@ -1,0 +1,752 @@
+#LyX 2.4 created this file. For more info see https://www.lyx.org/
+\lyxformat 620
+\begin_document
+\begin_header
+\save_transient_properties true
+\origin unavailable
+\textclass revtex4-2
+\begin_preamble
+% ****** Start of file apssamp.tex ******
+%
+%   This file is part of the APS files in the REVTeX 4.2 distribution.
+%   Version 4.2a of REVTeX, December 2014
+%
+%   Copyright (c) 2014 The American Physical Society.
+%
+%   See the REVTeX 4 README file for restrictions and more information.
+%
+% TeX'ing this file requires that you have AMS-LaTeX 2.0 installed
+% as well as the rest of the prerequisites for REVTeX 4.2
+%
+% See the REVTeX 4 README file
+% It also requires running BibTeX. The commands are as follows:
+%
+%  1)  latex apssamp.tex
+%  2)  bibtex apssamp
+%  3)  latex apssamp.tex
+%  4)  latex apssamp.tex
+%
+
+
+% Include figure files
+\usepackage{dcolumn}% Align table columns on decimal point
+\usepackage{bm}% bold math
+%\usepackage{hyperref}% add hypertext capabilities
+%\usepackage[mathlines]{lineno}% Enable numbering of text and display math
+%\linenumbers\relax % Commence numbering lines
+
+%\usepackage[showframe,%Uncomment any one of the following lines to test 
+%%scale=0.7, marginratio={1:1, 2:3}, ignoreall,% default settings
+%%text={7in,10in},centering,
+%%margin=1.5in,
+%%total={6.5in,8.75in}, top=1.2in, left=0.9in, includefoot,
+%%height=10in,a5paper,hmargin={3cm,0.8in},
+%]{geometry}
+\end_preamble
+\options reprint,amsmath,amssymb,aps,prb
+\use_default_options false
+\maintain_unincluded_children no
+\language english
+\language_package none
+\inputencoding iso8859-15
+\fontencoding default
+\font_roman "default" "default"
+\font_sans "default" "default"
+\font_typewriter "default" "default"
+\font_math "auto" "auto"
+\font_default_family default
+\use_non_tex_fonts false
+\font_sc false
+\font_roman_osf false
+\font_sans_osf false
+\font_typewriter_osf false
+\font_sf_scale 100 100
+\font_tt_scale 100 100
+\use_microtype false
+\use_dash_ligatures true
+\graphics default
+\default_output_format default
+\output_sync 0
+\bibtex_command default
+\index_command default
+\paperfontsize default
+\spacing single
+\use_hyperref false
+\papersize default
+\use_geometry false
+\use_package amsmath 2
+\use_package amssymb 0
+\use_package cancel 0
+\use_package esint 1
+\use_package mathdots 0
+\use_package mathtools 0
+\use_package mhchem 0
+\use_package stackrel 0
+\use_package stmaryrd 0
+\use_package undertilde 0
+\cite_engine basic
+\cite_engine_type default
+\biblio_style plain
+\use_bibtopic false
+\use_indices false
+\paperorientation portrait
+\suppress_date false
+\justification true
+\use_refstyle 0
+\use_formatted_ref 0
+\use_minted 0
+\use_lineno 0
+\index Index
+\shortcut idx
+\color #008000
+\end_index
+\secnumdepth 3
+\tocdepth 3
+\paragraph_separation indent
+\paragraph_indentation default
+\is_math_indent 0
+\math_numbering_side default
+\quotes_style english
+\dynamic_quotes 0
+\papercolumns 1
+\papersides 1
+\paperpagestyle default
+\tablestyle default
+\tracking_changes false
+\output_changes false
+\change_bars false
+\postpone_fragile_content true
+\html_math_output 0
+\html_css_as_file 0
+\html_be_strict false
+\docbook_table_output 0
+\docbook_mathml_prefix 1
+\end_header
+
+\begin_body
+
+\begin_layout Standard
+\begin_inset FormulaMacro
+\newcommand{\rmd}{\mathrm{d}}
+\end_inset
+
+
+\begin_inset FormulaMacro
+\newcommand{\rme}{\mathrm{e}}
+\end_inset
+
+
+\begin_inset FormulaMacro
+\newcommand{\rmi}{\mathrm{i}}
+\end_inset
+
+
+\end_layout
+
+\begin_layout Title
+Numerical calculations of two-dimensional generalized Brillouin zone
+\end_layout
+
+\begin_layout Author
+Author
+\end_layout
+
+\begin_layout Abstract
+As the non-Hermitian generalization of the Brillouin zone,
+ the generalized Brillouin zone (GBZ) plays a central role in depicting the energy spectrum,
+ skin localization,
+ and band topology of non-Hermitian periodic lattices.
+ While one-dimensional GBZ can be numerically calculated by the auxiliary GBZ method,
+ its higher-dimensional generalization,
+ the amoebic GBZ and the strip GBZ,
+ are hard to compute due to their complicated algebraic structure.
+ In this work,
+ we propose an universal numerical algorithm for both the two types of GBZs by converting the algebraic geometry problem into polynomial root solving.
+ We build a python package named `bfGBZ2py' for generic two-dimensional tight-binding models using brute-force root solving of univariate polynomials.
+ A mesh generator is also integrated in the package to extract the topology of the GBZs,
+ serving as a base space for topological invariant calculations.
+ 
+\end_layout
+
+\begin_layout Section
+Introduction
+\end_layout
+
+\begin_layout Section
+Non-Bloch band theory and 2D GBZ
+\end_layout
+
+\begin_layout Standard
+In this section,
+ we give a brief introduction to the non-Bloch band theory,
+ and two frameworks that generalize it to two and higher dimensions:
+ the amoeba formulation and the strip-GBZ formulation.
+ 
+\end_layout
+
+\begin_layout Standard
+For non-Hermitian periodic lattices,
+ under the periodic boundary condition (PBC),
+ the lattice is described by the Bloch Hamiltonian 
+\begin_inset Formula $h(\mathbf{k})$
+\end_inset
+
+,
+ whose eigenvalues over the Brillouin zone (BZ) form the PBC spectrum 
+\begin_inset Formula $\sigma_{\mathrm{PBC}}$
+\end_inset
+
+.
+ Under the open boundary condition (OBC),
+ the non-Hermitian skin effect can drive the eigenstates away from Bloch waves,
+ and the OBC spectrum 
+\begin_inset Formula $\sigma_{\mathrm{OBC}}$
+\end_inset
+
+ in the thermodynamic limit generally deviates from 
+\begin_inset Formula $\sigma_{\mathrm{PBC}}$
+\end_inset
+
+ [?lee2016,
+ yaoWang2018].
+ However,
+ since the translation symmetry still holds,
+ the Hamiltonian should share common eigenstates with the translation operators,
+ resulting in good quantum number 
+\begin_inset Formula $\mathbf{k}$
+\end_inset
+
+.
+ Facing this contradiction,
+ the non-Bloch band theory recovers 
+\begin_inset Formula $\sigma_{\text{OBC}}$
+\end_inset
+
+ by allowing complex momenta:
+ writing 
+\begin_inset Formula $\beta_{j}\equiv\rme^{\rmi k_{j}}$
+\end_inset
+
+ and analytically continuing the momenta into the complex plane,
+ one obtains the non-Bloch Hamiltonian 
+\begin_inset Formula $h(\boldsymbol{\beta})$
+\end_inset
+
+.
+ For an 
+\begin_inset Formula $n$
+\end_inset
+
+-dimensional (
+\begin_inset Formula $n$
+\end_inset
+
+D) 
+\begin_inset Formula $q$
+\end_inset
+
+-band tight-binding model,
+ 
+\begin_inset Formula $h(\boldsymbol{\beta})$
+\end_inset
+
+ is a 
+\begin_inset Formula $q\times q$
+\end_inset
+
+ matrix whose entries are Laurent polynomials in 
+\begin_inset Formula $\boldsymbol{\beta}\equiv(\beta_{1},\dots,\beta_{n})$
+\end_inset
+
+.
+ 
+\end_layout
+
+\begin_layout Standard
+However,
+ extending the momenta to complex space 
+\begin_inset Formula $\mathbb{C}^{n}$
+\end_inset
+
+ doubles the dimensionality of the momentum space.
+ Since the physical momentum space should fall back to the 
+\begin_inset Formula $n$
+\end_inset
+
+D Brillouin zone (BZ) as the non-Hermitian part tends to zero,
+ the complex momentum space should have the same dimension as the BZ,
+ which requires 
+\begin_inset Formula $n$
+\end_inset
+
+ real-valued constraints.
+ By imposing these real-valued constraint on 
+\begin_inset Formula $\mathbb{C}^{n}$
+\end_inset
+
+,
+ an 
+\begin_inset Formula $n$
+\end_inset
+
+D subspace is obtained as the non-Hermitian generalization of the BZ,
+ dubbed the generalized Brillouin zone (GBZ).
+ For one-dimensional lattices,
+ we assume the characteristic polynomial has the form,
+ 
+\begin_inset Formula 
+\begin{equation}
+\det\left[E-h(\beta)\right]=\sum_{j=-M}^{N}a_{j}\left(E\right)\beta^{j},\label{eq:char-poly-1d}
+\end{equation}
+
+\end_inset
+
+where 
+\begin_inset Formula $a_{j}(E)$
+\end_inset
+
+ are polynomials in 
+\begin_inset Formula $E$
+\end_inset
+
+.
+ Given a reference energy 
+\begin_inset Formula $E$
+\end_inset
+
+,
+ 
+\begin_inset Formula $M+N$
+\end_inset
+
+ solutions of 
+\begin_inset Formula $\beta$
+\end_inset
+
+ are obtained from the eigenvalue equation.
+ The 1D GBZ constraint is proved to be,
+ 
+\begin_inset Formula 
+\begin{equation}
+\left|\beta^{(M)}\left(E\right)\right|=\left|\beta^{(M+1)}(E)\right|,\label{eq:1D-GBZ-constraint}
+\end{equation}
+
+\end_inset
+
+where 
+\begin_inset Formula $\beta^{(j)}(E)$
+\end_inset
+
+ is the solution of eigenvalue equation ordered by 
+\begin_inset Formula $|\beta^{(j)}(E)|\leq|\beta^{(k)}(E)|,\forall j<k$
+\end_inset
+
+.
+ In general,
+ 
+\begin_inset Formula $M$
+\end_inset
+
+ (
+\begin_inset Formula $N$
+\end_inset
+
+) equals the number of OBC equations at the left (right) boundary.
+ Hence,
+ the physical picture of Eq.
+ (
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "eq:1D-GBZ-constraint"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+) is that the exponential scaling of the two 
+\begin_inset Quotes eld
+\end_inset
+
+middle
+\begin_inset Quotes erd
+\end_inset
+
+ states is required to be the same,
+ such that they are able to cancel each other at both boundaries simultaneously.
+\end_layout
+
+\begin_layout Standard
+For numerical methods,
+ the 1D GBZ of a tight-binding model can be computed via the auxiliary GBZ method (ref.
+ ?).
+ When Eq.
+ (
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "eq:1D-GBZ-constraint"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+) holds,
+ there must exist 
+\begin_inset Formula $\phi\in[0,2\pi)$
+\end_inset
+
+,
+ such that 
+\begin_inset Formula $\beta^{(M+1)}=\beta^{(M)}\rme^{\rmi\phi}$
+\end_inset
+
+.
+ Therefore,
+ the GBZ is a subset of the 
+\begin_inset Quotes eld
+\end_inset
+
+auxiliary GBZ
+\begin_inset Quotes erd
+\end_inset
+
+,
+ which is defined as the solution set of the equations,
+\begin_inset Formula 
+\begin{equation}
+\begin{cases}
+\det\left[E-h(\beta)\right]=0,\\
+\det\left[E-h(\beta\rme^{\rmi\phi})\right]=0,
+\end{cases}\label{eq:aGBZ-eq}
+\end{equation}
+
+\end_inset
+
+as 
+\begin_inset Formula $\phi$
+\end_inset
+
+ traverses 
+\begin_inset Formula $[0,2\pi)$
+\end_inset
+
+.
+ For tight-binding models,
+ the degrees of 
+\begin_inset Formula $E$
+\end_inset
+
+ and 
+\begin_inset Formula $\beta$
+\end_inset
+
+ in the characteristic polynomial are all finite.
+ Hence,
+ a fixed value of 
+\begin_inset Formula $\phi$
+\end_inset
+
+ yields a finite solution set of 
+\begin_inset Formula $(E,\beta)$
+\end_inset
+
+,
+ which can be numerically computed by algebraic root-solving algorithms such as the resultant method or the homotopy continuation.
+\end_layout
+
+\begin_layout Standard
+In contrast to the well-established framework in 1D lattices,
+ the OBC energy spectrum and eigenstates exhibit complicated structure in two and higher dimensions.
+ Due to the geometry-dependent skin effect (ref.
+ ?),
+ different geometries of the bulk yield different OBC spectra and eigenstates even when the system size is sufficiently large.
+ Hence,
+ the momentum-space Hamiltonian 
+\begin_inset Formula $h(\beta)$
+\end_inset
+
+ is not sufficient to determine the non-Hermitian band structure.
+ It is still an open question to give a 2D GBZ for an arbitrary geometry.
+ Recently,
+ there are two main frameworks that generally builds the higher dimensional GBZs.
+ One is the amoeba formulation,
+ which builds the GBZ by an algebraic concept named 
+\begin_inset Quotes eld
+\end_inset
+
+amoeba
+\begin_inset Quotes erd
+\end_inset
+
+.
+ The other is the strip-GBZ formulation,
+ which is derived by sequential extension of a lattice along several axes.
+ 
+\end_layout
+
+\begin_layout Standard
+The basic idea of the amoeba formulation is shown in Fig.
+ 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:intro-amoeba"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+,
+ ...
+\end_layout
+
+\begin_layout Standard
+\begin_inset Float figure
+placement document
+alignment document
+wide false
+sideways false
+status collapsed
+
+\begin_layout Plain Layout
+\begin_inset ERT
+status open
+
+\begin_layout Plain Layout
+
+
+\backslash
+centering
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Plain Layout
+\begin_inset Caption Standard
+
+\begin_layout Plain Layout
+\begin_inset CommandInset label
+LatexCommand label
+name "fig:intro-amoeba"
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+The basic idea of the strip GBZ is shown in Fig.
+ 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "fig:intro-strip-GBZ"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+
+,
+ ...
+ 
+\end_layout
+
+\begin_layout Standard
+\begin_inset Float figure
+placement document
+alignment document
+wide false
+sideways false
+status open
+
+\begin_layout Plain Layout
+\begin_inset Caption Standard
+
+\begin_layout Plain Layout
+\begin_inset CommandInset label
+LatexCommand label
+name "fig:intro-strip-GBZ"
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+\begin_inset Float figure
+placement document
+alignment document
+wide false
+sideways false
+status collapsed
+
+\begin_layout Plain Layout
+\begin_inset ERT
+status open
+
+\begin_layout Plain Layout
+
+
+\backslash
+centering
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Plain Layout
+\begin_inset Graphics
+	filename Figures/schematic-2D-GBZ.pdf
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Plain Layout
+\begin_inset Caption Standard
+
+\begin_layout Plain Layout
+\begin_inset CommandInset label
+LatexCommand label
+name "fig:schematic-GBZ-2d"
+
+\end_inset
+
+ Schematic diagram of the 2D OBC energy spectra and corresponding GBZ spectra.
+ (a) Illustration of different types of geometries in a 2D lattice.
+ (b) Sketches of the OBC energy spectra of different geometries.
+ The spectrum of a 
+\begin_inset Quotes eld
+\end_inset
+
+generic
+\begin_inset Quotes erd
+\end_inset
+
+ geometry,
+ such as an irregular geometry or regular geometry with boundary disorder,
+ agrees well with the amoebic spectrum 
+\begin_inset Formula $\sigma_{\text{Amoeba}}$
+\end_inset
+
+.
+ The spectra of the strip geometries are approximated by the corresponding strip-GBZ spectra (
+\begin_inset Formula $\sigma_{\text{strip 1}}$
+\end_inset
+
+ and 
+\begin_inset Formula $\sigma_{\text{strip 2}}$
+\end_inset
+
+).
+ Strip-GBZ spectra can be different for different strips,
+ but all of them are subsets of the amoebic spectrum.
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+For numerical calculations,
+ however,
+ both the amoebic GBZ and the strip GBZ in 2D are much more complicated compared to the 1D GBZ.
+ The main obstacle is that the computation of both types of 2D GBZs cannot be reduced to a root-solving problem,
+ like the auxiliary GBZ approach for 1D GBZ.
+ Hence,
+ we adopt a 
+\begin_inset Quotes eld
+\end_inset
+
+brute force
+\begin_inset Quotes erd
+\end_inset
+
+ method,
+ which yields the 2D GBZs by sweeping all possible complex energies,
+ and collecting the subsets of GBZ at each energy point.
+ However,
+ direct computation of Eq.
+ (?) or Eq.
+ (?) is still time consuming.
+ When the data points are near the zeros of characteristic polynomial,
+ the integrand of the both integrals diverges,
+ resulting in slow convergence.
+ To overcome this obstacle,
+ we utilize the relation between the winding number and the roots,
+ and convert the integration to a root-solving problem.
+ In following sections,
+ we will discuss this method in details.
+\end_layout
+
+\begin_layout Section
+Reduction of GBZ computation to root solving
+\end_layout
+
+\begin_layout Section
+Root-tracking engine
+\end_layout
+
+\begin_layout Section
+Benchmarks and applications
+\end_layout
+
+\begin_layout Section
+Mesh generation and Chern number calculation 
+\end_layout
+
+\begin_layout Section
+Discussion
+\end_layout
+
+\end_body
+\end_document

@@ -1,17 +1,18 @@
 import sys
 from pathlib import Path
 
-try:
-    import pygbz2d  # noqa: F401  — prefer the installed package when present
-except ModuleNotFoundError:
-    # Fallback for running tests from a source checkout without
-    # ``pip install -e .`` (src layout): prepend src/ so ``import pygbz2d``
-    # resolves to the same files the installed package would provide.
-    sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+# Checkout tests must not silently validate a stale non-editable installation.
+_source_root = Path(__file__).resolve().parent / "src"
+sys.path.insert(0, str(_source_root))
+import pygbz2d
+
+if Path(pygbz2d.__file__).resolve().parent != _source_root / "pygbz2d":
+    raise RuntimeError("pygbz2d was already imported outside this checkout; "
+                       "restart pytest with the checkout's src first on sys.path")
 
 import pytest
 
-# NOTE: tests import ``pygbz2d`` (installed package preferred, src/ fallback).
+# NOTE: tests import ``pygbz2d`` from this checkout.
 # Shared HN-2D test models below were previously duplicated (with drift)
 # across test files.
 from cmath import exp as _exp

@@ -12,7 +12,9 @@ Each test pins the exact failure mode found in the review:
   roots are majority-inf.
 """
 
-import signal
+import subprocess
+import sys
+from pathlib import Path
 import numpy as np
 import pytest
 from types import SimpleNamespace
@@ -46,21 +48,23 @@ class TestH1MrRestartPingpong:
         (1.0, 1e-6),
     ])
     def test_run_terminates_without_zero_mr(self, h0, min_dtheta):
-        poly = _make_pingpong_poly()
-        zm = ZeroManager(poly, 0.5 + 0j, 0.0)
-
-        def on_alarm(sig, frm):
-            raise TimeoutError("watchdog: run() did not terminate")
-        old = signal.signal(signal.SIGALRM, on_alarm)
-        signal.alarm(60)
-        try:
-            zm.run(h0=h0, min_dtheta=min_dtheta)
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old)
-
-        thetas = [m.theta1 for m in zm.multiple_roots]
-        assert len(thetas) == 0, f"expected no 0/∞ MR, got {thetas}"
+        # A child process can be killed on timeout on Windows as well as Unix.
+        # Select this checkout explicitly; a fresh interpreter has no conftest.
+        code = """
+import sys
+sys.path.insert(0, 'src')
+from tests.test_regressions import _make_pingpong_poly, ZeroManager
+zm = ZeroManager(_make_pingpong_poly(), 0.5 + 0j, 0.0)
+zm.run(h0=float(sys.argv[1]), min_dtheta=float(sys.argv[2]))
+thetas = [m.theta1 for m in zm.multiple_roots]
+assert len(thetas) == 0, f'expected no 0/∞ MR, got {thetas}'
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(h0), str(min_dtheta)],
+            cwd=Path(__file__).resolve().parents[1],
+            timeout=60, capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
 
     def test_no_duplicate_mr_thetas(self):
         """No MR records are created for the β₂=0 branch point; if MRs ever

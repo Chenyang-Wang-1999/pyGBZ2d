@@ -21,6 +21,32 @@ from pygbz2d.core import PointSubset, LineSubset, GBZResult, CharPoly, TWO_PI
 from conftest import build_HN2D_polynomial
 
 
+@pytest.mark.parametrize("theta1,beta2,expected_points", [
+    (0.5, -1 + 0j, 1),  # different track, identical theta1 and modulus
+    (0.5, 2 + 0j, 1),   # identical angles do not imply identical beta2
+    (0.5, 1 + 0j, 0),   # a genuine sampled duplicate
+    (-1e-7, 1 + 0j, 0), # a genuine duplicate across the theta1 seam
+])
+def test_continuum_assembly_matches_both_coordinates(
+        monkeypatch, theta1, beta2, expected_points):
+    import importlib
+    from types import SimpleNamespace
+    assembly = importlib.import_module("pygbz2d.amoeba.amoeba")
+    seg = SimpleNamespace(theta1_arr=np.array([0., .5, 1.]),
+                          tracked_roots=np.ones((3, 1), complex))
+    zm = SimpleNamespace(segments=[seg])
+    # Isolate assembly from tracking and joining: the supplied crossing is
+    # the evidence that must survive unless it lies on the supplied line.
+    monkeypatch.setattr(assembly, "_splice_continuum_pieces",
+                        lambda zm, pieces: pieces)
+    monkeypatch.setattr(assembly, "find_crossings",
+                        lambda *args, **kwargs: [(exp(1j * theta1), beta2)])
+    subsets = assembly._assemble_continuum_subsets(
+        zm, 0j, 0., 0., {"_continuum_members": [(0, 0)]})
+    assert sum(isinstance(s, LineSubset) for s in subsets) == 1
+    assert sum(isinstance(s, PointSubset) for s in subsets) == expected_points
+
+
 @pytest.fixture
 def params_A():
     return {"J1": 1.0, "J2": 1.0, "gamma_1": 0.2, "gamma_2": 0.3,

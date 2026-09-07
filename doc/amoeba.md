@@ -93,7 +93,7 @@ Continuum-first dispatcher:
   1. materialize the recorded continuum `(seg_idx, col_idx)` members as per-segment `JoinableLinePiece`s;
   2. splice pieces that meet end-to-end (interior MRs share a track frame; the θ=0≡2π seam is translated through `boundary_perm`; MR-cluster endpoints are genuine terminators);
   3. run `find_crossings` with the continuum members passed as `avoided_segments` to find discrete crossings;
-  4. convert those crossings to `PointSubset`s, dropping any point whose θ₁ is within `SNAP_TOL` of a continuum `LineSubset`.
+  4. convert those crossings to `PointSubset`s, dropping a point only when its circular θ₁ and chordal β₂ distances to the same continuum line sample are both within `SNAP_TOL` (with matching μ₁). Matching uses samples, not interpolation across tracks.
 
 ### 2.8 Plateau Detection
 

@@ -113,8 +113,7 @@ class CharPoly:
     Parameters:
         coeffs: 1-D complex ndarray of polynomial coefficients.
         degs: (n_terms, 3) integer ndarray of (E, beta1, beta2) exponents.
-        backend: ``None`` (auto: POLY_BACKEND env → poly_tools → numpy
-            fallback), ``'poly_tools'``, ``'numpy'``, or a user-supplied
+        backend: ``None`` (POLY_BACKEND env → numpy default), ``'poly_tools'``, ``'numpy'``, or a user-supplied
             class/callable ``backend(coeffs, degs)`` implementing the
             Laurent protocol.
     """

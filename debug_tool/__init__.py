@@ -15,6 +15,13 @@ Entry points (see ``gbz_debug`` module docstring for the full picture):
 Run ``python debug_tool/demo_debug_tool.py`` for a ready-made session.
 '''
 
+# These repository utilities must use the same source as the checkout tests,
+# including when invoked with `python -m debug_tool.demo_debug_tool`.
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
 from .gbz_debug import (
     MethodDebug,
     GBZDebugReport,

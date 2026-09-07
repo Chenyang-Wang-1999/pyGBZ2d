@@ -210,7 +210,7 @@ def embed(bp: BandPoints, *, alpha_E: Optional[float] = None,
         d_re = d_re if d_re is not None else d_re_
         d_im = d_im if d_im is not None else d_im_
     if w_mu is None:
-        span = max(bp.mu1.ptp(), bp.mu2.ptp(), 1.0) if len(bp.mu1) else 1.0
+        span = max(np.ptp(bp.mu1), np.ptp(bp.mu2), 1.0) if len(bp.mu1) else 1.0
         w_mu = 1.0 / span
 
     X = np.empty((len(bp.E), 8))

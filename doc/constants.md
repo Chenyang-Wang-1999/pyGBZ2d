@@ -165,7 +165,7 @@ together.
 | Constant | Default | Meaning |
 |---|---|---|
 | `PLATEAU_AREA_THRESHOLD` | 1e-2 | Non-zero-winding-area fraction below which the plateau pre-check arms (a separate quantity from `PLATEAU_CLUSTER_TOL`: area fraction vs. torus radius). |
-| `SNAP_TOL` | 1e-3 | θ₁ snap radius: a PointSubset closer than this to a continuum LineSubset is removed. |
+| `SNAP_TOL` | 1e-3 | Sample snap tolerance: circular θ₁ and chordal β₂ distances must both be below this value to remove a PointSubset; μ₁ must also match within this tolerance. |
 
 ---
 

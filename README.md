@@ -21,7 +21,7 @@ Runtime dependencies are **numpy + scipy only** — the package is fully functio
 
 ### Optional: poly_tools acceleration
 
-Polynomial evaluation runs on a pluggable backend. The default auto-selection uses the compiled [poly_tools](https://atomgit.com/wangchenyang99/PolyTools) C++ extension when it is importable, and otherwise falls back to the built-in pure-numpy backend (numerically equivalent to ~1e-14; ~25% slower on root solving, with a one-time warning):
+Polynomial evaluation uses the built-in NumPy backend by default. The compiled [poly_tools](https://atomgit.com/wangchenyang99/PolyTools) C++ extension is optional and must be selected explicitly; it is not selected automatically because it has known issues with multiple roots:
 
 ```bash
 git clone https://atomgit.com/wangchenyang99/PolyTools.git
@@ -33,9 +33,11 @@ cp -r ../python/poly_tools /path/to/site-packages/    # or anywhere on PYTHONPAT
 Backend selection (first match wins):
 
 ```python
-CharPoly(coeffs, degs, backend="numpy")        # explicit, per-polynomial
+CharPoly(coeffs, degs, backend="poly_tools")   # explicit acceleration, per-polynomial
+CharPoly(coeffs, degs, backend="numpy")        # explicit NumPy backend
 # or the POLY_BACKEND environment variable: "poly_tools" | "numpy"
-# or backend=None (default): poly_tools if importable, else numpy fallback
+# or backend=None (default): POLY_BACKEND if set, otherwise numpy
+# backend="auto" also selects numpy
 ```
 
 A custom backend is any class satisfying the `LaurentProtocol` in `pygbz2d/backend.py` (eval / derivative / partial_terms_1d / num_max_degrees).
@@ -150,7 +152,7 @@ Detailed documentation is available in the `doc/` directory:
 
 ```bash
 pip install -e .[dev]      # or: pip install pytest
-pytest                     # slow tests are skipped by default
+pytest                     # tests use this checkout; slow tests skip by default
 pytest --run-slow          # include BerryPy-dependent slow tests
 # The pure-numpy Laurent backend is the default.  To use the C++ backend:
 POLY_BACKEND=poly_tools pytest

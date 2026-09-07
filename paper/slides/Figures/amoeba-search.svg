@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="290" viewBox="0 0 1100 290">
+<defs><marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="none" stroke="#00264f" stroke-width="1.5"/></marker></defs>
+<g font-family="Arial" font-size="24" fill="#00264f" text-anchor="middle">
+<rect x="12" y="45" width="250" height="100" fill="white" stroke="#00264f" stroke-width="2"/><text x="137" y="86">Choose μ₁</text><text x="137" y="119">build root tracks</text>
+<rect x="354" y="45" width="335" height="100" fill="#f6fbff" stroke="#00978a" stroke-width="2"/><text x="521" y="86">Solve a₂(μ₂) = 0</text><text x="521" y="119">reuse these tracks</text>
+<rect x="780" y="45" width="303" height="100" fill="white" stroke="#00264f" stroke-width="2"/><text x="931" y="86">Evaluate a₁</text><text x="931" y="119">from the crossings</text>
+<path d="M931 145V211H137V157" fill="none" stroke="#00264f" stroke-width="2.5" marker-end="url(#a)"/>
+<rect x="350" y="188" width="405" height="42" fill="white"/><text x="552" y="217">update the μ₁ bracket</text>
+<text x="550" y="276" fill="#626975" font-size="20">Continuum levels use one-sided probes rather than an undefined winding.</text>
+<path d="M262 94H341" fill="none" stroke="#00264f" stroke-width="2.5" marker-end="url(#a)"/><path d="M689 94H767" fill="none" stroke="#00264f" stroke-width="2.5" marker-end="url(#a)"/></g></svg>
+

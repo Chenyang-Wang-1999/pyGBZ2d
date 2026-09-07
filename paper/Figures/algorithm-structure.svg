@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="85mm"
+   height="80mm"
+   viewBox="0 0 85 80"
+   version="1.1"
+   id="svg5"
+   inkscape:version="1.2.2 (732a01da63, 2022-12-09)"
+   sodipodi:docname="algorithm-structure.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview7"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     showgrid="false"
+     inkscape:zoom="3.659624"
+     inkscape:cx="43.720338"
+     inkscape:cy="147.28289"
+     inkscape:window-width="2987"
+     inkscape:window-height="1556"
+     inkscape:window-x="2975"
+     inkscape:window-y="-12"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs2">
+    <inkscape:path-effect
+       effect="spiro"
+       id="path-effect3709"
+       is_visible="true"
+       lpeversion="1" />
+    <inkscape:path-effect
+       effect="spiro"
+       id="path-effect2701"
+       is_visible="true"
+       lpeversion="1" />
+  </defs>
+  <g
+     inkscape:label="图层 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <rect
+       style="fill:none;fill-opacity:1;stroke:#000000;stroke-width:0.3;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-linejoin:miter;stroke-linecap:butt"
+       id="rect2975"
+       width="34.967705"
+       height="56.132366"
+       x="10.428964"
+       y="12.473859" />
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:3.52777px;line-height:1;font-family:'Times New Roman';-inkscape-font-specification:'Times New Roman, ';text-align:center;text-anchor:middle;fill:#000000;fill-opacity:1;stroke:none;stroke-width:0.3;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0"
+       x="27.328627"
+       y="11.350779"
+       id="text2979"><tspan
+         sodipodi:role="line"
+         id="tspan2977"
+         style="fill:#000000;stroke:none;stroke-width:0.3"
+         x="27.328627"
+         y="11.350779">Amoeba solver</tspan></text>
+    <path
+       style="fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:0.3;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0"
+       d="M 10.428964,18.074489 H 45.396668"
+       id="path3707"
+       inkscape:path-effect="#path-effect3709"
+       inkscape:original-d="M 10.428964,18.074489 H 45.396668" />
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:3.52777px;line-height:1;font-family:'Times New Roman';-inkscape-font-specification:'Times New Roman, ';text-align:start;text-anchor:start;fill:#000000;fill-opacity:1;stroke:none;stroke-width:0.3;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0"
+       x="13.094358"
+       y="15.977849"
+       id="text3713"><tspan
+         sodipodi:role="line"
+         id="tspan3711"
+         style="text-align:start;text-anchor:start;fill:#000000;stroke:none;stroke-width:0.3"
+         x="13.094358"
+         y="15.977849">Input: <tspan
+   style="font-style:italic;text-align:start;text-anchor:start"
+   id="tspan3715">E</tspan><tspan
+   style="font-size:65%;baseline-shift:sub"
+   id="tspan4449">ref</tspan>,  <tspan
+   style="font-style:italic"
+   id="tspan4447">f <tspan
+   style="font-style:normal"
+   id="tspan4451" /></tspan></tspan></text>
+  </g>
+</svg>

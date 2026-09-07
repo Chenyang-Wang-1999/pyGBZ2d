@@ -79,7 +79,7 @@ class MeshOrientationReport:
     @property
     def is_ok(self) -> bool:
         return (self.orientation_uniform and self.neighbors_consistent
-                and self.n_nonmanifold_edges == 0)
+                and self.n_nonmanifold_edges == 0 and self.signed_zero == 0)
 
     def describe(self) -> str:
         lines = [

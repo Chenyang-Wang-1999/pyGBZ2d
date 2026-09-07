@@ -336,3 +336,4 @@ class TestMeshOrientation:
         rep = check_mesh_orientation(verts, np.array([(0, 1, 2)]))
         assert rep.signed_zero == 1
         assert rep.signed_pos == 0 and rep.signed_neg == 0
+        assert not rep.is_ok

@@ -81,7 +81,7 @@ brute-force-non-hermitian/
 │                               #   test_continuation, test_zero_manager,
 │                               #   test_interpolation, test_counterexamples
 │                               #   (slow: --run-slow), test_regressions, test_debug_tool
-├── conftest.py                 # installed-package-or-src import + shared build_HN2D_polynomial + slow marker
+├── conftest.py                 # checkout-src import + shared build_HN2D_polynomial + slow marker
 ├── playground/                 # Unofficial runnable demo scripts (demo_unified.py shows the GBZResult API;
 │                               #   Haldane-model-gainloss.py: sweeps, plots, recompute_failed_SGBZ)
 ├── debug_tool/                 # Fixed-(E_ref, mu1) debugging (see debug_tool/README.md):
