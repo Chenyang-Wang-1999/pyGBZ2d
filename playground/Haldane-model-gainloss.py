@@ -438,6 +438,7 @@ def plot_amoebic_spectrum(suffix=""):
 
     # Plot
     plt.figure()
+    plt.title("Amoebic GBZ, %s" %(suffix))
     plt.plot(E_list[ind_amoeba].real, E_list[ind_amoeba].imag, '.', label="SGBZ")
     plt.plot(E_list[ind_not_amoeba].real, E_list[ind_not_amoeba].imag, '.', label="Non-SGBZ")
     plt.plot(E_list[ind_failed].real, E_list[ind_failed].imag, '.', label="Failed")
@@ -463,11 +464,11 @@ def plot_SGBZ(which="a1"):
 
     # Plot
     plt.figure()
+    plt.title("Strip-GBZ, %s" % (which))
     plt.plot(E_list[ind_amoeba].real, E_list[ind_amoeba].imag, '.', label="SGBZ")
     plt.plot(E_list[ind_not_amoeba].real, E_list[ind_not_amoeba].imag, '.', label="Non-SGBZ")
     plt.plot(E_list[ind_failed].real, E_list[ind_failed].imag, '.', label="Failed")
     plt.legend()
-    plt.show()
 
 
 def plot_amoeba_mu(suffix=""):
@@ -618,19 +619,19 @@ if __name__ == "__main__":
     # recompute_failed_SGBZ("x", out_fname="data/Haldane-gain-loss-x-SGBZ-recomputed.pkl")
     # recompute_failed_SGBZ("a1", out_fname="data/Haldane-gain-loss-a1-SGBZ-recomputed.pkl")
     # recompute_failed_SGBZ("a2", out_fname="data/Haldane-gain-loss-a2-SGBZ-recomputed.pkl")
-    # plot_amoebic_spectrum()
+    plot_amoebic_spectrum()
     # plot_amoeba_mu()
-    # plot_amoebic_spectrum("-xy")
-    # plot_SGBZ("a1")
-    # plot_SGBZ("a2")
-    # plot_SGBZ("x")
-    # plot_SGBZ("y")
+    plot_amoebic_spectrum("-xy")
+    plot_SGBZ("a1")
+    plot_SGBZ("a2")
+    plot_SGBZ("x")
+    plot_SGBZ("y")
     # plot_index_E("a1", kind="SGBZ")
     # plot_index_E("a2", kind="SGBZ")
     # plot_index_E("x", kind="SGBZ")
     # plot_index_E("y", kind="SGBZ")
     # plot_index_E("")
     # plot_index_E("-xy")
-    # plt.show()
+    plt.show()
     # debug_y_SGBZ()
-    Hermitian_Haldane_sweep()
+    # Hermitian_Haldane_sweep()
