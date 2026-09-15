@@ -1,8 +1,8 @@
-# pyGBZ2d — brute-force-non-hermitian
+# pyGBZ2d — brute-force 2D GBZ computation
 
-Non-Hermitian skin effect computation for 2D tight-binding models — brute-force polynomial root-solving approaches.
+Non-Hermitian generalized Brillouin zone (GBZ) computation for 2D tight-binding models — brute-force polynomial root-solving approaches.
 
-This package implements two complementary formulations for determining the generalized Brillouin zone (GBZ) and energy spectrum of 2D non-Hermitian lattice systems:
+This package implements two complementary formulations for determining the GBZ and energy spectrum of 2D non-Hermitian lattice systems:
 
 | Subpackage | Approach | Key Object |
 |--------|----------|------------|
@@ -84,8 +84,8 @@ Find the Ronkin function minimum $(\mu_1, \mu_2)$ where both average windings va
 ```python
 from pygbz2d.amoeba import bisect_amoeba_ronkin_min
 
-result = bisect_amoeba_ronkin_min(poly, 1.0 + 0j, -0.5, 0.5, -2.0, 2.0)
-print(f"mu1 = {result['mu1']:.6f}, mu2 = {result['mu2']:.6f}")
+gbz = collect_GBZ_subsets(coeffs, degs, E_ref=1.0 + 0j)
+print(f"In spectrum: {not gbz.is_empty}, subsets: {len(gbz.subsets)}")
 ```
 
 ## Customizing Numerical Constants

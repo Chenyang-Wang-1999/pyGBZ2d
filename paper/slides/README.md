@@ -2,7 +2,7 @@
 
 `gbz-algorithms.typ` is the editable English deck for a 20–25 minute physics research talk. `gbz-algorithms.pdf` is the compiled 16:9 version. It assumes basic NHSE, 1D non-Bloch band theory, and amoeba knowledge. The existing `pyGBZ2d.pptx` is unchanged.
 
-The deck uses **Touying 0.7.4, University theme**, following the supplied academic example. It has serif typography, a centered title page, numbered section headings, a progress bar, and three-part academic footers. `theme.typ` holds theme settings and definition-block styling. Equations, slide text, and speaker notes remain editable. The main PDF has 20 pages, including an unnumbered title page and 19 numbered slides.
+The deck uses **Touying 0.7.4, University theme**, following the supplied academic example. It has serif typography, a centered title page, numbered section headings, a progress bar, and three-part academic footers. The theme call and slide helpers live directly in `gbz-algorithms.typ`, so the deck no longer depends on a local `theme.typ` file. Equations, slide text, and speaker notes remain editable. The main PDF has 20 pages, including an unnumbered title page and 19 numbered slides.
 
 Only Touying and its uniwarn dependency are needed. The supplied example's CeTZ, Fletcher, and theorem/numbering packages are not imported unnecessarily: the existing SVG schematics remain editable vector assets, and native Typst heading numbering supplies the section numbers. `#speaker-note` is embedded in the source. Handout mode currently keeps one final view per slide; you can add Touying `#pause`/`#uncover` animation later and disable handout mode.
 

@@ -36,4 +36,4 @@ Unresolved close events, exact degeneracies and finite sampling remain numerical
 
 ## Artwork and typography
 
-The editable SVG schematics are conceptual geometry and design diagrams, with matching vector PDFs. None contains fabricated sampled model data. Three schematics appear in the main deck; the nested amoeba-search diagram remains available as a supplementary asset. The pinned Touying 0.7.4 University theme retains the user's academic style. Equations and text remain editable in Typst.
+The editable SVG schematics are conceptual geometry and design diagrams, with matching vector PDFs. None contains fabricated sampled model data. Three schematics appear in the main deck; the nested amoeba-search diagram remains available as a supplementary asset. The deck calls the pinned Touying 0.7.4 University theme directly. Equations and text remain editable in Typst.
