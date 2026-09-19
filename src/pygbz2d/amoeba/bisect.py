@@ -380,7 +380,13 @@ def _bisect_mu2_discrete(
         mu2_mid = 0.5 * (low_fine + high_fine)
         w_mid = _winding_at(mu2_mid, return_refined=True)
 
-        if abs(w_mid) < xtol or (high_fine - low_fine) < xtol:
+        # SGBZ-parity exit rule (sgbz_solver.py:387): drop the bracket-width
+        # exit, keep only the winding-zero exit.  Both halves of the old
+        # condition were needed to *terminate*, but only `abs(w_mid) < xtol`
+        # certifies that mu2 solves w2 = 0 — `bracket < xtol` merely means the
+        # interval shrank, so the returned zeros could belong to a mu2 that
+        # never had zero winding.
+        if abs(w_mid) < xtol:
             crossings = find_crossings(zm, mu1, mu2_mid, return_refined=True)
             zeros = [
                 (float(np.angle(b1) % (2.0 * np.pi)),
@@ -748,8 +754,15 @@ def bisect_amoeba_ronkin_min(
             zeros_mid, direction=1,
         )
 
-        if abs(w1_mid) < xtol or (mu1_high - mu1_low) < xtol:
-            exit_reason = "w1_zero" if abs(w1_mid) < xtol else "bracket_xtol"
+        # SGBZ-parity exit rule (sgbz_solver.py:387, 2026-08-15): the bracket
+        # width is NOT an exit reason.  Exiting on `bracket < xtol` returns a
+        # mid-bracket mu1 whose |w1| was never tested — here it produced
+        # spurious roots at mu1 ~ 1e-5 (|beta1| - 1 up to 5.4e-5) at five
+        # energies of Haldane-gain-loss-amoeba-xy, where |w1(mu1=0)| is only
+        # numerical cancellation noise (~1e-5 against O(1e-1) terms) and blows
+        # up to ~1e-4 non-symmetrically under E -> E*.  Bisection now ends
+        # only on a genuine winding zero, matching SGBZ.
+        if abs(w1_mid) < xtol:
             return {
                 "mu1": mu1_mid,
                 "mu2": mu2_mid,
@@ -757,7 +770,7 @@ def bisect_amoeba_ronkin_min(
                 "is_continuum": inner_mid["is_continuum"],
                 "_mu1_bracket": (mu1_low, mu1_high),
                 "_w1_bracket": (w1_low, w1_high),
-                "_exit_reason": exit_reason,
+                "_exit_reason": "w1_zero",
                 "_w1_area": w1_area,
                 "_zm": zm,
             }
@@ -774,7 +787,7 @@ def bisect_amoeba_ronkin_min(
     zeros_final = (inner_mid.get("zeros") or []) if inner_mid is not None else []
     raise RuntimeError(
         f"outer mu1 bisection failed to converge after {max_iter} iterations: "
-        f"E_ref={E_ref}, mu1={mu1_final:.12g}, len(subsets)={len(zeros_final)}, "
+        f"E_ref={E_ref}, mu1={(mu1_high, mu1_low)}, mu2={mu2_mid}, len(subsets)={len(zeros_final)}, "
         f"is_continuum={inner_mid['is_continuum'] if inner_mid is not None else None}, "
-        f"winding={w1_mid}"
+        f"winding={w1_high}, {w1_low}"
     )

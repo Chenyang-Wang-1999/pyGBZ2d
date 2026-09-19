@@ -79,7 +79,8 @@ def _find_exact_crossing(
     residual = abs(poly.eval_val((E_ref, beta1, beta2)))
     if residual < CROSSING_RESIDUAL_TOL:
         return (float(t1 % (TWO_PI)), float(t2 % (TWO_PI)))
-    return None
+    # return None
+    raise RuntimeError(f"fsolve failed to converge after {FSOLVE_MAXFEV} iterations: ")
 
 
 def _get_average_winding_from_zeros(

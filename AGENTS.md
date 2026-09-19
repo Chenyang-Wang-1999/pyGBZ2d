@@ -1,4 +1,4 @@
-# CLAUDE.md — brute-force-non-hermitian
+# AGENTS.md — brute-force-non-hermitian
 
 Non-Hermitian skin effect computation for 2D tight-binding models. Packaged as **pyGBZ2d** (import name `pygbz2d`, src-layout, `pip install -e .`). Two complementary GBZ modules (SGBZ and amoeba) implementing brute-force polynomial root-solving approaches, plus a pseudo-arclength continuation module for adaptive root tracking along θ₁. All GBZ entry points (`collect_GBZ_subsets`) natively return the unified `GBZResult` type defined in `pygbz2d/core.py`.
 
