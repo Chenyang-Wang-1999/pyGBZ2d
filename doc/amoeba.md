@@ -39,7 +39,7 @@ Its gradient is related to the **average winding numbers** $u_j$. In a hole of t
 
 ### 2.1 Zero-Manager Backend
 
-`AmoebaZeroManager(ZeroManager)` caches `seg_logabs[s] = log|segments[s].tracked_roots|` after `run()`. The cache is refreshed after mesh insertion (`insert_solution`). The ZM is $\mu_2$-independent — built once per `(E, \mu_1)` and reused across all $\mu_2$ evaluations.
+`AmoebaZeroManager(ZeroManager)` caches `seg_logabs[s] = log|segments[s].tracked_roots|` after `run()`. Its `insert_solution` override automatically refreshes the affected cache after mesh insertion. The ZM is $\mu_2$-independent — built once per `(E, \mu_1)` and reused across all $\mu_2$ evaluations, including the root rows added during crossing refinement.
 
 ### 2.2 Continuum Detection (pre-bisection)
 
@@ -58,11 +58,14 @@ where nearby `mu2_c` values (closer than `tol`) are merged. The `(seg_idx, col_i
 - Traverses every segment and every column.
 - Skips `(seg_idx, col_idx)` entries in `avoided_segments`.
 - First detects exact touches with `d[:-1] == 0`, then sign changes with `d[1:] * d[:-1] < 0`.
-- Returns `list[(β₁, β₂)]`. Linear interpolation unless `return_refined=True`, in which case `_find_exact_crossing` (fsolve + analytic Jacobian) refines each sign-change crossing, falling back to the linear estimate on failure.
+- Returns `list[(β₁, β₂)]`. Linear interpolation unless `return_refined=True`, in which case `_find_exact_crossing` solves `ln|β₂_j(θ₁)| - μ₂ = 0` with Brent's bracketed method. Each interior evaluation solves the polynomial, matches all roots to the segment tracks, and inserts the complete root row into the ZM. Later μ₂ levels reuse this refined mesh.
+- Insertion changes row indices and may expose crossings on other tracks. The refined scan restarts on the updated mesh, reusing accepted crossing rows with their original crossing orientation. Samples always retain actual polynomial roots; projection to the requested torus happens only when returning a crossing. Brent's angular convergence is the stopping criterion, with no additional polynomial-residual or log-modulus acceptance threshold. Non-finite values and failed bracketing/convergence raise with energy, μ values, segment, track, and bracket context; there is no linear fallback in refined mode.
 
 ### 2.4 Winding
 
 `calculate_a2_average_winding(zm, mu1, mu2, avoided_segments=None, return_refined=False)` is a thin consumer of `find_crossings`. It converts crossings back to angular zeros and computes the a2 average winding with `_get_average_winding_from_zeros(direction=2)`.
+
+The internal `_calculate_a2_winding_and_zeros` also returns the zero partition. The fine μ₂ bisection retains this partition and returns it on convergence without refining the same crossings again. Integer winding on each angular interval is still obtained by independent midpoint polynomial solves.
 
 `_get_average_winding_from_zeros` partitions the angular circle in the target direction by the zero coordinates and sums `u × width / (2π)`; it also returns the normalized non-zero area used by the plateau pre-check.
 
@@ -75,14 +78,14 @@ Continuum-first dispatcher:
 3. `detect_continuum` — if flat tracks exist, probe each merged `μ₂_c` at `μ₂_c ± ε` (`ESCAPE_LADDER`). Opposite w2 signs → return the continuum boundary and the matched `(seg_idx, col_idx)` members. Equal signs → tighten the μ₂ bracket with the signed probe points.
 4. `_bisect_mu2_discrete` — pure two-stage bisection on the tightened bracket:
    - coarse stage with `return_refined=False` and `BISECT_COARSE_XTOL`;
-   - fine stage on the coarse bracket with `return_refined=True` and `BISECT_XTOL`; the fine bracket is expanded outward when refined endpoint windings no longer straddle zero.
+   - fine stage on the coarse bracket with `return_refined=True`, stopping when `abs(w2) < wtol`; `wtol` defaults to `core.WINDING_ZERO_TOL` (1e-8). The fine bracket is expanded outward when refined endpoint windings no longer straddle zero.
 
 ### 2.6 Outer μ₁ Bisection (`bisect_amoeba_ronkin_min`)
 
 - Endpoint expansion and midpoint bisection on μ₁.
 - Every inner return is checked for `is_continuum`.
 - `_handle_continuum` resolves a continuum inner result: at `μ₁ ± ε` it builds a fresh ZM, runs `find_crossings` at the fixed `μ₂_c`, and computes the a1 average winding from those crossings. Opposite w1 signs end the outer bisection; equal signs update the μ₁ bracket.
-- Discrete path computes w1 from the inner `zeros` and bisects normally.
+- Discrete path computes w1 from the inner `zeros` and stops when `abs(w1) < wtol`, using the same winding tolerance as the inner solve.
 
 ### 2.7 Subset Assembly
 
@@ -98,6 +101,8 @@ Continuum-first dispatcher:
 ### 2.8 Plateau Detection
 
 Non-continuum results still pass through the plateau pre-check/probe (tiny w1/w2 non-zero area + clustered zeros). Continuum results skip plateau detection.
+
+The plateau probe uses the same `wtol` for its inner μ₂ solve and zero-winding predicate. Its diagnostic result exposes this value as `wtol` (and the shared probe's `zero_tol`). There is no separate `winding_tol` or `plateau_winding_tol` parameter.
 
 ## 3. API Reference
 
@@ -116,7 +121,9 @@ def collect_GBZ_subsets(
 
 Main entry point. Builds `CharPoly`, runs `bisect_amoeba_ronkin_min`, then assembles subsets from the solved ZM. `debug_mode=True` re-raises exceptions instead of returning a failed `GBZResult`.
 
-Options include `mu1_low`, `mu1_high`, `mu2_low`, `mu2_high`, `continuum_tol`, `continuum_perturb`, `max_iter`, `xtol`, `max_range_expansions`, `range_expand_factor`, `plateau_check`, `plateau_winding_tol`, `plateau_probe_radius`, `plateau_area_threshold`, `plateau_cluster_tol`.
+Options include `mu1_low`, `mu1_high`, `mu2_low`, `mu2_high`, `continuum_tol`, `continuum_perturb`, `max_iter`, `wtol`, `max_range_expansions`, `range_expand_factor`, `plateau_check`, `plateau_probe_radius`, `plateau_area_threshold`, `plateau_cluster_tol`.
+
+The former bisection `xtol` keyword is now `wtol`: it bounds winding, not μ-bracket width. Crossing refinement retains its independent angular `xtol`, and coarse μ₂ bisection retains `coarse_xtol` for bracket width.
 
 ### 3.2 `bisect_amoeba_ronkin_min`
 
@@ -204,7 +211,7 @@ class AmoebaZeroManager(ZeroManager):
 
 | Function | Purpose |
 |----------|---------|
-| `_find_exact_crossing` | fsolve + analytic Jacobian refinement of one crossing. |
+| `_find_exact_crossing` | Bracketed polynomial-root refinement of one crossing, retaining new ZM rows. |
 | `_get_average_winding_from_zeros` | Average winding and non-zero area from a zero partition. |
 
 ## 5. Package Structure
@@ -214,7 +221,7 @@ pygbz2d/amoeba/
 ├── __init__.py            # Public API exports
 ├── amoeba.py              # collect_GBZ_subsets, subset assembly, plateau detection
 ├── bisect.py              # μ₁/μ₂ bisection, fast μ₂ gap test, extremum refinement
-├── ronkin_winding.py      # fsolve crossing refinement, average winding from zeros
+├── ronkin_winding.py      # bracketed crossing refinement, average winding from zeros
 └── zm_extract.py          # AmoebaZeroManager, detect_continuum, find_crossings,
                            #   calculate_a2_average_winding
 ```

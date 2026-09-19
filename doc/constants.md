@@ -56,7 +56,7 @@ Two rules keep this mechanism sound (enforced by AST lint in
 | `CONTINUUM_TOL` | 1e-6 | Width of the continuum (degenerate-band) tolerance in μ-space; SGBZ tie detection and amoeba band detection share it. |
 | `CONTINUUM_FRAC` | 0.9 | Vote fraction of in-band mesh rows above which an ItemView counts as a continuum cluster. |
 | `CONTINUUM_PERTURB` | 1e-4 | Base μ-perturbation for escaping a continuum band when probing the two winding limits (×1 member of `ESCAPE_LADDER`). Unified 2026-08 (SGBZ previously used 1e-2, amoeba 1e-4). |
-| `WINDING_ZERO_TOL` | 1e-10 | "\|winding\| counts as zero" predicate — SGBZ plateau probe (a₁) and the amoeba winding-tolerance floor (formerly `zero_tol` / `winding_tol_floor`, two names for one value). |
+| `WINDING_ZERO_TOL` | 1e-8 | "\|winding\| counts as zero" predicate — SGBZ plateau probe (a₁), and the live default for amoeba `wtol` in μ₁/μ₂ solves and plateau probes. |
 | `PLATEAU_CLUSTER_TOL` | 1e-2 | Torus-clustering radius for plateau probes (PMGBZ points / zeros); shared by the SGBZ and amoeba probes. |
 | `ESCAPE_LADDER` | (1.0, 2.0, 4.0, 8.0) | Scale factors applied to `CONTINUUM_PERTURB` when one step fails to escape a degenerate band. |
 | `PROBE_XTOL` | 1e-10 | Step resolution of the probe stepper (`core.generate_probe_steps`). |
@@ -146,19 +146,19 @@ together.
 | Constant | Default | Meaning |
 |---|---|---|
 | `BISECT_MAX_ITER` | 60 | μ₂ bisection budget. |
-| `BISECT_XTOL` | 1e-10 | μ₂ bisection fine-stage x-tolerance. |
-| `BISECT_COARSE_XTOL` | 1e-6 | μ₂ bisection coarse-stage tolerance (unrefined crossings). |
+| `BISECT_COARSE_XTOL` | 1e-3 | μ₂ bisection coarse-stage bracket-width tolerance (unrefined crossings). |
 | `EXTREMUM_INSERT_REL_TOL` | 1e-12 | Mesh-insert dedup tolerance for extremum refinement. |
 | `MAX_RANGE_EXPANSIONS` | 10 | μ₂ search-range expansion cap. |
 | `RANGE_EXPAND_FACTOR` | 2.0 | Range growth per expansion step. |
+
+Fine μ₂ and outer μ₁ bisection use `wtol`, resolved from `core.WINDING_ZERO_TOL`; the former `BISECT_XTOL` constant has been removed.
 
 ## `pygbz2d.amoeba.ronkin_winding`
 
 | Constant | Default | Meaning |
 |---|---|---|
-| `FSOLVE_XTOL` | 1e-12 | fsolve tolerance refining (θ₁, θ₂) crossings. |
-| `FSOLVE_MAXFEV` | 500 | fsolve evaluation budget. |
-| `CROSSING_RESIDUAL_TOL` | 1e-10 | Residual gate accepting a refined crossing (non-convergence falls back to the unrefined estimate). |
+| `CROSSING_XTOL` | 1e-12 | Absolute θ₁ tolerance for bracketed crossing refinement. Replaces `FSOLVE_XTOL`. |
+| `CROSSING_MAXITER` | 500 | Brent iteration budget per crossing. Replaces `FSOLVE_MAXFEV` (formerly a function-evaluation budget). |
 
 ## `pygbz2d.amoeba.amoeba`
 
@@ -176,9 +176,9 @@ them would couple unrelated scales:
 
 - **eps-scale guards**: `THETA_EQ_TOL` (θ endpoints), `REFINE_REL_TOL`
   (relative interval length), `MR_STUCK_TOL` (θ progress),
-  `arclength.MIN_STEP` (step size), `FSOLVE_XTOL` (residual).
-- **1e-10 convergence tolerances**: `CROSSING_TOL` (θ via brentq),
-  `BISECT_XTOL` (μ₂), `PROBE_XTOL` (probe steps).
+  `arclength.MIN_STEP` (step size), `CROSSING_XTOL` (θ₁).
+- **convergence tolerances**: `CROSSING_TOL` (θ via brentq),
+  `WINDING_ZERO_TOL` (winding), `PROBE_XTOL` (probe steps).
 - **step floors**: `arclength.MIN_STEP` (stepper abort) vs
   `zero_manager.MIN_DTHETA` (MR trigger sensitivity) — written at different
   times, both kept; see the zero_manager table.

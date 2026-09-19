@@ -56,10 +56,9 @@ CONTINUUM_FRAC: float = 0.9
 #: two winding limits (×1 member of ESCAPE_LADDER).
 CONTINUUM_PERTURB: float = 1e-4
 
-#: "|winding| counts as zero" predicate — SGBZ plateau probe (a₁) and
-#: the amoeba winding-tolerance floor share one threshold (they were two
-#: same-valued constants, zero_tol and winding_tol_floor, before 2026-08).
-WINDING_ZERO_TOL: float = 1e-10
+#: "|winding| counts as zero" predicate — SGBZ plateau probe (a₁), and
+#: amoeba's μ₁/μ₂ solves and plateau probe share this live default.
+WINDING_ZERO_TOL: float = 1e-8
 
 #: Torus-clustering radius for plateau probes (PMGBZ points) — shared by
 #: the SGBZ and amoeba probes (formerly tol_normalized vs
