@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]) + "/src")
 import pygbz2d.sgbz as bfs
 import pygbz2d.amoeba as bfa
 import pygbz2d
+from pygbz2d.core import PointSubset, LineSubset
 from pygbz2d.backend import make_laurent
 print("Using ", bfs.__file__)
 print("Polynomial backend:", type(make_laurent(np.array([1, 1]), np.array([[1, 0, 0], [0, 1, 0]]))))
@@ -471,8 +472,8 @@ def plot_SGBZ(which="a1"):
     plt.legend()
 
 
-def plot_amoeba_mu(suffix=""):
-    with open("data/Haldane-gain-loss-amoeba%s.pkl" % (suffix), "rb") as fp:
+def plot_GBZ_mu(fname):
+    with open(fname, "rb") as fp:
         data = pickle.load(fp)
     E_real, E_imag, res, params = data["E_real"], data["E_imag"], data["results"], data["params"]
     E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
@@ -483,8 +484,12 @@ def plot_amoeba_mu(suffix=""):
     for item in res:
         if item.success and item.is_gbz:
             for point in item.subsets:
-                mu1.append(np.log(abs(point.beta1)))
-                mu2.append(np.log(abs(point.beta2)))
+                if isinstance(point, LineSubset):
+                    mu1.extend(point.mu1 * np.ones_like(point.theta1_arr))
+                    mu2.extend(np.log(np.abs(point.beta2_arr)))
+                else:
+                    mu1.append(np.log(abs(point.beta1)))
+                    mu2.append(np.log(abs(point.beta2)))
     print(len(mu1), len(mu2))
     plt.figure()
     plt.plot(mu1, mu2, '.')
@@ -619,13 +624,17 @@ if __name__ == "__main__":
     # recompute_failed_SGBZ("x", out_fname="data/Haldane-gain-loss-x-SGBZ-recomputed.pkl")
     # recompute_failed_SGBZ("a1", out_fname="data/Haldane-gain-loss-a1-SGBZ-recomputed.pkl")
     # recompute_failed_SGBZ("a2", out_fname="data/Haldane-gain-loss-a2-SGBZ-recomputed.pkl")
-    plot_amoebic_spectrum()
-    # plot_amoeba_mu()
-    plot_amoebic_spectrum("-xy")
-    plot_SGBZ("a1")
-    plot_SGBZ("a2")
-    plot_SGBZ("x")
-    plot_SGBZ("y")
+    # plot_amoebic_spectrum()
+    # plot_GBZ_mu("data/Haldane-gain-loss-amoeba-xy.pkl")
+    # plot_GBZ_mu("data/Haldane-gain-loss-amoeba.pkl")
+    plot_GBZ_mu("data/Haldane-gain-loss-y-SGBZ.pkl")
+    # plot_GBZ_mu("data/Haldane-gain-loss-a1-SGBZ.pkl")
+    # plot_GBZ_mu("data/Haldane-gain-loss-a2-SGBZ.pkl")
+    # plot_amoebic_spectrum("-xy")
+    # plot_SGBZ("a1")
+    # plot_SGBZ("a2")
+    # plot_SGBZ("x")
+    # plot_SGBZ("y")
     # plot_index_E("a1", kind="SGBZ")
     # plot_index_E("a2", kind="SGBZ")
     # plot_index_E("x", kind="SGBZ")

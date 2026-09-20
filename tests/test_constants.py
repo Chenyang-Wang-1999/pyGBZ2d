@@ -55,12 +55,11 @@ HOME = {
     "MU1_MAX_ITER": "sgbz.sgbz_solver",
     "MAX_BRACKET_EXPANSIONS": "sgbz.sgbz_solver",
     "SNAP_TOL": "amoeba.amoeba",
-    "BISECT_MAX_ITER": "amoeba.bisect", "BISECT_XTOL": "amoeba.bisect",
+    "BISECT_MAX_ITER": "amoeba.bisect",
     "BISECT_COARSE_XTOL": "amoeba.bisect",
     "EXTREMUM_INSERT_REL_TOL": "amoeba.bisect",
     "MAX_RANGE_EXPANSIONS": "amoeba.bisect", "RANGE_EXPAND_FACTOR": "amoeba.bisect",
-    "FSOLVE_XTOL": "amoeba.ronkin_winding", "FSOLVE_MAXFEV": "amoeba.ronkin_winding",
-    "CROSSING_RESIDUAL_TOL": "amoeba.ronkin_winding",
+    "CROSSING_XTOL": "amoeba.ronkin_winding", "CROSSING_MAXITER": "amoeba.ronkin_winding",
     "PLATEAU_AREA_THRESHOLD": "amoeba.amoeba",
 }
 
@@ -142,6 +141,45 @@ class TestStepControl:
 # ---------------------------------------------------------------------------
 
 class TestEndToEnd:
+    @pytest.mark.parametrize("options", [{}, {"wtol": None}, {"wtol": 1e-10}])
+    def test_amoeba_wtol_assignment_and_override_reach_solver(self, monkeypatch, options):
+        amoeba = importlib.import_module("pygbz2d.amoeba.amoeba")
+        seen = []
+
+        def solve(poly, energy, **kwargs):
+            seen.append(kwargs["wtol"])
+            assert "xtol" not in kwargs
+            return {"mu1": 0., "mu2": 0., "zeros": [],
+                    "is_continuum": False, "_zm": None}
+
+        monkeypatch.setattr(amoeba, "bisect_amoeba_ronkin_min", solve)
+        for default in (1e-8, 2e-8):
+            monkeypatch.setattr(bz.core, "WINDING_ZERO_TOL", default)
+            result = amoeba.collect_GBZ_subsets([1.], [[0, 0, 1]], 0j, **options)
+            assert result.success, result.error
+            assert seen[-1] == (options.get("wtol") or default)
+
+    @pytest.mark.parametrize("options", [{}, {"wtol": None}, {"wtol": 1e-10}])
+    def test_amoeba_wtol_reaches_discrete_inner_solve(self, monkeypatch, options):
+        from pygbz2d.amoeba import bisect
+        seen = []
+        sentinel = {"winding": 0.}
+
+        def discrete(poly, energy, mu1, lo, hi, max_iter, wtol, *args, **kwargs):
+            seen.append(wtol)
+            return sentinel
+
+        monkeypatch.setattr(bisect, "_try_fast_mu2",
+                            lambda *args: {"ok": False, "A": float('nan'), "B": float('nan')})
+        monkeypatch.setattr(bisect, "detect_continuum", lambda *args: [])
+        monkeypatch.setattr(bisect, "_bisect_mu2_discrete", discrete)
+        for default in (1e-8, 2e-8):
+            monkeypatch.setattr(bz.core, "WINDING_ZERO_TOL", default)
+            result = bisect._find_mu2_for_w2_zero(
+                None, 0j, 0., -1., 1., _zm=object(), **options)
+            assert result is sentinel
+            assert seen[-1] == (options.get("wtol") or default)
+
     def test_continuum_tol_assignment_reaches_analyze(self):
         from pygbz2d.sgbz import mu2mid
         from pygbz2d.sgbz.continuum_lines import detect_continuum_simple
@@ -236,6 +274,19 @@ class TestNoConstantValueImports:
 # ---------------------------------------------------------------------------
 
 class TestDecoratorStructure:
+    def test_amoeba_separates_winding_and_angular_tolerances(self):
+        from pygbz2d.amoeba import bisect, ronkin_winding
+        amoeba = importlib.import_module("pygbz2d.amoeba.amoeba")
+        for fn in (amoeba.collect_GBZ_subsets, amoeba._probe_zero_plateau_near_mu1,
+                   bisect.bisect_amoeba_ronkin_min, bisect._find_mu2_for_w2_zero):
+            params = inspect.signature(fn).parameters
+            assert params["wtol"].default is None
+            assert "xtol" not in params
+        params = inspect.signature(ronkin_winding._find_exact_crossing).parameters
+        assert params["xtol"].default is None
+        assert params["max_iter"].default is None
+        assert "wtol" not in params
+
     def test_params_exist_and_keys_resolve(self):
         bad = []
         for p in SRC.rglob("*.py"):

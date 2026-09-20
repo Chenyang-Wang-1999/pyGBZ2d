@@ -59,17 +59,17 @@ def _check_zeros_are_clustered(
 
 # ---- plateau detection ----
 
-def _is_zero_plateau_probe(point: dict, winding_tol: float) -> bool:
+def _is_zero_plateau_probe(point: dict, wtol: float) -> bool:
     return (
         point["success"]
         and (not point["is_continuum"])
         and point["zero_count"] == 0
-        and abs(point["w1"]) <= winding_tol
+        and abs(point["w1"]) <= wtol
     )
 
 
 @live_defaults(continuum_tol="core:CONTINUUM_TOL", continuum_perturb="core:CONTINUUM_PERTURB",
-    max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL",
+    max_iter="amoeba.bisect:BISECT_MAX_ITER", wtol="core:WINDING_ZERO_TOL",
     max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS",
     range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR")
 def _probe_zero_plateau_near_mu1(
@@ -82,10 +82,9 @@ def _probe_zero_plateau_near_mu1(
     continuum_tol: Optional[float] = None,
     continuum_perturb: Optional[float] = None,
     max_iter: Optional[int] = None,
-    xtol: Optional[float] = None,
+    wtol: Optional[float] = None,
     max_range_expansions: Optional[int] = None,
     range_expand_factor: Optional[float] = None,
-    winding_tol: Optional[float] = None,
     probe_radius: Optional[float] = None,
 ) -> dict:
     """Check whether a nonempty-zero candidate sits next to a zero plateau.
@@ -93,8 +92,6 @@ def _probe_zero_plateau_near_mu1(
     The decisive plateau signature is strict: after solving a2=0 at a nearby
     mu1, w1 is zero and there are no a2-crossing zeros.
     """
-    if winding_tol is None:
-        winding_tol = max(xtol, core.WINDING_ZERO_TOL)
     if probe_radius is None:
         probe_radius = continuum_perturb
 
@@ -114,7 +111,7 @@ def _probe_zero_plateau_near_mu1(
                 char_poly, E_ref, mu1_probe, mu2_low, mu2_high,
                 continuum_tol=continuum_tol,
                 continuum_perturb=continuum_perturb, max_iter=max_iter,
-                xtol=xtol, max_range_expansions=max_range_expansions,
+                wtol=wtol, max_range_expansions=max_range_expansions,
                 range_expand_factor=range_expand_factor,
             )
         except Exception as exc:
@@ -138,18 +135,17 @@ def _probe_zero_plateau_near_mu1(
         }
         # Collapse the amoeba-specific criterion to the one bool the shared
         # loop reads; keep the raw fields for diagnostics.
-        point["is_plateau"] = _is_zero_plateau_probe(point, winding_tol)
+        point["is_plateau"] = _is_zero_plateau_probe(point, wtol)
         return point
 
     res = probe_zero_plateau(
         mu1, mu1_bracket,
-        zero_tol=winding_tol,
+        zero_tol=wtol,
         probe_radius=probe_radius,
         bracket_width=bracket_width,
         evaluator=evaluator,
     )
-    # Back-compat alias: amoeba diagnostics historically read ``winding_tol``.
-    res["winding_tol"] = winding_tol
+    res["wtol"] = wtol
     return res
 
 
@@ -352,7 +348,7 @@ def _point_near_any_line(
 # ---- main entry point ----
 
 @live_defaults(continuum_tol="core:CONTINUUM_TOL", continuum_perturb="core:CONTINUUM_PERTURB",
-    max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL",
+    max_iter="amoeba.bisect:BISECT_MAX_ITER", wtol="core:WINDING_ZERO_TOL",
     max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS",
     range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR",
     plateau_cluster_tol="core:PLATEAU_CLUSTER_TOL",
@@ -365,7 +361,6 @@ def collect_GBZ_subsets(
     debug_mode: bool = False,
     *,
     plateau_check: bool = True,
-    plateau_winding_tol: Optional[float] = None,
     plateau_probe_radius: Optional[float] = None,
     plateau_area_threshold: Optional[float] = None,
     plateau_cluster_tol: Optional[float] = None,
@@ -376,7 +371,7 @@ def collect_GBZ_subsets(
     continuum_tol: Optional[float] = None,
     continuum_perturb: Optional[float] = None,
     max_iter: Optional[int] = None,
-    xtol: Optional[float] = None,
+    wtol: Optional[float] = None,
     max_range_expansions: Optional[int] = None,
     range_expand_factor: Optional[float] = None,
 ) -> GBZResult:
@@ -405,7 +400,7 @@ def collect_GBZ_subsets(
             mu2_low=mu2_low, mu2_high=mu2_high,
             continuum_tol=continuum_tol,
             continuum_perturb=continuum_perturb,
-            max_iter=max_iter, xtol=xtol,
+            max_iter=max_iter, wtol=wtol,
             max_range_expansions=max_range_expansions,
             range_expand_factor=range_expand_factor,
         )
@@ -457,10 +452,9 @@ def collect_GBZ_subsets(
                     mu2_high=mu2_high,
                     continuum_tol=continuum_tol,
                     continuum_perturb=continuum_perturb,
-                    max_iter=max_iter, xtol=xtol,
+                    max_iter=max_iter, wtol=wtol,
                     max_range_expansions=max_range_expansions,
                     range_expand_factor=range_expand_factor,
-                    winding_tol=plateau_winding_tol,
                     probe_radius=plateau_probe_radius,
                 )
                 if plateau_info["found"]:

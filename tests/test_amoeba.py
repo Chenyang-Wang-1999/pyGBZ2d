@@ -58,6 +58,42 @@ def poly_A(params_A):
     return build_HN2D_polynomial(**params_A)
 
 
+@pytest.mark.parametrize("wtol", [None, 5e-9])
+def test_plateau_path_uses_the_same_wtol_as_bisection(monkeypatch, wtol):
+    import importlib
+    from pygbz2d import core
+    assembly = importlib.import_module("pygbz2d.amoeba.amoeba")
+    monkeypatch.setattr(core, "WINDING_ZERO_TOL", 2e-8)
+    expected = core.WINDING_ZERO_TOL if wtol is None else wtol
+    seen = []
+
+    def solve(poly, energy, **kwargs):
+        seen.append(("outer", kwargs["wtol"]))
+        return {"mu1": 0., "mu2": 0., "zeros": [(0., 0.)],
+                "is_continuum": False, "_zm": None, "_w1_area": 0.}
+
+    def inner(poly, energy, mu1, low, high, **kwargs):
+        seen.append(("probe", kwargs["wtol"]))
+        return {"mu2": 0., "zeros": [], "is_continuum": False}
+
+    monkeypatch.setattr(assembly, "bisect_amoeba_ronkin_min", solve)
+    monkeypatch.setattr(assembly, "_find_mu2_for_w2_zero", inner)
+    monkeypatch.setattr(assembly, "_get_average_winding_from_zeros",
+                        lambda *args, **kwargs: (expected / 2, 0.))
+    monkeypatch.setattr(assembly, "_check_zeros_are_clustered", lambda *args: True)
+    # Exercise the real public-to-probe call; a **kwargs stub would hide an
+    # obsolete keyword left at this boundary.
+    result = assembly.collect_GBZ_subsets([1.], [[0, 0, 1]], 0j, wtol=wtol)
+    assert result.success, result.error
+    assert result.is_empty
+    assert seen[0] == ("outer", expected)
+    assert seen[1:]
+    assert all(item == ("probe", expected) for item in seen[1:])
+    info = assembly._probe_zero_plateau_near_mu1(None, 0j, 0., None, wtol=wtol)
+    assert info["found"]
+    assert info["wtol"] == info["zero_tol"] == expected
+
+
 class TestAmoeba:
     def test_returns_gbzresult(self, poly_A):
         coeffs, degs = poly_A

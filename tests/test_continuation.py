@@ -28,6 +28,7 @@ from pygbz2d.continuation.arclength import (
     StepControl,
 )
 from pygbz2d.continuation import arclength as _arcl
+from pygbz2d.continuation import multiple_roots as _mr
 from pygbz2d.continuation.arclength import ZERO_THRESHOLD, INF_THRESHOLD
 from pygbz2d.continuation.multiple_roots import (
     multiple_root_point_trigger,
@@ -542,6 +543,67 @@ class TestSnapClustersToMeanSingularGuard:
 # ===========================================================================
 
 class TestSolveMultipleRootsInInterval:
+    @pytest.mark.parametrize("narrowed", [False, True])
+    @pytest.mark.parametrize("seam", [False, True])
+    def test_point_fallback_uses_last_bracket(self, poly_F, monkeypatch, narrowed, seam):
+        """The fallback keeps both bracket sides and the unwrapped θ gauge."""
+        center = TWO_PI if seam else 0.0
+        left, right = center - 0.1, center + 0.1
+        roots_ref = poly_F.solve_roots_1d((0, 1), (0j, exp(1j * right)), (2,))
+        point_solver = _mr.solve_multiple_roots_iterative
+        seeds = []
+
+        def failed_brent(fun, a, b):
+            fun(a)
+            fun(b)
+            if narrowed:
+                fun(center + 0.075)
+                fun(center - 0.05)
+                fun(center - 0.025)
+                raise RuntimeError("forced iteration exhaustion")
+            raise ValueError("forced initial bracket failure")
+
+        def record_point_seed(poly, E, beta1, beta2):
+            seeds.append((beta1, beta2))
+            return point_solver(poly, E, beta1, beta2)
+
+        monkeypatch.setattr(_mr.optimize, "brentq", failed_brent)
+        monkeypatch.setattr(_mr, "solve_multiple_roots_iterative", record_point_seed)
+        theta = solve_multiple_roots_in_interval(
+            poly_F, 0j, 0.0, left, 0.1 if seam else right, roots_ref,
+        )
+        assert len(seeds) == 1
+        expected_mid = center + (0.025 if narrowed else 0.0)
+        assert abs(seeds[0][0] - exp(1j * expected_mid)) < 1e-14
+        assert abs(poly_F.eval_val((0j, *seeds[0]))) < 1e-12
+        assert abs(theta - center) < 1e-8
+
+    def test_point_fallback_failure_propagates(self, poly_F, monkeypatch):
+        """Neither solver succeeding must remain a visible solver failure."""
+        def failed_brent(*args):
+            raise ValueError("interval failed")
+
+        def failed_point(*args):
+            raise ValueError("point failed")
+
+        monkeypatch.setattr(_mr.optimize, "brentq", failed_brent)
+        monkeypatch.setattr(_mr, "solve_multiple_roots_iterative", failed_point)
+        roots = poly_F.solve_roots_1d((0, 1), (0j, exp(0.1j)), (2,))
+        with pytest.raises(ValueError, match="point failed"):
+            solve_multiple_roots_in_interval(poly_F, 0j, 0.0, -0.1, 0.1, roots)
+
+    def test_point_fallback_rejects_other_interval(self, poly_F, monkeypatch):
+        """A remote MR cannot be inserted into the triggering segment."""
+        def failed_brent(*args):
+            raise ValueError("interval failed")
+
+        monkeypatch.setattr(_mr.optimize, "brentq", failed_brent)
+        monkeypatch.setattr(_mr, "solve_multiple_roots_iterative",
+                            lambda *args: (exp(0.5j), 1.0 + 0j))
+        roots = poly_F.solve_roots_1d((0, 1), (0j, exp(0.1j)), (2,))
+        with pytest.raises(ValueError, match="left the trigger interval"):
+            solve_multiple_roots_in_interval(poly_F, 0j, 0.0, -0.1, 0.1, roots)
+
     def test_refine_poly_F(self, poly_F):
         """Brent solver should find θ₁ ≈ 0 for Poly F generic double root."""
         theta1_mr = solve_multiple_roots_in_interval(

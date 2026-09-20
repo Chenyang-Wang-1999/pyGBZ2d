@@ -273,7 +273,7 @@ def solve_SGBZ_for_E(
     poly: CharPoly,
     E_ref: complex,
     mu1_guess: tuple[float, float] = (-1, 1),
-    zero_tol: float = 1e-10,
+    zero_tol: Optional[float] = None,  # live default: core.WINDING_ZERO_TOL = 1e-8
     continuum_perturb: float = 1e-2,
     max_iter: int = 60,
     zm_run_kwargs: Optional[dict] = None,
@@ -318,7 +318,7 @@ Main entry point. Builds the characteristic polynomial from `(coeffs, degs)`, so
 - `debug_mode`: if `True`, re-raise solver exceptions instead of returning a failed `GBZResult`.
 - `**options`: solver options:
   - `"mu1_guess"` (default `(-1, 1)`)
-  - `"zero_tol"` (1e-10)
+  - `"zero_tol"` (live default `core.WINDING_ZERO_TOL`, currently 1e-8)
   - `"continuum_perturb"` (1e-2)
   - `"max_iter"` (60)
   - `"plateau_check"` (True)
@@ -371,7 +371,7 @@ Main entry point. Builds the characteristic polynomial from `(coeffs, degs)`, so
 
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
-| `zero_tol` | 1e-10 | Winding zero threshold |
+| `zero_tol` | 1e-8 | Winding zero threshold; live default from `core.WINDING_ZERO_TOL` |
 | `continuum_perturb` | 1e-2 | μ₁ perturbation scale for continuum resolution (scales 1/2/4/8 tried) |
 | `max_iter` | 60 | Maximum bisection iterations |
 

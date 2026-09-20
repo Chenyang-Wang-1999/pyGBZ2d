@@ -42,6 +42,23 @@ def poly_hn2d():
 # ---------------------------------------------------------------------------
 
 class TestCollectDebugSubsets:
+    @pytest.mark.parametrize("options", [None, {"wtol": 2e-8}])
+    def test_amoeba_options_leave_defaults_to_solver(self, monkeypatch, options):
+        import debug_tool.gbz_debug as gd
+        seen = []
+
+        def collect(poly, energy, mu1, *, mu2_guess, options):
+            seen.append(options)
+            return gd.MethodDebug(method="amoeba", E_ref=energy, mu1=mu1, poly=poly)
+
+        monkeypatch.setattr(gd, "_collect_amoeba", collect)
+        report = collect_debug_subsets(None, 0j, 0., methods=("amoeba",),
+                                       amoeba_options=options)
+        assert report.amoeba.success, report.amoeba.error
+        assert seen == [options or {}]
+        if options is not None:
+            assert seen[0] is not options
+
     def test_report_structure(self, poly_hn2d):
         report = collect_debug_subsets(poly_hn2d, 1.0 + 0j, 0.25)
         assert isinstance(report, GBZDebugReport)

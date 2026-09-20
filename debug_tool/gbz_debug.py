@@ -371,7 +371,8 @@ def collect_debug_subsets(
         mu2_guess: initial mu2 bracket for the amoeba w2=0 bisection.
         continuum_tol / crossing_tol: SGBZ analyze tunables.
         amoeba_options: extra kwargs for the amoeba's ``_find_mu2_for_w2_zero``
-            (``continuum_tol``, ``continuum_perturb``, ``max_iter``, ``xtol``).
+            (``continuum_tol``, ``continuum_perturb``, ``max_iter``, ``wtol``).
+            Omitted options use the solver's live module defaults.
 
     Returns:
         GBZDebugReport; ``report[method].subsets`` is the subset list and
@@ -379,9 +380,8 @@ def collect_debug_subsets(
         that raises is captured in ``MethodDebug.error`` (never re-raised) so
         one broken module does not hide the other's evidence.
     """
-    options = dict(continuum_tol=1e-6, continuum_perturb=1e-4,
-                   max_iter=60, xtol=1e-10)
-    options.update(amoeba_options or {})
+    # The debug slice must follow the production solver's current defaults.
+    options = dict(amoeba_options or {})
 
     report = GBZDebugReport(E_ref=E_ref, mu1=mu1, poly=poly, methods={})
     for method in methods:

@@ -36,6 +36,7 @@ from pygbz2d.core import live_defaults
 from .ronkin_winding import _get_average_winding_from_zeros
 from .zm_extract import (
     AmoebaZeroManager,
+    _calculate_a2_winding_and_zeros,
     calculate_a2_average_winding,
     detect_continuum,
     find_crossings,
@@ -44,7 +45,6 @@ from .zm_extract import (
 # μ₂ bisection budget (the winding is monotonic in μ₂, so range
 # expansion guarantees a sign bracket eventually).
 BISECT_MAX_ITER: int = 60
-BISECT_XTOL: float = 1e-10
 #: Coarse-stage tolerance for the first, unrefined μ₂ bisection.
 BISECT_COARSE_XTOL: float = 1e-3
 MAX_RANGE_EXPANSIONS: int = 10
@@ -296,7 +296,7 @@ def _bisect_mu2_discrete(
     mu2_low: float,
     mu2_high: float,
     max_iter: int,
-    xtol: float,
+    wtol: float,
     coarse_xtol: float,
     max_range_expansions: int,
     range_expand_factor: float,
@@ -308,8 +308,9 @@ def _bisect_mu2_discrete(
     bracket away from flat tracks, so this function is continuum-unaware.
 
     Stage 1: coarse bisection with ``return_refined=False`` and tolerance
-    ``coarse_xtol`` — cheap, no fsolve.  Stage 2: fine bisection on the coarse
-    bracket with ``return_refined=True`` and tolerance ``xtol``.
+    ``coarse_xtol`` — no crossing refinement. Stage 2: fine bisection on the
+    coarse bracket with ``return_refined=True`` and tolerance ``wtol``. Root
+    rows inserted during refinement remain in the ZM for later μ₂ values.
     """
     zm = _zm
     low, high = float(mu2_low), float(mu2_high)
@@ -378,21 +379,13 @@ def _bisect_mu2_discrete(
 
     for _ in range(max_iter):
         mu2_mid = 0.5 * (low_fine + high_fine)
-        w_mid = _winding_at(mu2_mid, return_refined=True)
+        w_mid, zeros = _calculate_a2_winding_and_zeros(
+            zm, mu1, mu2_mid, return_refined=True)
 
         # SGBZ-parity exit rule (sgbz_solver.py:387): drop the bracket-width
         # exit, keep only the winding-zero exit.  Both halves of the old
-        # condition were needed to *terminate*, but only `abs(w_mid) < xtol`
-        # certifies that mu2 solves w2 = 0 — `bracket < xtol` merely means the
-        # interval shrank, so the returned zeros could belong to a mu2 that
-        # never had zero winding.
-        if abs(w_mid) < xtol:
-            crossings = find_crossings(zm, mu1, mu2_mid, return_refined=True)
-            zeros = [
-                (float(np.angle(b1) % (2.0 * np.pi)),
-                 float(np.angle(b2) % (2.0 * np.pi)))
-                for b1, b2 in crossings
-            ]
+        # condition were needed to *terminate*, but only `abs(w_mid) < wtol`
+        if abs(w_mid) < wtol:
             return {
                 "mu2": mu2_mid,
                 "zeros": zeros,
@@ -420,7 +413,7 @@ def _bisect_mu2_discrete(
 # ---------------------------------------------------------------------------
 
 @live_defaults(continuum_tol="core:CONTINUUM_TOL", continuum_perturb="core:CONTINUUM_PERTURB",
-               max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL",
+               max_iter="amoeba.bisect:BISECT_MAX_ITER", wtol="core:WINDING_ZERO_TOL",
                coarse_xtol="amoeba.bisect:BISECT_COARSE_XTOL",
                max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS",
                range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR")
@@ -433,7 +426,7 @@ def _find_mu2_for_w2_zero(
     continuum_tol: Optional[float] = None,
     continuum_perturb: Optional[float] = None,
     max_iter: Optional[int] = None,
-    xtol: Optional[float] = None,
+    wtol: Optional[float] = None,
     coarse_xtol: Optional[float] = None,
     max_range_expansions: Optional[int] = None,
     range_expand_factor: Optional[float] = None,
@@ -477,7 +470,7 @@ def _find_mu2_for_w2_zero(
     if np.isfinite(A) and np.isfinite(B) and A >= B:
         # fast path failed ⇒ A >= B; [min(A,B), max(A,B)] = [B, A] brackets
         # the w2 sign change.
-        if B < A and (A - B) > xtol:
+        if B < A and (A - B) > wtol:
             low, high = B, A
 
     # ---- continuum detection (std, up front) ----
@@ -528,7 +521,7 @@ def _find_mu2_for_w2_zero(
 
     return _bisect_mu2_discrete(
         char_poly, E_ref, mu1, low, high,
-        max_iter, xtol, coarse_xtol,
+        max_iter, wtol, coarse_xtol,
         max_range_expansions, range_expand_factor,
         _zm=zm,
     )
@@ -589,7 +582,7 @@ def _handle_continuum(
 # ---------------------------------------------------------------------------
 
 @live_defaults(continuum_tol="core:CONTINUUM_TOL", continuum_perturb="core:CONTINUUM_PERTURB",
-               max_iter="amoeba.bisect:BISECT_MAX_ITER", xtol="amoeba.bisect:BISECT_XTOL",
+               max_iter="amoeba.bisect:BISECT_MAX_ITER", wtol="core:WINDING_ZERO_TOL",
                max_range_expansions="amoeba.bisect:MAX_RANGE_EXPANSIONS",
                range_expand_factor="amoeba.bisect:RANGE_EXPAND_FACTOR")
 def bisect_amoeba_ronkin_min(
@@ -602,7 +595,7 @@ def bisect_amoeba_ronkin_min(
     continuum_tol: Optional[float] = None,
     continuum_perturb: Optional[float] = None,
     max_iter: Optional[int] = None,
-    xtol: Optional[float] = None,
+    wtol: Optional[float] = None,
     max_range_expansions: Optional[int] = None,
     range_expand_factor: Optional[float] = None,
     frac: Optional[float] = None,
@@ -625,14 +618,14 @@ def bisect_amoeba_ronkin_min(
         inner_low = _find_mu2_for_w2_zero(
             char_poly, E_ref, low, mu2_low, mu2_high,
             continuum_tol=continuum_tol,
-            continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
+            continuum_perturb=continuum_perturb, max_iter=max_iter, wtol=wtol,
             max_range_expansions=max_range_expansions,
             range_expand_factor=range_expand_factor,
         )
         inner_high = _find_mu2_for_w2_zero(
             char_poly, E_ref, high, mu2_low, mu2_high,
             continuum_tol=continuum_tol,
-            continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
+            continuum_perturb=continuum_perturb, max_iter=max_iter, wtol=wtol,
             max_range_expansions=max_range_expansions,
             range_expand_factor=range_expand_factor,
         )
@@ -708,7 +701,7 @@ def bisect_amoeba_ronkin_min(
         inner_mid = _find_mu2_for_w2_zero(
             char_poly, E_ref, mu1_mid, mu2_low, mu2_high,
             continuum_tol=continuum_tol,
-            continuum_perturb=continuum_perturb, max_iter=max_iter, xtol=xtol,
+            continuum_perturb=continuum_perturb, max_iter=max_iter, wtol=wtol,
             max_range_expansions=max_range_expansions,
             range_expand_factor=range_expand_factor, _zm=zm,
         )
@@ -755,14 +748,9 @@ def bisect_amoeba_ronkin_min(
         )
 
         # SGBZ-parity exit rule (sgbz_solver.py:387, 2026-08-15): the bracket
-        # width is NOT an exit reason.  Exiting on `bracket < xtol` returns a
-        # mid-bracket mu1 whose |w1| was never tested — here it produced
-        # spurious roots at mu1 ~ 1e-5 (|beta1| - 1 up to 5.4e-5) at five
-        # energies of Haldane-gain-loss-amoeba-xy, where |w1(mu1=0)| is only
-        # numerical cancellation noise (~1e-5 against O(1e-1) terms) and blows
-        # up to ~1e-4 non-symmetrically under E -> E*.  Bisection now ends
+        # width is NOT an exit reason. Bisection now ends
         # only on a genuine winding zero, matching SGBZ.
-        if abs(w1_mid) < xtol:
+        if abs(w1_mid) < wtol:
             return {
                 "mu1": mu1_mid,
                 "mu2": mu2_mid,

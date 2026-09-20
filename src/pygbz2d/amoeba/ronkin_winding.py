@@ -12,75 +12,78 @@ the winding is now computed from ZM zeros via
 
 Retained here are the zero- and polynomial-level primitives that the new
 pipeline still consumes:
-  - ``_find_exact_crossing``         fsolve refinement of a (θ₁, θ₂) crossing.
+  - ``_find_exact_crossing``         bracketed refinement with persistent ZM rows.
   - ``_get_average_winding_from_zeros``  average winding from a zero partition.
 """
 
-from typing import Optional
-import warnings
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 import numpy as np
 from cmath import exp
-from scipy.optimize import fsolve
+from scipy.optimize import brentq
 
-# fsolve refinement settings for amoeba (θ₁, θ₂) crossings.
-FSOLVE_XTOL: float = 1e-12
-FSOLVE_MAXFEV: int = 500
-#: Residual gate that accepts a refined crossing.
-CROSSING_RESIDUAL_TOL: float = 1e-10
-from pygbz2d.core import CharPoly, TWO_PI
+# Angular accuracy of the bracketed solve, independent of polynomial scaling.
+CROSSING_XTOL: float = 1e-12
+CROSSING_MAXITER: int = 500
+from pygbz2d.core import CharPoly, TWO_PI, live_defaults
 
+if TYPE_CHECKING:
+    from pygbz2d.continuation.zero_manager import ZeroManager
 
+@live_defaults(xtol="amoeba.ronkin_winding:CROSSING_XTOL", max_iter="amoeba.ronkin_winding:CROSSING_MAXITER")
 def _find_exact_crossing(
-    poly: CharPoly,
-    E_ref: complex,
-    mu1: float,
+    zm: ZeroManager,
     mu2: float,
-    theta1_guess: float,
-    theta2_guess: float,
-) -> Optional[tuple[float, float]]:
-    """
-    Refine a crossing point using ``scipy.optimize.fsolve`` with the exact
-    Jacobian.
+    seg_idx: int,
+    col_idx: int,
+    theta_lo: float,
+    theta_hi: float,
+    *,
+    xtol: float = None,
+    max_iter: int = None,
+) -> tuple[float, float]:
+    """Solve ln|β₂_j(θ₁)| = μ₂ and retain every new root row in ``zm``.
 
-    Solves f(E, exp(mu1 + i*t1), exp(mu2 + i*t2)) = 0 for (t1, t2).
-
-    Returns (theta1, theta2) if converged, None if the root finder failed.
+    Interpolation only identifies the track when solving the polynomial;
+    all function values come from actual roots. Endpoints are read from
+    the mesh, including θ₁=2π, which ``solve_at`` cannot accept as an
+    interior point. The returned θ₁ stays unwrapped for mesh bookkeeping.
+    A collapsed bracket returns an existing exact mesh crossing. Brent's
+    angular convergence is the stopping criterion; a separate residual gate
+    would impose a different accuracy requirement on steep root tracks.
     """
+    context = (f"E_ref={zm.E_ref}, mu1={zm.mu1}, mu2={mu2}, "
+               f"segment={seg_idx}, track={col_idx}, "
+               f"bracket=({theta_lo:.17g}, {theta_hi:.17g})")
+
+    def root_at(theta):
+        seg = zm.segments[seg_idx]
+        row = int(np.searchsorted(seg.theta1_arr, theta))
+        if row == len(seg.theta1_arr) or seg.theta1_arr[row] != theta:
+            # Re-locate on every call: earlier evaluations have inserted rows.
+            row, _ = zm.insert_solution(theta, seg_idx=seg_idx, i=row - 1)
+        root = complex(seg.tracked_roots[row, col_idx])
+        if not np.isfinite(root) or abs(root) == 0:
+            raise ValueError(f"non-finite log-modulus at theta1={theta:.17g}")
+        return root
+
     def func(theta):
-        t1, t2 = theta
-        beta1 = exp(mu1 + 1j * t1)
-        beta2 = exp(mu2 + 1j * t2)
-        val = poly.eval_val((E_ref, beta1, beta2))
-        return [val.real, val.imag]
+        root = root_at(float(theta))
+        return float(np.log(np.abs(root)) - mu2)
 
-    def jac(theta):
-        t1, t2 = theta
-        beta1 = exp(mu1 + 1j * t1)
-        beta2 = exp(mu2 + 1j * t2)
-        partials = poly.eval_partials((E_ref, beta1, beta2))
-        df_dt1 = 1j * beta1 * partials[1]
-        df_dt2 = 1j * beta2 * partials[2]
-        return [[df_dt1.real, df_dt2.real],
-                [df_dt1.imag, df_dt2.imag]]
-
-    # fsolve may emit RuntimeWarning when the initial guess falls in a
-    # flat or ill-conditioned region (e.g. near band edges explored by
-    # the adaptive bisection).  The residual check below is the actual
-    # quality gate; suppress the scipy warning since non-convergence is
-    # handled correctly by returning None and falling back to the
-    # unrefined linear-interpolation estimate.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        sol = fsolve(func, [theta1_guess, theta2_guess], fprime=jac,
-                     xtol=FSOLVE_XTOL, maxfev=FSOLVE_MAXFEV)
-    t1, t2 = sol
-    beta1 = exp(mu1 + 1j * t1)
-    beta2 = exp(mu2 + 1j * t2)
-    residual = abs(poly.eval_val((E_ref, beta1, beta2)))
-    if residual < CROSSING_RESIDUAL_TOL:
-        return (float(t1 % (TWO_PI)), float(t2 % (TWO_PI)))
-    # return None
-    raise RuntimeError(f"fsolve failed to converge after {FSOLVE_MAXFEV} iterations: ")
+    try:
+        if theta_lo == theta_hi:
+            t1 = float(theta_lo)
+        else:
+            t1 = float(brentq(func, theta_lo, theta_hi,
+                             xtol=xtol,
+                             rtol=4.0 * np.finfo(float).eps,
+                             maxiter=max_iter))
+        t2 = float(np.angle(root_at(t1)) % TWO_PI)
+        return t1, t2
+    except (ValueError, RuntimeError, FloatingPointError) as exc:
+        raise RuntimeError(f"crossing refinement failed: {context}; {exc}") from exc
 
 
 def _get_average_winding_from_zeros(
