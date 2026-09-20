@@ -478,9 +478,10 @@ def solve_multiple_roots_in_interval(
     method.  Cluster verification at the located θ₁ is left to the
     caller (see :func:`detect_cluster`).
 
-    ** Note ** we assume that the multiple roots are well-separated in theta1 axis.
-    If any exceptions are raised in this function, it probably means that several multiple roots are close to each other in theta1 axis.
-    You can use try-except to avoid these exceptions if the bunching of multiple roots do not influence your calculations.
+    If Brent fails, solve ``f = ∂f/∂β₂ = 0`` from the midpoint of its
+    last enclosing bracket.  A failed initial sign check leaves the
+    original interval intact.  Cluster verification remains with the
+    caller; failure of the point solver propagates to the caller too.
 
     Parameters
     ----------
@@ -509,6 +510,15 @@ def solve_multiple_roots_in_interval(
         The θ₁ value where the derivative crosses zero, i.e. the
         multiple-root location (not wrapped to [0, 2π)).
     """
+    if theta1_right < theta1_left:
+        theta1_right += TWO_PI
+
+    # scipy's Brent interface does not expose its bracket on failure.
+    # Retain the enclosing sign bracket, not merely its last two trials,
+    # which may both lie on the same side of the candidate.
+    bracket = [theta1_left, theta1_right]
+    bracket_values = [None, None]
+
     def _compute_deriv(theta1: float):
         beta1 = exp(mu1 + 1j * theta1)
         roots = poly.solve_roots_1d((0, 1), (E_ref, beta1), (2,))
@@ -522,19 +532,54 @@ def solve_multiple_roots_in_interval(
         roots = roots[inds]
         V_list, _ = compute_tangent(poly, E_ref, beta1, roots)
         if min_pair is not None:
-            return _pair_distance_deriv(roots, V_list, min_pair)
-        _, deriv, _ = _closest_pair_deriv(roots, V_list)
+            deriv = _pair_distance_deriv(roots, V_list, min_pair)
+        else:
+            _, deriv, _ = _closest_pair_deriv(roots, V_list)
+        if np.isfinite(deriv):
+            if theta1 == bracket[0]:
+                bracket_values[0] = deriv
+            elif theta1 == bracket[1]:
+                bracket_values[1] = deriv
+            elif (bracket[0] < theta1 < bracket[1]
+                  and all(v is not None for v in bracket_values)
+                  and np.signbit(bracket_values[0]) != np.signbit(bracket_values[1])):
+                side = 0 if np.signbit(deriv) == np.signbit(bracket_values[0]) else 1
+                bracket[side] = theta1
+                bracket_values[side] = deriv
         return deriv
-
-    if theta1_right < theta1_left:
-        theta1_right += TWO_PI
 
     # Tangent at the reference (right) endpoint — reused across Brent trials.
     V_ref, _ = compute_tangent(
         poly, E_ref, exp(mu1 + 1j * theta1_right), roots_ref,
     )
 
-    theta1_mr = optimize.brentq(_compute_deriv, theta1_left, theta1_right)
+    try:
+        theta1_mr = optimize.brentq(_compute_deriv, theta1_left, theta1_right)
+    except (ValueError, RuntimeError):
+        theta_mid = 0.5 * (bracket[0] + bracket[1])
+        beta1_mid = exp(mu1 + 1j * theta_mid)
+        roots_mid = poly.solve_roots_1d((0, 1), (E_ref, beta1_mid), (2,))
+        # The triggering pair may contain a spectator of the actual MR.
+        # Seed from the polynomial derivative, as the point-trigger path
+        # does, without carrying that pair's ambiguous branch labels.
+        finite_roots = [r for r in roots_mid if not _is_singular_root(r)]
+        if not finite_roots:
+            raise
+        beta2_mid = min(
+            finite_roots,
+            key=lambda r: abs(poly.eval_partials((E_ref, beta1_mid, r))[2]),
+        )
+        beta1_mr, _ = solve_multiple_roots_iterative(
+            poly, E_ref, beta1_mid, beta2_mid,
+        )
+        theta1_mr = float(np.angle(beta1_mr / exp(1j * theta_mid)) + theta_mid)
+        # An unconstrained point solve can reach a different MR.  Such a
+        # point cannot split the segment belonging to this interval.
+        if not theta1_left <= theta1_mr <= theta1_right:
+            raise ValueError(
+                f"MR point fallback left the trigger interval: "
+                f"theta1={theta1_mr}, interval=({theta1_left}, {theta1_right})"
+            )
 
     return theta1_mr
 
