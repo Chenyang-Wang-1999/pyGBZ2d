@@ -11,7 +11,7 @@ solver packages.  Import explicitly:
     from pygbz2d.experimental import cluster_bands
 '''
 
-from pygbz2d.experimental.band_clustering import (
+from .band_clustering import (
     ALPHA_E,
     EPS_SCAN_MAX,
     EPS_SCAN_MIN,

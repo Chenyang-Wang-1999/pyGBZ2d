@@ -44,7 +44,7 @@ INF_THRESHOLD: float = 1e6
 #: pre-checking the magnitude avoids ``exp`` overflow from a finite but
 #: divergent tangent times a large step.
 PREDICT_MAX_ABS_ARG: float = 1.0
-from pygbz2d.core import (
+from ..core import (
     CharPoly,
     hungarian_match_indices,
     to_sphere_r3,

@@ -26,10 +26,10 @@ from scipy.optimize import brentq
 # Angular accuracy of the bracketed solve, independent of polynomial scaling.
 CROSSING_XTOL: float = 1e-12
 CROSSING_MAXITER: int = 500
-from pygbz2d.core import CharPoly, TWO_PI, live_defaults
+from ..core import CharPoly, TWO_PI, live_defaults
 
 if TYPE_CHECKING:
-    from pygbz2d.continuation.zero_manager import ZeroManager
+    from ..continuation.zero_manager import ZeroManager
 
 @live_defaults(xtol="amoeba.ronkin_winding:CROSSING_XTOL", max_iter="amoeba.ronkin_winding:CROSSING_MAXITER")
 def _find_exact_crossing(

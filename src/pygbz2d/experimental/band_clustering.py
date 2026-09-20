@@ -48,7 +48,7 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
-from pygbz2d.core import PointSubset, LineSubset, TWO_PI
+from ..core import PointSubset, LineSubset, TWO_PI
 
 # ---------------------------------------------------------------------------
 # Module constants (single-consumer, home-module locality per doc/constants.md

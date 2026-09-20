@@ -15,11 +15,13 @@ if RUN_IN_SRC:
 #### libs ####
 import numpy as np
 from typing import Literal
+import matplotlib.pyplot as plt
 
 #### pyGBZ2d ####
 from pygbz2d import core
 from pygbz2d import amoeba
 from pygbz2d import sgbz
+from pygbz2d import continuation
 
 ##### Modeling with ChP #####
 def get_HN_charpoly(
@@ -72,7 +74,15 @@ def calculate_subset_and_print(
     poly_dict = {"x-strip": "x-y", "y-strip": "y-x", "11-strip": "11-y"}
     if which == "amoeba":
         coeffs, degs = get_HN_charpoly(Jx1, Jx2, Jy1, Jy2, "x-y")
-        print(amoeba.collect_GBZ_subsets(coeffs, degs, E_ref, debug_mode=True))
+        res = (amoeba.collect_GBZ_subsets(coeffs, degs, E_ref, debug_mode=True))
+        poly = core.CharPoly(coeffs, degs)
+        zm = continuation.ZeroManager(poly, E_ref, 0)
+        zm.run()
+        print(amoeba.zm_extract.find_crossings(zm, 0.0, -0.09116077839697725, return_refined=True))
+        plt.figure()
+        for seg in zm.segments:
+            plt.plot(seg.theta1_arr, np.log(np.abs(seg.tracked_roots)))
+        plt.show()
     else:
         coeffs, degs = get_HN_charpoly(Jx1, Jx2, Jy1, Jy2, poly_dict[which])
         print(sgbz.collect_GBZ_subsets(coeffs, degs, E_ref, debug_mode=True))
@@ -103,11 +113,12 @@ def demo_line_subsets():
 
 
 def check():
+    ''' Hermitian model '''
     Jx1 = 1
     Jx2 = 1.5
     Jy1 = -1
     Jy2 = -1.2
-    E_ref = 0
+    E_ref = 1
     calculate_subset_and_print(E_ref, Jx1, Jx2, Jy1, Jy2, "amoeba")
 
 

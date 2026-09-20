@@ -47,13 +47,14 @@ from __future__ import annotations
 import math
 import warnings
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 from scipy.optimize import brentq
 
-from pygbz2d import core
-from pygbz2d.core import live_defaults
+from ..core import live_defaults, TWO_PI
+from ..continuation import ZeroManager
+from ..continuation.interpolation import hermite_interp_poly
 
 # Crossing-channel constants (single consumers live in this module).
 #: brentq xtol when refining a pairwise ln|β₂| crossing.
@@ -72,9 +73,6 @@ REFINE_REL_TOL: float = 1e-12
 THETA_EQ_TOL: float = 1e-15
 #: brentq iteration budget (the bracket is guaranteed by the sign scan).
 BRENTQ_MAXITER: int = 100
-from pygbz2d.core import TWO_PI
-from pygbz2d.continuation import ZeroManager
-from pygbz2d.continuation.interpolation import hermite_interp_poly
 
 if TYPE_CHECKING:
     from .mu2mid import Mu2MidZM
@@ -93,7 +91,6 @@ THETA_EQ_TOL: float = 1e-15
 # Mesh refinement for multi-crossing intervals (runs after ZeroManager.run,
 # before collect_pair_events).  ``core.CONTINUUM_TOL`` must match
 # Mu2MidZM's core.CONTINUUM_TOL; ``analyze()`` passes the live value explicitly.
-core.CONTINUUM_TOL: float = 1e-6
 REFINE_MAX_ROUNDS: int = 3
 REFINE_SAFETY_FACTOR: float = 4.0
 REFINE_MAX_SUBINTERVALS: int = 64

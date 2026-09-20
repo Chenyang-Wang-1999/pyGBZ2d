@@ -14,7 +14,7 @@ Both ``pygbz2d.sgbz.collect_GBZ_subsets`` and
 
 __version__ = "0.1.0"
 
-from pygbz2d.core import (
+from .core import (
     CharPoly,
     PointSubset,
     LineSubset,
@@ -23,7 +23,7 @@ from pygbz2d.core import (
     TWO_PI,
 )
 
-from pygbz2d import continuation, sgbz, amoeba
+from . import continuation, sgbz, amoeba
 
 __all__ = [
     "CharPoly",

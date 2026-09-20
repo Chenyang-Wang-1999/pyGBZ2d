@@ -15,14 +15,15 @@ line and the run simply continues through it.
 from __future__ import annotations
 
 import numpy as np
+from typing import Optional
 
-from pygbz2d.core import CharPoly, LineSubset
-from pygbz2d.continuation import ZeroManager
+from ..core import CharPoly, LineSubset
+from ..continuation import ZeroManager
 
-from pygbz2d.core import live_defaults
+from ..core import live_defaults
 from .mu2mid import ensure_mu2mid
 from .mu2mid import Mu2MidZM
-from pygbz2d.core import JoinableLinePiece as _LinePiece, is_mr_cluster_endpoint as _is_cluster_endpoint
+from ..core import JoinableLinePiece as _LinePiece, is_mr_cluster_endpoint as _is_cluster_endpoint
 
 
 # ---------------------------------------------------------------------------

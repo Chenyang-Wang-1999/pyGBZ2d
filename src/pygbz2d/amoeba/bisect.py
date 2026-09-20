@@ -27,11 +27,11 @@ import warnings
 import numpy as np
 from cmath import exp
 
-from pygbz2d.core import CharPoly
-from pygbz2d.continuation.interpolation import hermite_interp_poly
+from ..core import CharPoly
+from ..continuation.interpolation import hermite_interp_poly
 
-from pygbz2d import core
-from pygbz2d.core import live_defaults
+from .. import core
+from ..core import live_defaults
 
 from .ronkin_winding import _get_average_winding_from_zeros
 from .zm_extract import (

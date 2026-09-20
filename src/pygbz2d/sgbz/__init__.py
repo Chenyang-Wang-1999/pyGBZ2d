@@ -14,12 +14,12 @@ PointSubsets and the loop-winding path ``μ₂_mid(θ₁)`` is the independent
 piecewise-smooth ``Mu2Mid`` object.
 '''
 
-from pygbz2d.core import (
+from ..core import (
     PointSubset, LineSubset, GBZResult, ConnectedSubset, CharPoly,
     get_minor_degrees,
 )
 
-from pygbz2d.core import CONTINUUM_TOL, CONTINUUM_FRAC
+from ..core import CONTINUUM_TOL, CONTINUUM_FRAC
 from .mu2mid import (
     Mu2MidZM, Mu2Mid, Mu2MidPiece,
     ItemView,

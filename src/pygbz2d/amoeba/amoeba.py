@@ -10,15 +10,14 @@ from cmath import exp
 from typing import Optional
 import numpy as np
 
-from pygbz2d import core
-from pygbz2d.core import live_defaults
+from ..core import live_defaults
 
 #: Plateau-probe non-zero-winding area threshold.
 PLATEAU_AREA_THRESHOLD: float = 1e-2
 #: Sample snap tolerance in circular θ₁ and chordal β₂ distance; both
 #: coordinates must match before a discrete point is removed.
 SNAP_TOL: float = 1e-3
-from pygbz2d.core import (
+from ..core import (
     PointSubset, LineSubset, GBZResult, CharPoly,
     JoinableLinePiece, is_mr_cluster_endpoint, TWO_PI,
     check_points_clustered_on_torus, probe_zero_plateau,
@@ -472,6 +471,8 @@ def collect_GBZ_subsets(
                 E_ref, mu1, mu2, amoeba_res["zeros"],
             )
 
+        print()
+        print(mu1, mu2, amoeba_res["zeros"])
         n_0d = sum(1 for s in subsets if isinstance(s, PointSubset))
         n_1d = sum(1 for s in subsets if isinstance(s, LineSubset))
         return GBZResult(E_ref=E_ref, subsets=subsets, index=(n_0d, n_1d))

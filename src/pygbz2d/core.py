@@ -25,7 +25,7 @@ from typing import Optional, Union
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from pygbz2d.backend import make_laurent
+from .backend import make_laurent
 
 # The single 2π constant for the whole project.  Every module imports it
 # from here instead of spelling `2 * pi` locally, so all seam comparisons

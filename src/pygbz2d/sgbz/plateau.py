@@ -15,16 +15,14 @@ signature is present, ``_probe_zero_plateau_near_mu1`` verifies by probing
 
 from __future__ import annotations
 
-import math
 import cmath
 from typing import Optional
 
-from pygbz2d import core
-from pygbz2d.core import live_defaults
-from pygbz2d.core import (
+from ..core import (
     TWO_PI,
     CharPoly, GBZResult, PointSubset,
     check_points_clustered_on_torus, probe_zero_plateau,
+    live_defaults
 )
 
 from .mu2mid import Mu2MidZM

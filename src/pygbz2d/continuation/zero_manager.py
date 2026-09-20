@@ -48,7 +48,7 @@ MR_DENSE_MAX_STEP: float = 1e-4
 #: Dense sampling between bracket events: minimum number of interior
 #: sample rows between two consecutive events.
 MR_DENSE_MIN_SAMPLES: int = 8
-from pygbz2d.core import (
+from ..core import (
     TWO_PI,
     CharPoly,
     hungarian_match_indices,

@@ -24,8 +24,8 @@ from typing import Optional
 
 import numpy as np
 
-from pygbz2d.core import TWO_PI, CharPoly
-from pygbz2d.continuation.zero_manager import ZeroManager
+from ..core import TWO_PI, CharPoly
+from ..continuation.zero_manager import ZeroManager
 
 from .ronkin_winding import (
     _find_exact_crossing,

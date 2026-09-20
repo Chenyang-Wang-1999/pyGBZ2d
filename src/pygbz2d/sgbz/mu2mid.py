@@ -30,15 +30,15 @@ from __future__ import annotations
 import warnings
 
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 import numpy as np
 
-from pygbz2d.continuation import ZeroManager
-from pygbz2d.continuation.interpolation import hermite_interp_poly
+from ..continuation import ZeroManager
+from ..continuation.interpolation import hermite_interp_poly
 
-from pygbz2d import core
-from pygbz2d.core import live_defaults
+from .. import core
+from ..core import live_defaults
 
 #: Clamp band for ln|β₂| when building the μ₂_mid path (|β₂| = e^±14).
 LOGABS_CLAMP: float = 14.0

@@ -4,7 +4,7 @@ date:          2026-05-19
 Copyright © Department of Physics, Tsinghua University. All rights reserved
 '''
 
-from pygbz2d.core import (
+from ..core import (
     PointSubset, LineSubset, GBZResult, ConnectedSubset, CharPoly,
 )
 
