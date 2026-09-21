@@ -221,20 +221,8 @@ def _extreme_over_segments(
     columns are permuted by ``boundary_perm``; it is skipped here because the
     θ=0 row already covers that physical point in the correct frame.
     """
-    parts: list[np.ndarray] = []
-    n_seg = len(zm.segments)
-    for s, seg in enumerate(zm.segments):
-        la = zm.seg_logabs[s]
-        end = len(seg.theta1_arr)
-        if s == n_seg - 1 and end > 1:
-            end -= 1
-        if end <= 0:
-            continue
-        parts.append(la[:end, cols])
-    if not parts:
-        return float('nan')
-    all_vals = np.concatenate(parts)
-    return float(np.max(all_vals) if mode == 'max' else np.min(all_vals))
+    all_vals = np.vstack(zm.seg_logabs)
+    return float(np.max(all_vals[:, cols]) if mode == 'max' else np.min(all_vals[:, cols]))
 
 
 # ---------------------------------------------------------------------------

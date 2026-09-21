@@ -471,8 +471,6 @@ def collect_GBZ_subsets(
                 E_ref, mu1, mu2, amoeba_res["zeros"],
             )
 
-        print()
-        print(mu1, mu2, amoeba_res["zeros"])
         n_0d = sum(1 for s in subsets if isinstance(s, PointSubset))
         n_1d = sum(1 for s in subsets if isinstance(s, LineSubset))
         return GBZResult(E_ref=E_ref, subsets=subsets, index=(n_0d, n_1d))
