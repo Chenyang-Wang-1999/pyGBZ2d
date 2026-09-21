@@ -435,9 +435,8 @@ def collect_GBZ_subsets(
     coeffs: np.ndarray,
     degs: np.ndarray,
     E_ref: complex,
-    perc: float = None,
-    *,
     debug_mode: bool = False,
+    *,
     plateau_check: bool = True,
     plateau_probe_radius: Optional[float] = None,
     mu1_guess: tuple[float, float] = (-1, 1),
@@ -479,8 +478,6 @@ def collect_GBZ_subsets(
         its materialized LineSubsets in ``subsets`` with
         ``index == (0, n_1d)``.
     """
-    if perc is not None:
-        print("%.2f" % (perc * 100) + r"%")
     poly = CharPoly(coeffs, degs)
 
     try:

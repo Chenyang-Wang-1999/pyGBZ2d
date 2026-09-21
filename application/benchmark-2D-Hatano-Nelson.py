@@ -4,6 +4,8 @@ Run with ``--compare-only`` for the numerical checks without plotting.
 Without this option, the same checks also display the point and line subsets.
 The comparison covers every stored sample, but does not establish that the
 solver has found every connected component of an equal-energy set.
+Use ``--coarse-sweep`` to inspect a 20 x 20 amoeba scan, or ``--full-sweep``
+to follow it with a 100 x 100 scan of all four GBZs saved in application/data.
 
 author:        Wang Chenyang <cy-wang21@mails.tsinghua.edu.cn>
 date:          2026-09-15
@@ -11,12 +13,12 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 """
 
 from typing import Literal
+from pathlib import Path
 
 RUN_IN_SRC = True
 # Prefer the checkout when running this example without an editable install.
 if RUN_IN_SRC:
     import sys
-    from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import numpy as np
@@ -355,7 +357,6 @@ def calculate_subset_and_show(
     res = calculate_subsets(E_ref, Jx1, Jx2, Jy1, Jy2, which)
     if not res.success:
         raise RuntimeError(res.error)
-    print_comparison(compare_to_closed_form(res, Jx1, Jx2, Jy1, Jy2, which))
     if res.is_empty or not show:
         return res
 
@@ -381,6 +382,8 @@ def calculate_subset_and_show(
     ax_radius.set(xlabel=r"$\theta_1/\pi$", ylabel=r"$\mu_2 = \ln|\beta_2|$", xlim=(0, 2))
     fig.suptitle(f"{which} GBZ subsets, E = {E_ref}")
     plt.show()
+
+    print_comparison(compare_to_closed_form(res, Jx1, Jx2, Jy1, Jy2, which))
     return res
 
 
@@ -471,20 +474,324 @@ def benchmark_random_coeffs(
         calculate_subset_and_show(E_samp, Jx1, Jx2, Jy1, Jy2, which, show=show)
 
 
+def compare_sweep_to_closed_form(scan: dict) -> dict[str, list[dict]]:
+    """Validate a completed scan without rerunning solvers or changing its data.
+
+    This HN-specific benchmark is separate from the reusable scan below.
+    Fine-scan files have already been saved when the CLI calls this function,
+    so an analytic mismatch leaves the numerical evidence available.
+    """
+    reports = {}
+    for which, results in scan["results"].items():
+        reports[which] = []
+        for index, result in enumerate(results):
+            try:
+                report = compare_to_closed_form(result, which=which, **scan["hoppings"])
+            except (ValueError, AssertionError) as exc:
+                raise AssertionError(
+                    f"Post-scan comparison failed for {which} at E[{index}] = {result.E_ref}: {exc}"
+                ) from exc
+            reports[which].append(report)
+        print(f"{which}: closed-form comparison passed for {len(results)} scanned energies", flush=True)
+    return reports
+
+
+#### Full GBZ sweep ####
+# This section can be copied with get_HN_charpoly into a separate script.
+# Repeat its imports here so none of the earlier benchmark helpers is needed.
+from pathlib import Path
+from typing import Literal
+
+import numpy as np
+from pygbz2d import GBZResult, amoeba, sgbz
+
+DEMO_HOPPINGS = (1 + 1j, 1.5 + 1.2j, -1 + 1j, -1.2 - 0.5j)
+N_PROCESS = 1
+SWEEP_BASES = {"amoeba": "x-y", "x-strip": "x-y", "y-strip": "y-x", "11-strip": "11-y"}
+
+def _sweep_worker(task):
+    """Call the library directly; keep workers importable under Windows spawn."""
+    index, E_ref, coeffs, degs, which = task
+    try:
+        solver = amoeba.collect_GBZ_subsets if which == "amoeba" else sgbz.collect_GBZ_subsets
+        result = solver(coeffs, degs, E_ref)
+    except Exception as exc:
+        raise RuntimeError(f"{which} sweep failed at E[{index}] = {E_ref}: {exc}") from exc
+    return index, result
+
+
+def sweep_GBZ(
+    Jx1: complex,
+    Jx2: complex,
+    Jy1: complex,
+    Jy2: complex,
+    E_list: np.ndarray,
+    which: str,
+    n_process: int = N_PROCESS,
+) -> list[GBZResult]:
+    """Solve every energy with the library, preserving the input order.
+
+    Argument order is (Jx1, Jx2, Jy1, Jy2), as in get_HN_charpoly. The
+    polynomial is built once in the selected basis and passed to workers.
+    The parent reports progress; worker exceptions immediately abort the pool.
+    No closed-form solution is needed for scanning. With multiple
+    processes, each worker uses one BLAS thread to avoid oversubscribing
+    the machine. Call from an ``if __name__ == '__main__'`` guard on Windows.
+    """
+    import os
+    import time
+    import multiprocessing as mp
+
+    if which not in SWEEP_BASES:
+        raise ValueError(f"Unknown GBZ kind: {which}")
+    if not isinstance(n_process, int) or isinstance(n_process, bool) or n_process < 1:
+        raise ValueError("n_process must be a positive integer.")
+    energies = np.asarray(E_list, dtype=complex)
+    if energies.ndim != 1 or not np.all(np.isfinite(energies)):
+        raise ValueError("E_list must be a one-dimensional array of finite energies.")
+    if not len(energies):
+        return []
+    coeffs, degs = get_HN_charpoly(Jx1, Jx2, Jy1, Jy2, SWEEP_BASES[which])
+    tasks = ((i, complex(E), coeffs, degs, which) for i, E in enumerate(energies))
+    results = [None] * len(energies)
+    started = time.monotonic()
+    progress_step = max(1, len(energies) // 20)
+
+    def collect(iterator):
+        for completed, (index, result) in enumerate(iterator, 1):
+            results[index] = result
+            if completed == 1 or completed % progress_step == 0 or completed == len(energies):
+                elapsed = time.monotonic() - started
+                print(f"{which}: {completed}/{len(energies)} energies, {elapsed:.1f} s", flush=True)
+
+    if n_process > 1:
+        # Set these before spawn imports NumPy; an initializer would be too late.
+        thread_vars = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+        previous = {name: os.environ.get(name) for name in thread_vars}
+        try:
+            for name in thread_vars:
+                os.environ[name] = "1"
+            with mp.get_context("spawn").Pool(min(n_process, len(energies))) as pool:
+                collect(pool.imap_unordered(_sweep_worker, tasks, chunksize=1))
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+    else:
+        collect(map(_sweep_worker, tasks))
+    return results
+
+
+def _energy_grid(real_bounds, imag_bounds, grid_size):
+    """Use rows for Im(E), columns for Re(E), and C-order flattening throughout."""
+    if not isinstance(grid_size, int) or isinstance(grid_size, bool) or grid_size < 2:
+        raise ValueError("grid_size must be an integer of at least two.")
+    for bounds in (real_bounds, imag_bounds):
+        if len(bounds) != 2 or not np.all(np.isfinite(bounds)) or bounds[0] >= bounds[1]:
+            raise ValueError("Each energy interval must have finite, increasing endpoints.")
+    real_axis = np.linspace(*real_bounds, grid_size)
+    imag_axis = np.linspace(*imag_bounds, grid_size)
+    energies = (real_axis[None, :] + 1j * imag_axis[:, None]).ravel()
+    return real_axis, imag_axis, energies
+
+
+def fine_bounds_from_coarse(real_axis, imag_axis, results, *, flatten_order="C"):
+    """Expand the occupied coarse bounding box by one original spacing per side.
+
+    An empty scan or an occupied outer row/column cannot establish a scan
+    range. Such cases are reported rather than silently substituting an
+    analytic bound or interpreting failed solves as exterior energies.
+    """
+    real_axis, imag_axis = np.asarray(real_axis), np.asarray(imag_axis)
+    for axis in (real_axis, imag_axis):
+        if axis.ndim != 1 or len(axis) < 2 or not np.all(np.isfinite(axis)):
+            raise ValueError("Coarse axes must be finite one-dimensional grids.")
+        if np.any(np.diff(axis) <= 0) or not np.allclose(np.diff(axis), axis[1] - axis[0]):
+            raise ValueError("Coarse axes must be uniformly spaced and increasing.")
+    if len(results) != len(real_axis) * len(imag_axis):
+        raise ValueError("Coarse results do not match the grid shape.")
+    if any(not result.success for result in results):
+        raise RuntimeError("The coarse scan contains failed solves; its bounds are not usable.")
+    occupied = np.array([result.is_gbz for result in results]).reshape(
+        (len(imag_axis), len(real_axis)), order=flatten_order,
+    )
+    rows, columns = np.nonzero(occupied)
+    if not len(rows):
+        raise RuntimeError("No amoebic spectral points were found; inspect the coarse grid before refining.")
+    if occupied[0, :].any() or occupied[-1, :].any() or occupied[:, 0].any() or occupied[:, -1].any():
+        raise RuntimeError("The occupied coarse grid touches the scan boundary; enlarge the coarse region first.")
+    dx, dy = real_axis[1] - real_axis[0], imag_axis[1] - imag_axis[0]
+    return (
+        (float(real_axis[columns.min()] - dx), float(real_axis[columns.max()] + dx)),
+        (float(imag_axis[rows.min()] - dy), float(imag_axis[rows.max()] + dy)),
+    )
+
+
+def load_sweep(path) -> dict:
+    """Load a scan saved in the same structure returned by the sweep functions."""
+    import pickle
+
+    with Path(path).open("rb") as stream:
+        return pickle.load(stream)
+
+
+def plot_sweep_spectra(scan: dict, *, show: bool = True):
+    """Plot numerical membership; a coarse plot also outlines the fine region.
+
+    Accepts either a returned scan or a loaded file without extra metadata.
+    Energies and coarse bounds are derived from the axes and results. Figures
+    are never saved by this function; the returned figure can be customized.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+
+    kinds = tuple(scan["results"])
+    fig, axes = plt.subplots(1 if len(kinds) == 1 else 2, 1 if len(kinds) == 1 else 2,
+                             figsize=(6, 5) if len(kinds) == 1 else (10, 8),
+                             squeeze=False, layout="constrained")
+    energies = (np.asarray(scan["real_axis"])[None, :]
+                + 1j * np.asarray(scan["imag_axis"])[:, None]).ravel(order=scan["flatten_order"])
+    for ax, which in zip(axes.flat, kinds):
+        results = scan["results"][which]
+        inside = np.array([result.is_gbz for result in results])
+        success = np.array([result.success for result in results])
+        outside = success & ~inside
+        ax.scatter(energies[outside].real, energies[outside].imag, s=3, c="0.85", label="Outside")
+        ax.scatter(energies[inside].real, energies[inside].imag, s=10, label="Inside")
+        if not success.all():
+            ax.scatter(energies[~success].real, energies[~success].imag,
+                       s=20, c="tab:red", marker="x", label="Failed")
+        if scan["stage"] == "coarse":
+            xr, yr = fine_bounds_from_coarse(
+                scan["real_axis"], scan["imag_axis"], scan["results"]["amoeba"],
+                flatten_order=scan["flatten_order"],
+            )
+            ax.add_patch(Rectangle((xr[0], yr[0]), xr[1] - xr[0], yr[1] - yr[0],
+                                   fill=False, color="tab:red", linestyle="--", label="Fine-scan region"))
+            ax.autoscale_view()
+        ax.set(xlabel="Re(E)", ylabel="Im(E)", title=f"{which}: {inside.sum()} spectral energies")
+        ax.set_aspect("equal", adjustable="box")
+        ax.legend(loc="best")
+    fig.suptitle(f"{scan['stage'].capitalize()} GBZ scan ({len(scan['real_axis'])} x {len(scan['imag_axis'])})")
+    if show:
+        plt.show()
+    return fig
+
+
+def coarse_sweep(
+    Jx1: complex = DEMO_HOPPINGS[0], Jx2: complex = DEMO_HOPPINGS[1],
+    Jy1: complex = DEMO_HOPPINGS[2], Jy2: complex = DEMO_HOPPINGS[3],
+    *, n_process: int = N_PROCESS, grid_size: int = 20,
+    real_bounds=(-5.0, 5.0), imag_bounds=(-5.0, 5.0), show: bool = True,
+) -> dict:
+    """Scan only amoeba, show its spectrum, and return the unsaved coarse data.
+
+    The 20 points on each axis include both endpoints, so the default
+    spacing is 10/19. Fine bounds extend the occupied bounding box by that
+    spacing along each axis. ``show=False`` is available for batch runs.
+    """
+    real_axis, imag_axis, energies = _energy_grid(real_bounds, imag_bounds, grid_size)
+    print(f"Coarse scan: amoeba only, {grid_size} x {grid_size}, {n_process} processes", flush=True)
+    hoppings = {"Jx1": Jx1, "Jx2": Jx2, "Jy1": Jy1, "Jy2": Jy2}
+    results = sweep_GBZ(**hoppings, E_list=energies, which="amoeba", n_process=n_process)
+    fine_bounds = fine_bounds_from_coarse(real_axis, imag_axis, results)
+    scan = {
+        "stage": "coarse", "hoppings": hoppings,
+        "real_axis": real_axis, "imag_axis": imag_axis,
+        "flatten_order": "C", "results": {"amoeba": results},
+    }
+    print(f"Fine-scan bounds: Re(E) in {fine_bounds[0]}, Im(E) in {fine_bounds[1]}", flush=True)
+    if show:
+        plot_sweep_spectra(scan)
+    return scan
+
+
+def fine_sweep(coarse: dict, *, n_process: int = N_PROCESS, grid_size: int = 100,
+               output_dir=None, show: bool = True) -> dict:
+    """Scan every fine-grid energy with all four methods and save full results.
+
+    Returned scans and per-method files use the same six-field structure;
+    files simply contain one entry in the results mapping. The energy grid
+    is represented by its axes and flatten order. Run-specific filenames
+    prevent overwriting previous scans. A solver exception stops the scan;
+    previously completed files remain usable and no incomplete file is
+    presented as a completed scan.
+    """
+    import pickle
+    from datetime import datetime, timezone
+
+    real_bounds, imag_bounds = fine_bounds_from_coarse(
+        coarse["real_axis"], coarse["imag_axis"], coarse["results"]["amoeba"],
+        flatten_order=coarse["flatten_order"],
+    )
+    real_axis, imag_axis, energies = _energy_grid(real_bounds, imag_bounds, grid_size)
+    output_dir = Path(output_dir) if output_dir is not None else Path(__file__).resolve().parent / "data"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    scan = {
+        "stage": "fine", "hoppings": dict(coarse["hoppings"]),
+        "real_axis": real_axis, "imag_axis": imag_axis,
+        "flatten_order": "C", "results": {},
+    }
+    print(f"Fine scan: four GBZs, {grid_size} x {grid_size}, {n_process} processes", flush=True)
+    for which in SWEEP_BASES:
+        results = sweep_GBZ(**scan["hoppings"], E_list=energies, which=which, n_process=n_process)
+        scan["results"][which] = results
+        payload = {**scan, "results": {which: results}}
+        path = output_dir / f"HN2D-{run_id}-{which}.pkl"
+        temporary = path.with_suffix(".pkl.tmp")
+        with temporary.open("wb") as stream:
+            pickle.dump(payload, stream, protocol=pickle.HIGHEST_PROTOCOL)
+        temporary.replace(path)
+        print(f"Saved {len(results)} {which} results -> {path}", flush=True)
+    if show:
+        plot_sweep_spectra(scan)
+    return scan
+
+
+#### Command-line demos and optional benchmark validation ####
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="demo",
+        help="Demo mode: \n\t"
+            "'demo': show PointSubset and LineSubset demos. \n\t"
+            "'benchmark': run random coefficient benchmark only. \n\t"
+            "'coarse-sweep': show the unsaved 20 x 20 amoeba scan only. \n\t"
+            "'full-sweep': coarse scan, then save all four 100 x 100 fine scans. \n\t"
+            "'plot': plot the GBZ scan, need --data-fname"
+        )
     parser.add_argument("--compare-only", action="store_true", help="Run checks without opening plots.")
-    parser.add_argument("--random-benchmark", action="store_true", help="Run random coefficient benchmark only.")
+    parser.add_argument("--n-process", type=int, default=N_PROCESS, help="Sweep worker count (default: 1).")
+    parser.add_argument("--no-show", action="store_true", help="Disable figures for batch sweep runs.")
     parser.add_argument("--zero-Delta", action="store_true", help="Set delta_x = delta_y.")
+    parser.add_argument("--data-fname", type=str, help="Data filename for plot mode.")
     args = parser.parse_args()
-    if args.random_benchmark:
+    if args.mode == "coarse-sweep" or args.mode == "full-sweep":
+        if args.zero_Delta or args.compare_only:
+            parser.error("Sweep modes use the complex demo hoppings; use --no-show to disable their figures.")
+        coarse = coarse_sweep(n_process=args.n_process, show=not args.no_show)
+        if args.mode == "full-sweep":
+            fine = fine_sweep(coarse, n_process=args.n_process, show=not args.no_show)
+        compare_sweep_to_closed_form(coarse)
+        if args.mode == "full-sweep":
+            compare_sweep_to_closed_form(fine)
+    elif args.mode == "benchmark":
         benchmark_random_coeffs(show=not args.compare_only, zero_Delta=args.zero_Delta)
-    else:
-        if args.zero_Delta:
-            raise ValueError("zero-Delta is only supported for random_benchmark.")
-        check_factorization()
+    elif args.mode == "plot":
+        if args.data_fname is None:
+            raise ValueError("--data-fname is required for plot mode.")
+        scan = load_sweep(args.data_fname)
+        plot_sweep_spectra(scan, show=not args.no_show)
+    elif args.mode == "demo":
         demo_point_subsets(show=not args.compare_only)
         demo_line_subsets(show=not args.compare_only)
         demo_spectrum_membership()
+    else:
+        raise ValueError(f"Unknown mode: {args.mode}")

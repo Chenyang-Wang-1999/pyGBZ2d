@@ -7,6 +7,7 @@ from pygbz2d.core import CharPoly, TWO_PI
 from pygbz2d.continuation.arclength import compute_tangent
 from pygbz2d.continuation.zero_manager import SegmentData
 from pygbz2d.amoeba.ronkin_winding import _find_exact_crossing
+from pygbz2d.amoeba.bisect import _refine_track_extrema, _find_mu2_for_w2_zero
 from pygbz2d.amoeba.zm_extract import (
     AmoebaZeroManager, _calculate_a2_winding_and_zeros, find_crossings,
 )
@@ -50,6 +51,92 @@ def assert_valid_mesh(zm):
         for t, roots in zip(seg.theta1_arr, seg.tracked_roots):
             for root in roots:
                 assert abs(zm.poly.eval_val((0j, np.exp(1j*t), root))) < 1e-10
+
+
+def test_true_extrema_expose_hidden_pair_and_retain_every_solve(monkeypatch):
+    a, b = 1.1, .2 * np.exp(1j * (np.pi - 2))
+    zm = affine_tracks((a, b))
+    assert find_crossings(zm, 0., 0.) == []
+    original = zm._solve
+    calls = []
+
+    def counted(theta):
+        calls.append(theta)
+        return original(theta)
+
+    monkeypatch.setattr(zm, '_solve', counted)
+    _refine_track_extrema(zm, np.arange(zm.K), 'both')
+    seg = zm.segments[0]
+    assert calls
+    assert len(calls) == len(set(calls))
+    assert len(seg.theta1_arr) == 3 + len(calls)
+    for theta, radius in ((2., .9), (2. + np.pi, 1.3)):
+        row = np.argmin(abs(seg.theta1_arr - theta))
+        assert seg.theta1_arr[row] == pytest.approx(theta, abs=1e-11, rel=0)
+        assert abs(seg.tangents[row, 0].real) < 1e-11
+        assert abs(seg.tracked_roots[row, 0]) == pytest.approx(radius, abs=1e-12)
+    retained = seg.theta1_arr.copy()
+    for mu2 in (0., .03):
+        crossings = find_crossings(zm, 0., mu2, return_refined=True)
+        assert len(crossings) == 2
+        np.testing.assert_allclose(
+            sorted(np.angle(b1) % TWO_PI for b1, _ in crossings),
+            expected_angles(a, b, mu2), atol=2e-12, rtol=0,
+        )
+    assert np.all(np.isin(retained, seg.theta1_arr))
+    assert_valid_mesh(zm)
+
+
+def test_extremum_refinement_failure_is_not_silently_skipped(monkeypatch):
+    zm = affine_tracks((1.1, .2 * np.exp(1j * (np.pi - 2))))
+
+    def broken(theta):
+        raise RuntimeError("intentional polynomial solve failure")
+
+    monkeypatch.setattr(zm, '_solve', broken)
+    with pytest.raises(RuntimeError, match=r'extremum refinement failed:.*segment=0, track=0, bracket='):
+        _refine_track_extrema(zm, np.arange(zm.K), 'both')
+
+
+@pytest.fixture
+def hn_hidden_extremum():
+    hoppings = np.array([1+1j, 1.5+1.2j, -1+1j, -1.2-.5j])
+    coeffs = np.r_[1, -hoppings]
+    degs = np.array([[1,0,0], [0,-1,0], [0,1,0], [0,0,-1], [0,0,1]])
+    energy = complex(3.947368421052632, 1.8421052631578947)
+    radii = .5 * np.log(abs(hoppings[[0,2]]) / abs(hoppings[[1,3]]))
+    return coeffs, degs, energy, radii
+
+
+def test_inner_hn_bisection_avoids_false_winding_zero(hn_hidden_extremum):
+    coeffs, degs, energy, radii = hn_hidden_extremum
+    poly = CharPoly(coeffs, degs)
+    mu1 = -0.15311980247497559
+    zm = AmoebaZeroManager(poly, energy, mu1)
+    zm.run()
+    inner = _find_mu2_for_w2_zero(poly, energy, mu1, -1., 1., _zm=zm)
+    assert not inner['is_continuum']
+    assert len(inner['zeros']) == 4
+    assert inner['mu2'] == pytest.approx(radii[1], abs=1e-8, rel=0)
+    # Independent quadratic crossing locations give this nonzero angular
+    # measure at the old false solution, despite its former reported w2=0.
+    winding, zeros = _calculate_a2_winding_and_zeros(
+        zm, mu1, 0.015207101630814844, return_refined=True,
+    )
+    assert len(zeros) == 4
+    assert winding == pytest.approx(-0.09527324265841022, abs=1e-10, rel=0)
+
+
+def test_hn_coarse_scan_counterexample_has_four_analytic_points(hn_hidden_extremum):
+    from pygbz2d.amoeba import collect_GBZ_subsets
+    coeffs, degs, energy, radii = hn_hidden_extremum
+    result = collect_GBZ_subsets(coeffs, degs, energy, debug_mode=True)
+    assert result.success and result.index == (4, 0)
+    poly = CharPoly(coeffs, degs)
+    for point in result.subsets:
+        np.testing.assert_allclose(np.log(abs(np.array([point.beta1, point.beta2]))),
+                                   radii, atol=5e-8, rtol=0)
+        assert abs(poly.eval_val((energy, point.beta1, point.beta2))) < 1e-10
 
 
 def test_refinement_retains_actual_roots_and_reuses_same_level(monkeypatch):

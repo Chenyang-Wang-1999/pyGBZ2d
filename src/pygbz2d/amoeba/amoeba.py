@@ -356,7 +356,6 @@ def collect_GBZ_subsets(
     coeffs: np.ndarray,
     degs: np.ndarray,
     E_ref: complex,
-    perc: float = None,
     debug_mode: bool = False,
     *,
     plateau_check: bool = True,
@@ -385,8 +384,6 @@ def collect_GBZ_subsets(
         GBZResult with connected subsets.  ``gbz.is_empty`` means E_ref is
         outside the amoeba GBZ spectrum.
     """
-    if perc is not None:
-        print("%.2f" % (perc * 100) + r"%")
     char_poly = CharPoly(coeffs, degs)
 
     # Neighbour threshold note (plateau_cluster_tol vs
@@ -478,4 +475,5 @@ def collect_GBZ_subsets(
     except Exception as e:
         if debug_mode:
             raise e
+        print("Error: %s" % str(e))
         return GBZResult(E_ref=E_ref, success=False, error=str(e))

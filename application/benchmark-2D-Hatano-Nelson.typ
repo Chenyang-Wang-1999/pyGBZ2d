@@ -1,4 +1,4 @@
-#import "@preview/zhaji:0.1.0": * 
+#import "style.typ": *  // modified from @preview/zhaji:0.1.0
 
 #let nt = note(
   title: "Benchmark: 2D Hatano-Nelson model",
@@ -11,7 +11,7 @@
 
 #show: nt.make
 #show raw.where(block: true): it => block(it, fill: rgb("edf6fd"), inset: 5pt, breakable: false)
-#show raw.where(block: false): it => highlight(it, fill: rgb("d0eafb"), top-edge: 1.2em, bottom-edge: -.5em, extent: 0.2em)
+#show raw.where(block: false): it => highlight(it, fill: rgb("e0e0e0"), top-edge: 1.2em, bottom-edge: -.5em, extent: 0.2em)
 
 #let mathbf(x) = $bold(upright(#x))$
 #let rme = $upright(e)$
@@ -28,6 +28,7 @@ The accompanying #link("./benchmark-2D-Hatano-Nelson.py")[Python script] demonst
 - Read and visualize `PointSubset` and `LineSubset` data.
 - Compare every returned sample with the closed-form GBZ and check its energy residual.
 - Check whether an empty or nonempty result agrees with the analytic spectrum.
+- Locate the spectrum with a coarse amoeba scan, then sample all four GBZs on a finer energy grid.
 
 Run the script from the repository root with `python application/benchmark-2D-Hatano-Nelson.py`. It uses the local `src` directory by default and requires NumPy, SciPy, and Matplotlib for plotting. Add `--compare-only` to run the numerical checks without importing Matplotlib or opening figures. Set `RUN_IN_SRC = False` to use an installed copy of `pyGBZ2d` instead.
 
@@ -224,8 +225,8 @@ The two roots of $A beta_2^2-E beta_2+B=0$ have product $B/A$, so their equal-mo
 
 === Error measures
 For the $N$ returned samples, define
-$ epsilon_(mu j) = max_(1 <= n <= N) abs(ln abs(beta_(j,n)) - mu_j^"exact"(theta_(1,n))), quad j=1,2. $
-For a `PointSubset`, there is one sample. For a `LineSubset`, all stored samples are used, with $beta_(1,n)=exp(mu_1+rmi theta_(1,n))$.
+$ epsilon_(mu j) = max_(1 <= n <= N) abs(ln abs(beta_(j , n)) - mu_(j)^("exact") (theta_(1 , n))) , quad j = 1 , 2 . $
+For a `PointSubset`, there is one sample. For a `LineSubset`, all stored samples are used, with $beta_(1 , n) = exp (mu_(1) + rmi theta_(1 , n))$.
 
 To check the energy, first convert the samples to Cartesian coordinates: interchange the two components for a $y$ strip, and use $beta_x=beta_1/beta_2$, $beta_y=beta_2$ for a $[11]$ strip. Define the four hopping contributions as
 $ (t_(1,n),t_(2,n),t_(3,n),t_(4,n)) = (J_(x 1)/beta_(x,n), J_(x 2) beta_(x,n), J_(y 1)/beta_(y,n), J_(y 2) beta_(y,n)). $
@@ -268,20 +269,136 @@ The following results were obtained on 2026-09-21 with the current checkout, the
   table(
     columns: (auto, auto, auto, auto, auto, auto),
     inset: 5pt,
-    table.header([*Case / GBZ*], [*`index`*], [*$N$*], [*$epsilon_(mu 1)$*], [*$epsilon_(mu 2)$*], [*$epsilon_E$*]),
-    [Point / amoeba], [`(4, 0)`], [4], [$2.00 times 10^(-9)$], [$9.52 times 10^(-9)$], [$4.79 times 10^(-16)$],
-    [Point / x-strip], [`(4, 0)`], [4], [$2.00 times 10^(-9)$], [$8.00 times 10^(-14)$], [$1.00 times 10^(-16)$],
-    [Point / y-strip], [`(4, 0)`], [4], [$1.44 times 10^(-9)$], [$8.72 times 10^(-13)$], [$1.00 times 10^(-16)$],
-    [Point / 11-strip], [`(4, 0)`], [4], [$5.55 times 10^(-10)$], [$1.44 times 10^(-9)$], [$2.10 times 10^(-16)$],
-    [Line / amoeba], [`(0, 2)`], [358], [$3.48 times 10^(-10)$], [$8.45 times 10^(-7)$], [$1.32 times 10^(-10)$],
-    [Line / x-strip], [`(0, 2)`], [350], [$3.48 times 10^(-10)$], [$4.22 times 10^(-7)$], [$1.32 times 10^(-10)$],
-    [Line / y-strip], [`(0, 2)`], [346], [$4.41 times 10^(-10)$], [$5.80 times 10^(-7)$], [$1.28 times 10^(-10)$],
-    [Line / 11-strip], [`(0, 2)`], [380], [$1.42 times 10^(-10)$], [$3.98 times 10^(-7)$], [$5.51 times 10^(-11)$],
+    table.header([*Case / GBZ*], [*index*], [*$N$*], [*$epsilon_(mu 1)$*], [*$epsilon_(mu 2)$*], [*$epsilon_E$*]),
+    [Point / amoeba], [(4, 0)], [4], [$2.00 times 10^(-9)$], [$9.52 times 10^(-9)$], [$4.79 times 10^(-16)$],
+    [Point / x-strip], [(4, 0)], [4], [$2.00 times 10^(-9)$], [$8.00 times 10^(-14)$], [$1.00 times 10^(-16)$],
+    [Point / y-strip], [(4, 0)], [4], [$1.44 times 10^(-9)$], [$8.72 times 10^(-13)$], [$1.00 times 10^(-16)$],
+    [Point / 11-strip], [(4, 0)], [4], [$5.55 times 10^(-10)$], [$1.44 times 10^(-9)$], [$2.10 times 10^(-16)$],
+    [Line / amoeba], [(0, 2)], [358], [$3.48 times 10^(-10)$], [$8.45 times 10^(-7)$], [$1.32 times 10^(-10)$],
+    [Line / x-strip], [(0, 2)], [350], [$3.48 times 10^(-10)$], [$4.22 times 10^(-7)$], [$1.32 times 10^(-10)$],
+    [Line / y-strip], [(0, 2)], [346], [$4.41 times 10^(-10)$], [$5.80 times 10^(-7)$], [$1.28 times 10^(-10)$],
+    [Line / 11-strip], [(0, 2)], [380], [$1.42 times 10^(-10)$], [$3.98 times 10^(-7)$], [$5.51 times 10^(-11)$],
   ),
   caption: [Comparison with the analytic GBZ radii and the fixed-energy equation for the two demonstration parameter sets. All eight cases pass the stated thresholds.],
 )
 
-Agreement means that numerical and analytic spectral membership match within `spectrum_atol` and, for nonempty results, every sampled point satisfies the closed-form GBZ constraints and fixed-energy equation within the sample tolerances. The independent membership test also checks empty results. It does not prove that every analytic branch was found in a nonempty result or that interpolation between line samples is equally accurate. An energy sweep would test additional reference energies beyond the fixed cases implemented here.
+Agreement means that numerical and analytic spectral membership match within `spectrum_atol` and, for nonempty results, every sampled point satisfies the closed-form GBZ constraints and fixed-energy equation within the sample tolerances. The independent membership test also checks empty results. It does not prove that every analytic branch was found in a nonempty result or that interpolation between line samples is equally accurate. The next section extends the calculation to a grid of reference energies.
+
+== Computation of full GBZ
+The solvers return GBZ subsets at a specified reference energy. Scanning an energy region and collecting these subsets therefore produces a sampled representation of the GBZ. The spectrum of a strip GBZ is contained in the amoebic spectrum,
+$ sigma_("strip") subset.eq sigma_("amoeba"), $
+so a common scan region can be selected from an amoeba-only coarse scan. We use the complex hopping parameters from `demo_point_subsets` and perform two stages:
+
+#table(
+  columns: (auto, auto, auto, 1fr),
+  inset: 6pt,
+  table.header([*Stage*], [*Energy grid*], [*Methods*], [*Output*]),
+  [Coarse], [$20 times 20$], [amoeba], [Display the spectrum and retain results only in memory.],
+  [Fine], [$101 times 101$], [All four GBZs], [Save complete results in `application/data`.],
+)
+
+The Python section beginning with `Full GBZ sweep` lists its own imports, model parameters, and basis choices. Together with `get_HN_charpoly`, it can be copied into a separate script using an installed `pyGBZ2d`. The scan itself does not depend on the earlier plotting or closed-form comparison helpers. `sweep_GBZ` constructs the characteristic polynomial once for the selected basis; `_sweep_worker` directly calls `amoeba.collect_GBZ_subsets` or `sgbz.collect_GBZ_subsets` for each energy.
+
+=== Coarse scan: determine the energy window
+`coarse_sweep` uses 20 equally spaced points on each axis, including both endpoints of $[-5,5]$. There are 400 reference energies, with spacing
+$ Delta E_("Re") = Delta E_("Im") = frac(10,19). $
+Only `amoeba.collect_GBZ_subsets` is used. The scan collects numerical results and displays the spectrum. Coarse results and the figure are not written to disk. The returned dictionary retains the grid and results in memory so they can be passed directly to `fine_sweep`. Closed-form comparison is a separate step performed after scanning.
+
+Let $S$ be the coarse energies for which `result.is_gbz` is true. The fine-scan limits are
+$ [E_("Re", "min"), E_("Re", "max")] = [min_(E in S) limits("Re")(E)-Delta E_("Re"), max_(E in S) limits("Re")(E)+Delta E_("Re")], $
+$ [E_("Im", "min"), E_("Im", "max")] = [min_(E in S) limits("Im")(E)-Delta E_("Im"), max_(E in S) limits("Im")(E)+Delta E_("Im")]. $
+Thus each side of the occupied bounding box is extended by one *coarse-grid* spacing. The coarse plot shows this proposed rectangle as a dashed outline. Bounds come entirely from the numerical coarse results.
+
+To inspect only the coarse scan, run from the repository root:
+```sh
+python application/benchmark-2D-Hatano-Nelson.py --mode coarse-sweep --n-process 20
+```
+The command above requests 20 processes; `N_PROCESS` sets the script's default process count. If no spectral points are detected, the scan cannot determine a fine window. If occupied points touch the coarse-grid boundary, the window may be truncated. Either condition is reported as an error rather than silently producing a fine scan. Even when neither occurs, a finite coarse grid is an estimate of the support; it cannot establish that arbitrarily narrow spectral features were resolved. In particular, the 20-point grid does not include zero, so it is not suited to the real-line spectrum of `demo_line_subsets` without changing the grid.
+
+=== Fine scan: compute and save all four GBZs
+`fine_sweep` places 101 equally spaced points along each expanded interval. All four methods evaluate the same $101^2=10,201$ energies, for 40,804 fine-grid solves in total. No grid point is skipped based on an analytic classification or on another method's result. The function computes, saves, and optionally plots the numerical results; it does not require a closed-form solution.
+
+The complete two-stage workflow is
+```sh
+python application/benchmark-2D-Hatano-Nelson.py --mode full-sweep --n-process 20
+```
+The coarse plot is displayed first. Closing that figure allows the fine scan to start. After completion, four panels display the fine-grid spectra. Starting this command after a separate `--mode coarse-sweep` run recomputes the coarse scan, since its data were not saved. For an unattended calculation with the same grids and output files, use
+```sh
+python application/benchmark-2D-Hatano-Nelson.py --mode full-sweep --n-process 20 --no-show
+```
+To call the functions directly from a script that has imported them, use a main guard so Windows can start the worker processes safely:
+```python
+if __name__ == "__main__":
+    coarse = coarse_sweep(n_process=20)
+    fine = fine_sweep(coarse, n_process=20)
+```
+
+`sweep_GBZ` distributes independent energies across the requested worker processes, reports progress in the parent process, and restores the original energy order when workers finish out of order. Each spawned worker uses one BLAS thread. The hopping argument order is consistently `(Jx1, Jx2, Jy1, Jy2)`. A solver exception stops the scan and reports the GBZ choice, energy index, and reference energy. Returned failed `GBZResult` objects are retained and plotted as red crosses rather than exterior points; a coarse scan containing failures cannot be used to infer a fine window.
+
+The output directory is resolved relative to the Python script and is created with `mkdir(parents=True, exist_ok=True)` when needed. Each completed method is saved as
+```text
+application/data/HN2D-<UTC run ID>-amoeba.pkl
+application/data/HN2D-<UTC run ID>-x-strip.pkl
+application/data/HN2D-<UTC run ID>-y-strip.pkl
+application/data/HN2D-<UTC run ID>-11-strip.pkl
+```
+The shared run ID in the filenames groups the four files and keeps repeated runs from overwriting earlier results. The in-memory scan and every saved file use the same six-field dictionary:
+
+#table(
+  columns: (1fr, 1fr),
+  inset: 6pt,
+  table.header([*Entries*], [*Meaning*]),
+  [`stage`], [`"coarse"` or `"fine"`, used for the plot title and the coarse refinement rectangle.],
+  [`hoppings`], [A dictionary with keys `Jx1`, `Jx2`, `Jy1`, and `Jy2`. Parameter names carry their meaning without a separate ordering field.],
+  [`real_axis`], [The one-dimensional $limits("Re")(E)$ grid.],
+  [`imag_axis`], [The one-dimensional $limits("Im")(E)$ grid.],
+  [`flatten_order`], [Flattening order, `"C"` for newly computed scans. Grid rows correspond to $limits("Im")(E)$ and columns to $limits("Re")(E)$.],
+  [`results`], [A mapping from GBZ names to lists of complete `GBZResult` objects, including empty or failed results and all stored line samples.],
+)
+The returned fine scan has four entries in `results`; each per-method file has one entry, such as `{"11-strip": [...]}`. Both can be passed directly to `plot_sweep_spectra`. Energy arrays, grid shapes, and coarse refinement bounds are derived when needed, rather than stored alongside the axes. Coarse setup metadata, process counts, saved paths, and filename identifiers are not part of the scan data.
+
+Files are written after each method completes, and their paths are printed. If a later method raises an exception, previously completed files remain available; an unfinished method is not published as a completed scan.
+
+=== Validate the completed scan against the HN solution
+The separate `compare_sweep_to_closed_form` helper belongs to the earlier benchmark code. It applies `compare_to_closed_form` to the stored results after scanning, including empty results, without rerunning the solvers:
+```python
+# Optional HN-specific validation after the generic scanning workflow.
+coarse_reports = compare_sweep_to_closed_form(coarse)
+fine_reports = compare_sweep_to_closed_form(fine)
+```
+The command-line demo performs this validation automatically after the requested scans finish: after the coarse scan for `--mode coarse-sweep`, or after both scans and all four fine-scan files have been saved for `--mode full-sweep`. With figures enabled, close the scan figures to proceed to validation. A mismatch reports the method, energy index, and energy while preserving the computed results and saved files. A completed numerical file does not itself imply that analytic validation passed. For a model without a closed-form solution, the scanning workflow can be used on its own and this benchmark-specific step omitted.
+
+=== Reading the saved scan
+`load_sweep` reads the saved dictionary without conversion. Its result can be plotted immediately, just like the object returned by `fine_sweep`. Replace the filename below with the path printed by the scan:
+```python
+import numpy as np
+from pygbz2d import PointSubset, LineSubset
+
+data = load_sweep("application/data/HN2D-<UTC run ID>-11-strip.pkl")
+plot_sweep_spectra(data)
+
+results = data["results"]["11-strip"]
+energy_grid = data["real_axis"][None, :] + 1j * data["imag_axis"][:, None]
+energies = energy_grid.ravel(order=data["flatten_order"])
+mask = np.array([r.is_gbz for r in results])
+spectral_energies = energies[mask]
+membership_grid = mask.reshape(energy_grid.shape, order=data["flatten_order"])
+
+for result in results:
+    for subset in result.subsets:
+        if isinstance(subset, PointSubset):
+            beta1, beta2 = subset.beta1, subset.beta2
+        elif isinstance(subset, LineSubset):
+            beta1 = np.exp(subset.mu1 + 1j * subset.theta1_arr)
+            beta2 = subset.beta2_arr
+        # [11]-strip coordinates -> Cartesian coordinates.
+        beta_x, beta_y = beta1 / beta2, beta2
+```
+Alternatively, the command-line plot mode reads a saved scan without rerunning either solver:
+```sh
+python application/benchmark-2D-Hatano-Nelson.py --mode plot --data-fname <saved-file.pkl>
+```
+`GBZResult` and its subset classes remain defined in `pygbz2d.core`, so that package must be importable when loading the files. The energy grid samples the spectral region, while the stored subset objects provide the corresponding GBZ coordinates. A finite scan is a sampled approximation of the full GBZ, with resolution set by both the energy grid and the solver's adaptive sampling of any line subsets.
 
 
 #bibliography("pyGBZ2d.bib", style: "american-physics-society")

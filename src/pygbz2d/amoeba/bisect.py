@@ -7,7 +7,8 @@ Bisection algorithms for amoeba Ronkin function critical-point search.
 
 The μ₂ bisection is now continuum-first:
 
-  1. ``_try_fast_mu2``      — cheap gap test at θ₁=0 (no continuum involved).
+  1. ``_try_fast_mu2``      — refine local extrema on every track, then test
+                             the gap between groups selected at θ₁=0.
   2. ``detect_continuum``   — std-based flat-track detection, run up front.
   3. continuum probes       — for each merged μ₂_c, perturb by ±ε and test
      whether w2 straddles zero.  If yes the inner solve returns the continuum
@@ -22,13 +23,12 @@ update the μ₁ bracket.
 """
 
 from typing import Optional
-import warnings
 
 import numpy as np
 from cmath import exp
+from scipy.optimize import brentq
 
 from ..core import CharPoly
-from ..continuation.interpolation import hermite_interp_poly
 
 from .. import core
 from ..core import live_defaults
@@ -49,12 +49,12 @@ BISECT_MAX_ITER: int = 60
 BISECT_COARSE_XTOL: float = 1e-3
 MAX_RANGE_EXPANSIONS: int = 10
 RANGE_EXPAND_FACTOR: float = 2.0
-#: Relative tolerance for mesh-insertion dedup in extremum refinement.
+#: Relative angular resolution of the extrema inserted into the mesh.
 EXTREMUM_INSERT_REL_TOL: float = 1e-12
 
 
 # ---------------------------------------------------------------------------
-# Extremum refinement for _try_fast_mu2 (Hermite prediction + mesh insertion)
+# Local extrema shared by the gap test and every subsequent μ₂ level
 # ---------------------------------------------------------------------------
 
 def _screen_extremum_intervals(
@@ -65,17 +65,17 @@ def _screen_extremum_intervals(
     """Vectorized first screen for intervals that may contain an extremum.
 
     Returns ``[(seg_idx, i, col), ...]`` where ``i`` is the left endpoint of a
-    suspicious interval ``[i, i+1]`` for track ``col``.  Only these intervals
-    are later processed with cubic-Hermite root solving (which is not
-    vectorizable and therefore must be kept small).
+    suspicious interval ``[i, i+1]`` for track ``col``. Only derivative
+    sign brackets are refined; same-sign endpoints hiding multiple internal
+    extrema are deliberately outside this screen's scope.
 
     Suspicious intervals for ``mode='max'``:
       - derivative sign changes from + to − across the interval;
       - either endpoint derivative is exactly 0;
       - either endpoint derivative is non-finite (divergent at an MR row).
-    ``mode='min'`` uses − to +.  Intervals adjacent to a non-finite derivative
-    row are always marked (the later refinement inserts a midpoint separator
-    there to resolve the sharp feature with an exact solve).
+    ``mode='min'`` uses − to +; ``mode='both'`` accepts either orientation.
+    Intervals adjacent to a non-finite derivative row are marked for a real
+    midpoint solve before considering the finite sub-brackets.
     """
     out: list[tuple[int, int, int]] = []
     cols_arr = np.asarray(cols, dtype=int)
@@ -86,22 +86,23 @@ def _screen_extremum_intervals(
         la = zm.seg_logabs[s][:, cols_arr]
         d = seg.tangents.real[:, cols_arr]          # (N, C)
 
-        finite = np.isfinite(d)
-        bad = ~finite                                # (N, C)
+        bad = ~np.isfinite(d)                         # (N, C)
 
         if mode == 'max':
             sign_change = (d[:-1] > 0) & (d[1:] < 0)
-        else:
+        elif mode == 'min':
             sign_change = (d[:-1] < 0) & (d[1:] > 0)
+        elif mode == 'both':
+            sign_change = ((d[:-1] < 0) & (d[1:] > 0)) | ((d[:-1] > 0) & (d[1:] < 0))
+        else:
+            raise ValueError(f"unknown extremum mode: {mode!r}")
 
         zero_deriv = (d[:-1] == 0) | (d[1:] == 0)
-        # Any interval adjacent to a non-finite derivative row is suspicious:
-        # the Hermite fallback inserts a midpoint separator there so the sharp
-        # feature gets resolved by an exact solve.  This single vectorized OR
-        # covers all bad-row cases (interior, first, last) — no per-row loop
-        # is needed.
+        # Divergent MR tangents need a real interior sample; zero/infinite
+        # padding roots have no finite log-modulus extremum to refine.
         bad_interval = bad[:-1] | bad[1:]
-        susp = sign_change | zero_deriv | bad_interval   # (N-1, C)
+        finite_values = np.isfinite(la[:-1]) & np.isfinite(la[1:])
+        susp = (sign_change | zero_deriv | bad_interval) & finite_values
 
         rows, cidx = np.where(susp)
         for i, c in zip(rows, cidx):
@@ -114,100 +115,57 @@ def _refine_track_extrema(
     cols: np.ndarray,
     mode: str,
 ) -> None:
-    """Insert mesh rows at predicted extrema of selected tracks.
+    """Refine bracketed zeros of Re(d ln β₂ / dθ₁), retaining all root rows.
 
-    ``mode='max'`` inserts predicted maxima; ``mode='min'`` inserts predicted
-    minima.  The heavy Hermite-polynomial work is only done on intervals that
-    survived :func:`_screen_extremum_intervals`.
+    Every local extremum in the selected orientation matters for horizontal
+    level crossings, even if it cannot improve a global maximum or minimum.
+    Existing stationary rows are already separators. At an MR-adjacent
+    interval, retain one midpoint and refine any finite sign brackets it
+    exposes; no derivative solve crosses a singular endpoint. This does not
+    search for multiple extrema hidden behind same-sign endpoint derivatives.
     """
-    cols_arr = np.asarray(cols, dtype=int)
-    suspicious = _screen_extremum_intervals(zm, cols_arr, mode)
-    if not suspicious:
-        return
+    # Snapshot angular brackets, not row indices: solving one track inserts
+    # complete rows and shifts the indices used by all remaining tracks.
+    brackets = [
+        (s, j, float(zm.segments[s].theta1_arr[i]),
+         float(zm.segments[s].theta1_arr[i + 1]))
+        for s, i, j in _screen_extremum_intervals(zm, cols, mode)
+    ]
+    for s, j, theta_lo, theta_hi in brackets:
+        def derivative(theta):
+            seg = zm.segments[s]
+            row = int(np.searchsorted(seg.theta1_arr, theta))
+            if row == len(seg.theta1_arr) or seg.theta1_arr[row] != theta:
+                row, _ = zm.insert_solution(float(theta), seg_idx=s, i=row - 1)
+            # Read the 2π seam row directly instead of normalizing it to 0.
+            return float(seg.tangents[row, j].real)
 
-    # Current global extreme over all rows (skipping the duplicated θ=2π seam
-    # row of the last segment) — used as a cheap filter: candidates that cannot
-    # improve the current extreme are not inserted.
-    current = _extreme_over_segments(zm, cols_arr, mode)
-    if not np.isfinite(current):
-        current = -np.inf if mode == 'max' else np.inf
-
-    candidates: list[tuple[float, int, float]] = []  # (theta, seg_idx, pred)
-    for s, i, j in suspicious:
-        seg = zm.segments[s]
-        th = seg.theta1_arr
-        la = zm.seg_logabs[s]
-        h = float(th[i + 1] - th[i])
-        if not np.isfinite(h) or h <= 0.0:
-            continue
-        v0 = float(la[i, j])
-        v1 = float(la[i + 1, j])
-        d0 = float(seg.tangents.real[i, j])
-        d1 = float(seg.tangents.real[i + 1, j])
-
-        finite_deriv = bool(np.isfinite(d0) and np.isfinite(d1))
-        poly = hermite_interp_poly(h, v0, d0, v1, d1)
-
-        if not finite_deriv:
-            # Divergent tangent: the Hermite falls back to a linear piece with
-            # no interior extremum.  Insert the interval midpoint as a mesh
-            # separator so the sharp feature is resolved by an exact solve.
-            theta = float(th[i] + 0.5 * h)
-            pred = float(np.polyval(poly, 0.5 * h))
-            candidates.append((theta, s, pred))
-            continue
-
-        deriv = np.polyder(poly)
-        for root in np.roots(deriv):
-            if abs(float(root.imag)) > 1e-12 * max(1.0, h):
-                continue
-            x = float(root.real)
-            if not (0.0 < x < h):
-                continue
-            pred = float(np.polyval(poly, x))
-            if mode == 'max' and pred <= current:
-                continue
-            if mode == 'min' and pred >= current:
-                continue
-            candidates.append((float(th[i] + x), s, pred))
-
-    if not candidates:
-        return
-
-    # Insert descending per segment so earlier insertions (larger θ) do not
-    # invalidate the located intervals of later ones.  Dedup against existing
-    # mesh rows with a per-interval relative tolerance, mirroring the SGBZ
-    # refinement-grid insertion.
-    candidates.sort(key=lambda x: (x[1], -x[0]))
-    for s, grp in _group_by_segment(candidates):
-        seg = zm.segments[s]
-        th = np.asarray(seg.theta1_arr, dtype=float)
-        inserted: list[float] = []
-        for theta, _, _ in sorted(grp, key=lambda x: -x[0]):
-            tol = EXTREMUM_INSERT_REL_TOL * max(1.0, float(theta))
-            if np.any(np.abs(th - theta) <= tol):
-                continue
-            if inserted and min(abs(theta - t) for t in inserted) <= tol:
-                continue
-            try:
-                _, changed = zm.insert_solution(theta, seg_idx=s, interp='hermite')
-            except Exception as exc:
-                warnings.warn(
-                    f"extremum refinement insert failed at theta="
-                    f"{theta:.6e} in segment {s}: {exc}"
-                )
-                continue
-            if changed:
-                inserted.append(theta)
-    zm.refresh_logabs()
-
-
-def _group_by_segment(candidates):
-    """Group (theta, seg_idx, pred) candidates by segment index."""
-    by_seg: dict[int, list] = {}
-    for theta, s, pred in candidates:
-        by_seg.setdefault(s, []).append((theta, s, pred))
-    return list(by_seg.items())
+        try:
+            d_lo, d_hi = derivative(theta_lo), derivative(theta_hi)
+            endpoints = [(theta_lo, d_lo), (theta_hi, d_hi)]
+            if not (np.isfinite(d_lo) and np.isfinite(d_hi)):
+                theta_mid = 0.5 * (theta_lo + theta_hi)
+                if theta_lo < theta_mid < theta_hi:
+                    endpoints.insert(1, (theta_mid, derivative(theta_mid)))
+            for (lo, d0), (hi, d1) in zip(endpoints, endpoints[1:]):
+                if not (np.isfinite(d0) and np.isfinite(d1)):
+                    continue
+                is_max = d0 > 0 and d1 < 0
+                is_min = d0 < 0 and d1 > 0
+                if not ((mode in ('max', 'both') and is_max)
+                        or (mode in ('min', 'both') and is_min)):
+                    continue
+                theta = float(brentq(
+                    derivative, lo, hi,
+                    xtol=EXTREMUM_INSERT_REL_TOL * max(1.0, abs(lo), abs(hi)),
+                    rtol=4.0 * np.finfo(float).eps,
+                ))
+                derivative(theta)
+        except (ValueError, RuntimeError, FloatingPointError) as exc:
+            raise RuntimeError(
+                f"extremum refinement failed: E_ref={zm.E_ref}, mu1={zm.mu1}, "
+                f"segment={s}, track={j}, bracket=({theta_lo:.17g}, {theta_hi:.17g}); {exc}"
+            ) from exc
 
 
 def _extreme_over_segments(
@@ -261,9 +219,9 @@ def _try_fast_mu2(
     lo_cols = order[:M].astype(int)
     hi_cols = order[M:].astype(int)
 
-    # Refine the mesh near the extrema that determine the gap.
-    _refine_track_extrema(zm, lo_cols, 'max')
-    _refine_track_extrema(zm, hi_cols, 'min')
+    # All local extrema separate level crossings during the later μ₂ solve,
+    # including lower-track minima and upper-track maxima irrelevant to A/B.
+    _refine_track_extrema(zm, np.arange(K), 'both')
 
     A = _extreme_over_segments(zm, lo_cols, 'max')
     B = _extreme_over_segments(zm, hi_cols, 'min')
@@ -543,6 +501,7 @@ def _handle_continuum(
     def _w1_at(mu1_probe: float) -> float:
         zm = AmoebaZeroManager(char_poly, E_ref, mu1_probe)
         zm.run()
+        _refine_track_extrema(zm, np.arange(zm.K), 'both')
         crossings = find_crossings(zm, mu1_probe, mu2_c)
         zeros = [
             (float(np.angle(b1) % (2.0 * np.pi)),
