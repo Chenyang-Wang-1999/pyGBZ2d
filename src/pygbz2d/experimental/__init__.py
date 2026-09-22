@@ -3,8 +3,8 @@ author:        wangchenyang <cy-wang21@mails.tsinghua.edu.cn>
 date:          2026-08-27
 Copyright © Department of Physics, Tsinghua University. All rights reserved
 
-EXPERIMENTAL post-processing algorithms for GBZ sweep data — clustering,
-topology construction and friends.  Research-grade: APIs may change without
+EXPERIMENTAL band clustering and diagnostics for GBZ sweep data.
+Research-grade: APIs may change without
 notice, correctness is not guaranteed, and nothing here is used by the
 solver packages.  Import explicitly:
 

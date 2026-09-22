@@ -44,7 +44,7 @@ __all__ = [
     "CharPoly",
     "get_minor_degrees",
 
-    # μ₂_mid builder (§1/§2)
+    # μ₂_mid builder
     "Mu2MidZM",
     "Mu2Mid",
     "Mu2MidPiece",
@@ -52,11 +52,11 @@ __all__ = [
     "CONTINUUM_TOL",
     "CONTINUUM_FRAC",
 
-    # continuum detection + materialization (§1)
+    # continuum detection + materialization
     "detect_continuum_simple",
     "extract_continuum_linesubsets",
 
-    # crossing detection + winding (§2, §3)
+    # crossing detection + winding
     "detect_crossings_simple",
     "detect_crossings_and_winding",
     "compute_average_winding",

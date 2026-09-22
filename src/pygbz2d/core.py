@@ -69,7 +69,7 @@ PLATEAU_CLUSTER_TOL: float = 1e-2
 #: step fails to leave a continuum band (was duplicated in three files).
 ESCAPE_LADDER: tuple = (1.0, 2.0, 4.0, 8.0)
 
-#: Step resolution of the probe stepper (generate_probe_steps).
+#: Compatibility default for generate_probe_steps' currently unused xtol.
 PROBE_XTOL: float = 1e-10
 
 
@@ -106,8 +106,8 @@ class CharPoly:
 
     The single entry point for polynomial construction, evaluation, and
     root-solving.  Wraps a pluggable Laurent backend internally (see
-    :mod:`pygbz2d.backend`) — no other file in the project touches a
-    backend directly.
+    :mod:`pygbz2d.backend`); numerical solvers use this wrapper rather than
+    depending on a particular backend.
 
     Parameters:
         coeffs: 1-D complex ndarray of polynomial coefficients.
@@ -311,7 +311,7 @@ class LineSubset:
 
     Attributes:
         E: Reference energy.
-        mu1: Fixed |beta1| radius (= ln|beta1|) across the segment.
+        mu1: Fixed logarithmic radius ln|beta1| across the segment.
         theta1_arr: (N,) θ₁ sampling points (monotonic).
         beta2_arr: (N,) β₂ values along this single curve.
     """
@@ -361,8 +361,9 @@ class GBZResult:
         success: Whether the computation completed without error.
         error: Error message if ``success`` is False.
         subsets: List of connected subsets (PointSubset / LineSubset).
-        index: (n_0D, n_1D) counts.  ``(0, 0)`` means the energy is
-               outside the GBZ.
+        index: (n_0D, n_1D) counts. For a successful solve, ``(0, 0)``
+            means no GBZ subsets were found. A failed solve also has empty
+            subsets by default; check ``success`` before classifying it.
     """
     E_ref: complex
     success: bool = True
@@ -391,7 +392,7 @@ ConnectedSubset = Union[PointSubset, LineSubset]
 # Cross-module LineSubset joining helpers
 # ---------------------------------------------------------------------------
 #
-# Both the amoeba extractor (pygbz2d.amoeba.zm_extract) and the SGBZ
+# Both the amoeba assembler (pygbz2d.amoeba.amoeba) and the SGBZ
 # continuum extractor (pygbz2d.sgbz.continuum_lines) join per-segment
 # continuum LineSubsets across MR boundaries into closed curves.  The join
 # unit and the MR-cluster endpoint test are module-agnostic (they only need
@@ -492,7 +493,7 @@ def cost_from_sphere_r3(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
 
     Projection-free core of :func:`chordal_cost_matrix` — use it directly
     when the :func:`to_sphere_r3` projections are shared across several
-    cost matrices (see ``_PmgbzScan.analyze_boundary_matching``).
+    cost matrices, avoiding repeated stereographic projections.
     """
     diff = p1[:, None, :] - p2[None, :, :]
     return np.sqrt(np.sum(diff * diff, axis=2), dtype=float)
@@ -595,13 +596,16 @@ def generate_probe_steps(
 
     Shared by both SGBZ and Amoeba :func:`_probe_zero_plateau_near_mu1`
     implementations.  Returns a sorted list of positive step sizes
-    ranging from ~zero_tol up to max(probe_radius, 4*bracket_width).
+    including a geometric ladder from ``max(10*zero_tol, 1e-12)`` to
+    ``max(probe_radius, 4*bracket_width, 100*zero_tol, 1e-12)``.
+    Positive quarter/half multiples of the supplied radius and bracket
+    width are also included and can be smaller than the ladder's first step.
 
     Parameters:
         bracket_width: Width of the current bisection bracket in mu1.
-        probe_radius: User-specified maximum probe distance.
+        probe_radius: Requested probe scale, not a hard upper bound.
         zero_tol: Tolerance for zero detection.
-        xtol: Bisection tolerance (used to floor the minimum step).
+        xtol: Compatibility argument; currently unused in step generation.
 
     Returns:
         Sorted list of positive step sizes.
@@ -664,10 +668,10 @@ def check_points_clustered_on_torus(
     """Whether every (θ₁, θ₂) point has a neighbour within *tol_normalized*.
 
     Distance is the Euclidean metric on the (θ₁, θ₂)-torus ``[0, 2π)²``,
-    normalized by ``2π`` so the full torus diagonal is ``√2``.  At a genuine
-    GBZ point the points are well-separated (they partition the circle into
-    meaningful segments); at a zero-plateau boundary they cluster into nearly
-    degenerate pairs, each within *tol_normalized* of a neighbour.
+    normalized by ``2π``. Each circular separation is at most ``π``, so
+    the maximum normalized distance is ``1/sqrt(2)``. Nearly degenerate
+    pairs can indicate a zero-plateau boundary; this geometric pre-check
+    alone does not establish the presence of a plateau.
 
     Returns ``False`` when any point is isolated (no neighbour within the
     threshold), which rules out a plateau and lets the caller skip the

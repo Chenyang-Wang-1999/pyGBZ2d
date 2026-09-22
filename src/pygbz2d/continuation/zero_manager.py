@@ -1,12 +1,13 @@
 """
 ZeroManager — polynomial β₂-root topology manager over θ₁ ∈ [0, 2π).
 
-Orchestrates ``integrate_segment`` and ``refine_multiple_root_theta`` to
+Orchestrates ``integrate_segment`` and the multiple-root refinement helpers to
 build a picture of the root manifold at fixed (E, μ₁): a list of refined
 multiple roots and a list of per-segment curve data.
 
-Each call to ``integrate_segment`` produces one SegmentData; the loop
-stops at multiple roots, refines them, records them, and restarts.
+Each integration call returns a ``SegmentResult``. Verified multiple roots
+delimit ``SegmentData`` objects; false-positive stops are merged, and several
+MRs found in one bracket are connected by densely sampled segments.
 """
 
 from __future__ import annotations
@@ -103,16 +104,14 @@ class SegmentResult(NamedTuple):
 
     ``stop_reason`` is one of:
 
-    * ``'completed'`` — reached *theta_end* without hitting a multiple root.
-    * ``'multiple_root_encountered'`` — step size collapsed or integrator
-      rejected; a multiple root is at or very near *mr_approx_theta*.
+    * ``StopReason.completed`` — reached or stepped past *theta_end*.
+    * ``StopReason.multiple_root_encountered`` — step size collapsed or
+      retries were exhausted; an MR is suspected near *mr_approx_theta*.
       ZeroManager should refine directly.
-    * ``'multiple_root_in_interval'`` — one or more root pairs had their
-      closest-pair distance derivative flip sign, so each flipped pair
-      has a local minimum (multiple root) in
+    * ``StopReason.multiple_root_in_interval`` — one or more root pairs had
+      their own squared-distance derivative flip sign, giving MR candidates in
       [*mr_triggers[k].theta_lo*, *mr_triggers[k].theta_hi*].
-      ZeroManager should bisect each pair's interval to locate its MR,
-      then refine.
+      ZeroManager refines each candidate and verifies its root cluster.
 
     For both MR stop reasons, *mr_ref* is the MR-adjacent regular endpoint
     (the segment's last accepted row) — used as the single-endpoint
@@ -159,17 +158,19 @@ def integrate_segment(
     """Integrate β₂ roots from *theta_start* toward *theta_end*.
 
     Stops when *theta_end* is reached (``stop_reason=StopReason.completed``) or when
-    a multiple root is detected.  Two trigger mechanisms run after each
-    accepted step:
+    a multiple root is suspected. Completion can overshoot *theta_end*;
+    ``ZeroManager.run`` replaces the final row at the circle endpoint.
+    Two trigger mechanisms are checked when a step is accepted:
 
     * ``'multiple_root_encountered'`` — step-size collapse (point trigger).
-    * ``'multiple_root_in_interval'`` — closest-pair distance derivative
+    * ``'multiple_root_in_interval'`` — per-pair squared-distance derivative
       sign flip (interval trigger).
 
     *roots_start* must be track-ordered (column j = physical root j) and
     is included as row 0 of the returned ``tracked_roots``.  Each
-    subsequent row is Hungarian-matched to the previous one to maintain
-    track continuity within the segment.
+    subsequent row is matched to the tangent prediction of the previous
+    row to maintain track continuity. Exhausted step retries also produce
+    ``multiple_root_encountered`` for subsequent refinement.
     """
     if ctrl is None:
         ctrl = StepControl()
@@ -191,7 +192,7 @@ def integrate_segment(
     n_accepted = 0
     n_rejected = 0
 
-    # Interval trigger: tracks closest-pair distance derivative sign
+    # Interval trigger: tracks each pair's squared-distance derivative sign
     # across steps.  Encapsulates all internal state and computation.
     interval_trigger = MultipleRootIntervalTrigger(min_dist_threshold)
 
@@ -424,7 +425,9 @@ class ZeroManager:
 
     After ``.run()``:
       - ``multiple_roots`` : list[MultipleRootInfo] — each MR's θ₁, cluster
-        indices, and modulus-sorted β₂ roots.
+        indices, and β₂ roots in the record's track frame. The θ₁=0
+        boundary record is modulus-sorted; interior records share the
+        frame of their adjacent segment endpoints.
       - ``segments`` : list[SegmentData] — curve segments, each with
         ``left_mr`` / ``right_mr`` indices into ``multiple_roots``
         (-1 = the θ₁=0/2π circle seam, the ONLY non-MR boundary).
@@ -914,9 +917,8 @@ class ZeroManager:
         cluster tracks as ``(θ − θ_MR)^{-1/2}`` (square-root branch), so the
         cubic Hermite tangent is unusable.  Linear interpolation
         ``r_a + s·(r_b − r_a)`` is used for *all* tracks instead of a
-        per-track fallback: per-track fallback would silently hold the
-        cluster fixed while Hermite-interpolating the smooth tracks, hiding
-        the kink.  Linear is honest and bounded.
+        per-track fallback so all tracks use the same endpoint geometry
+        while matching a new solve near the branch point.
 
         Raises ``ValueError`` for a single-row segment (no interval to
         interpolate).
@@ -1283,7 +1285,8 @@ class ZeroManager:
 
         ``snap_clusters_to_mean`` enforces exact root degeneracy, so the
         analytic derivative on cluster tracks is no longer trustworthy (at a
-        true multiple root it diverges).  The ``inf`` here is therefore
+        generic branch point it diverges; other degeneracies may give 0/0).
+        The ``inf`` here is therefore
         MANUALLY SET during segment finalization, not returned by
         ``compute_tangent`` — do not remove it under the assumption that it
         was computed analytically.

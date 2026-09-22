@@ -513,8 +513,9 @@ def refine_mesh_for_multiple_crossings(
     Runs between ``ZeroManager.run()`` and :func:`collect_pair_events`: every
     round re-predicts multi-root intervals with cubic Hermite, inserts the
     sub-mesh, and repeats.  Returns the number of inserted rows.  The final
-    EventGroup pass is unchanged — it simply sees one crossing per
-    sub-interval.
+    EventGroup pass consumes the enriched mesh. Refinement is limited by
+    the interpolant's predictions and the round/insertion budgets; it does
+    not certify that every sub-interval contains at most one true crossing.
 
     Cost model: clusters / ItemView / plans are per-segment pure functions
     of the mesh, and an insertion only touches ONE segment.  So the first

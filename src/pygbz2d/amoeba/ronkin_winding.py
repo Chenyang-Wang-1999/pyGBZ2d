@@ -101,7 +101,7 @@ def _get_average_winding_from_zeros(
       avg_winding   = Σ(u · width) / (2π)
       non_zero_area = Σ(|u| · width) / (2π)
 
-    The zeros partition the angular circle in the `direction` variable.
+    The zeros partition the angular circle transverse to `direction`.
     u_d is constant on each segment between consecutive zero crossings.
 
     direction=2 (w2): partition theta1, solve beta2 at each segment midpoint.

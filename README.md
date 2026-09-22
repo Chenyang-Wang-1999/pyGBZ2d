@@ -40,7 +40,9 @@ CharPoly(coeffs, degs, backend="numpy")        # explicit NumPy backend
 # backend="auto" also selects numpy
 ```
 
-A custom backend is any class satisfying the `LaurentProtocol` in `pygbz2d/backend.py` (eval / derivative / partial_terms_1d / num_max_degrees).
+A custom backend is a class or factory returning a `LaurentProtocol` object
+with `dim`, `denom_orders`, `eval`, `derivative`, `partial_terms_1d`, and
+`num_max_degrees`; see `src/pygbz2d/backend.py`.
 
 - (Optional) **BerryPy** — used by the Haldane playground script and Haldane counterexample tests; those tests skip automatically when BerryPy is absent.
 
@@ -74,7 +76,9 @@ from pygbz2d.sgbz import collect_GBZ_subsets
 
 # Check spectrum membership for a reference energy
 gbz = collect_GBZ_subsets(coeffs, degs, E_ref=1.0 + 0j)
-print(f"In spectrum: {not gbz.is_empty}, subsets: {len(gbz.subsets)}")
+if not gbz.success:
+    raise RuntimeError(gbz.error)
+print(f"In spectrum: {gbz.is_gbz}, subsets: {len(gbz.subsets)}")
 ```
 
 ### Amoeba Solver
@@ -82,10 +86,12 @@ print(f"In spectrum: {not gbz.is_empty}, subsets: {len(gbz.subsets)}")
 Find the Ronkin function minimum $(\mu_1, \mu_2)$ where both average windings vanish:
 
 ```python
-from pygbz2d.amoeba import bisect_amoeba_ronkin_min
+from pygbz2d.amoeba import collect_GBZ_subsets
 
 gbz = collect_GBZ_subsets(coeffs, degs, E_ref=1.0 + 0j)
-print(f"In spectrum: {not gbz.is_empty}, subsets: {len(gbz.subsets)}")
+if not gbz.success:
+    raise RuntimeError(gbz.error)
+print(f"In spectrum: {gbz.is_gbz}, subsets: {len(gbz.subsets)}")
 ```
 
 ## Customizing Numerical Constants
@@ -106,13 +112,15 @@ import pygbz2d as bz
 gbz = bz.sgbz.collect_GBZ_subsets(coeffs, degs, 1.0 + 0j, continuum_tol=1e-8)
 
 # 2) tune the WHOLE process — assign the module constant; takes effect
-#    immediately, on the next read, everywhere (including running loops)
+#    on the next module lookup; resolved call arguments and existing
+#    StepControl instances retain their values
 from pygbz2d.sgbz import pairwise
 pairwise.CROSSING_TOL = 1e-12
 ```
 
-Process-scope note: assignments propagate to forked worker processes only
-if made **before** the pool is created.
+Process-scope note: forked workers inherit assignments made before pool
+creation. Spawned workers, including the Windows benchmark workers, import
+modules afresh and need their own overrides.
 
 ## API Overview
 
@@ -124,7 +132,7 @@ if made **before** the pool is created.
 | `solve_SGBZ_for_E(poly, E_ref)` | Locate $\mu_1$ where average winding vanishes |
 | `Mu2MidZM(poly, E_ref, mu1)` | ZeroManager + ItemView analysis + pairwise crossing detection + μ₂_mid path |
 | `detect_continuum_simple(zm, poly)` | Continuum detection (presence only) |
-| `detect_crossings_simple(zm, poly)` | Crossing detection + charge classification |
+| `detect_crossings_simple(zm, poly)` | Materialize analyzed EventGroups as points and charges |
 | `compute_average_winding(zm, poly, charges)` | Compute average major-axis winding number |
 | `CharPoly(coeffs, degs, backend=None)` | Characteristic polynomial wrapper |
 
@@ -137,7 +145,7 @@ if made **before** the pool is created.
 | `collect_GBZ_subsets(coeffs, degs, E_ref, ...)` | Main entry point — check amoeba condition for reference energy |
 | `bisect_amoeba_ronkin_min(char_poly, E_ref, ...)` | Find $(\mu_1, \mu_2)$ where both average windings vanish |
 | `AmoebaZeroManager(poly, E_ref, mu1)` | Adaptive $\beta_2$ root tracks via `continuation.ZeroManager` |
-| `find_crossings(zm, mu1, mu2, ...)` | Find all $\ln|\beta_2| = \mu_2$ crossings (optional refine / segment avoidance) |
+| `find_crossings(zm, mu1, mu2, ...)` | Mesh-visible crossings; import from `pygbz2d.amoeba.zm_extract` |
 | `calculate_a2_average_winding(zm, mu1, mu2, ...)` | a2 average winding from crossings |
 
 ## Documentation
@@ -157,6 +165,20 @@ pytest --run-slow          # include BerryPy-dependent slow tests
 # The pure-numpy Laurent backend is the default.  To use the C++ backend:
 POLY_BACKEND=poly_tools pytest
 ```
+
+## Application benchmark
+
+The [2D Hatano–Nelson benchmark](application/benchmark-2D-Hatano-Nelson.typ)
+checks spectral membership and returned GBZ samples against closed-form
+expressions. Run its fixed examples without figures:
+
+```bash
+python application/benchmark-2D-Hatano-Nelson.py --mode demo --compare-only
+```
+
+Use `--mode coarse-sweep` or `--mode full-sweep` for energy scans, and
+`--no-show` to disable their plots. Matplotlib is needed for plotting;
+NumPy and SciPy suffice for the numerical checks.
 
 ## Playground Scripts
 

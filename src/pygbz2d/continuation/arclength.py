@@ -7,7 +7,7 @@ size Δθ₁ = h / ‖V‖₂ so that the arclength step in (θ₁, ln β₂)-sp
 approximately constant.
 
 Adaptive step-size control follows the pattern of scipy's RK45 integrator:
-error between tangent-predicted roots and np.roots-actual roots drives the PI
+error between tangent-predicted roots and np.roots-actual roots drives the
 step-size controller with SAFETY, MIN_FACTOR, MAX_FACTOR, and error_exponent.
 
 References
@@ -56,7 +56,7 @@ from .interpolation import hermite_interp_poly
 class StepControl:
     """Tolerances and factors for the adaptive pseudo-arclength step controller.
 
-    Bundles the RK45-style PI controller knobs (SAFETY / MIN_FACTOR /
+    Bundles the RK45-style controller knobs (SAFETY / MIN_FACTOR /
     MAX_FACTOR / ERROR_EXPONENT) and the arclength step bounds so that
     ``arclength_step``, ``integrate_segment`` and ``ZeroManager.run`` don't
     each re-declare nine parameters.  Add a knob here once; all three layers
@@ -112,9 +112,11 @@ class StepResult(NamedTuple):
 # ---------------------------------------------------------------------------
 
 def _is_singular_root(beta2: complex) -> bool:
-    """True for the 0 / ∞ padding roots appended by ``CharPoly.solve_roots_1d``
-    when the 1-D polynomial is degree-deficient.  Their tangent is undefined,
-    so they are held fixed during prediction.
+    """Identify non-finite roots and roots outside the finite-radius thresholds.
+
+    This includes the 0/∞ padding from degree-deficient polynomials and
+    finite roots with modulus below ZERO_THRESHOLD or above INF_THRESHOLD.
+    Their logarithmic tangents are treated as undefined during prediction.
     """
     abs_b2 = np.abs(beta2)
     return (abs_b2 < ZERO_THRESHOLD or abs_b2 > INF_THRESHOLD
@@ -131,8 +133,9 @@ def compute_tangent(
 
     The 0/∞ padding roots get ``V_j = nan`` — their tangent is UNDEFINED,
     not zero (a zero tangent would mean "the root does not move").  At a
-    multiple root ``∂f/∂β₂ = 0`` the implicit-function derivative diverges,
-    so ``V_j = inf``.  Both sentinels propagate to downstream consumers,
+    multiple root ``∂f/∂β₂ = 0`` the derivative ratio is singular, so
+    ``V_j = inf`` even if ``∂f/∂β₁`` also vanishes; no l'Hôpital evaluation
+    is performed. Both sentinels propagate to downstream consumers,
     whose ``np.isfinite`` guards fall back to linear interpolation / hold
     fixed; no artificial cap is applied.
 
@@ -154,8 +157,8 @@ def compute_tangent(
         df_dbeta1 = partials[1]
         df_dbeta2 = partials[2]
 
-        # At a multiple root ∂f/∂β₂ = 0, dβ₂/dθ₁ diverges.  Set V_j = ∞
-        # so downstream code can distinguish "undefined" from "truly zero".
+        # A zero denominator makes the implicit derivative unusable even
+        # for 0/0. Mark it singular so the MR machinery can resolve it.
         if df_dbeta2 == 0:
             V[j] = np.inf + 0j
             continue

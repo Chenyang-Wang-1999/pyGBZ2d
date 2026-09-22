@@ -132,8 +132,8 @@ def _join_runs_across_mrs(
 ) -> list[_LinePiece]:
     """Join pieces whose endpoints touch a segment boundary (MR / seam).
 
-    Event terminators never reach this join (they are interior rows or were
-    excluded by ``_find_boundary_runs``).  At an MR the track terminates if
+    Interior event endpoints cannot join across segments. Boundary-changing
+    events on the seam are also excluded explicitly. At an MR a track ends if
     its endpoint track column is in the MR's cluster; otherwise it continues.
     Interior MR boundaries share one track frame, while the first/last-segment
     seam is translated through ``boundary_perm`` — no nearest-value root

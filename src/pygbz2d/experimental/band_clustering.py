@@ -25,11 +25,11 @@ Two geometry facts baked into the embedding:
   different energies stay separated (that separation is ``alpha_E * gap/dE``
   and the well-separated assumption promises gap >> dE).
 
-No decimation: line points are used at the solver's native sampling
-density.  A theta1-width-based stride was tried and REJECTED — it deletes
-the body of near-vertical arcs (theta1 ~ const, theta2 sweeping) and breaks
-chaining; see log/2026-08-27.  The performance cost is paid instead by the
-scan cap below.
+Line points retain the solver's native sampling density. A stride chosen
+from theta1 width would remove the interior of near-vertical arcs
+(theta1 nearly constant while theta2 varies), breaking radius-graph
+connectivity along a single band. The scan cap and full-merge early stop
+limit the cost without discarding those samples.
 
 Scan cap: the eps stability ladder stops early at the first radius where
 the cloud is fully merged — beyond that point larger radii only multiply
@@ -250,7 +250,7 @@ def knn_distance_stats(X: np.ndarray, k: Optional[int] = None) -> np.ndarray:
 
 def eps_stability_scan(X: np.ndarray, eps_list: np.ndarray) -> list[dict]:
     """Cluster count vs eps — the diagnostic that verifies the well-separated
-    assumption (a usable window shows up as a wide plateau).
+    assumption empirically (a usable window shows up as a wide plateau).
 
     Stops early at the first radius where the whole cloud is one component:
     beyond the full-merge radius nothing new appears, and on dense 1-D
@@ -399,7 +399,10 @@ def cluster_bands(results=None, *, points: Optional[BandPoints] = None,
 
     Parameters:
         eps: explicit radius; ``None`` selects the geometric middle of the
-            widest plateau of the eps-stability scan.
+            widest eligible plateau. If none exists, use the first radius
+            that merges the cloud, or the last scanned radius if it never
+            fully merges. Inspect diagnostics before interpreting clusters
+            as physical bands.
         alpha_E: E-block downscale (default :data:`ALPHA_E`).
         w_mu: mu-block scale (default auto: 1/max(mu span, 1)).
         max_scan_eps, n_scan_steps: eps ladder bounds

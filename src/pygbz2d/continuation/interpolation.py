@@ -2,8 +2,9 @@
 Cubic Hermite interpolation polynomial coefficients.
 
 The continuation machinery turns the discrete β₂-root mesh into a continuous
-curve, and every interpolation site in this package uses the same two-point
-cubic Hermite recipe.  These two helpers centralise that recipe; all returned
+curve. Sites that use cubic Hermite interpolation share this two-point
+recipe; crossing solvers can instead request linear anchors explicitly.
+These two helpers centralise the Hermite recipe; all returned
 arrays follow the numpy ``poly`` convention (highest power first), so callers
 can evaluate with ``np.polyval``, differentiate with ``np.polyder`` and solve
 curve intersections with ``np.roots(np.polysub(p1, p2))``.

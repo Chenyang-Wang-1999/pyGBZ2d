@@ -5,12 +5,12 @@ Copyright © Department of Physics, Tsinghua University. All rights reserved
 
 Zero-plateau detection for the SGBZ solver.
 
-At a genuine GBZ point the PMGBZ points (0D ``PointSubset``s) are
-well-separated — they partition the θ₁ circle into meaningful segments.
-At a zero-plateau boundary all points cluster into nearly degenerate pairs
-instead, each within ``tol_normalized`` of a neighbour.  When that
-signature is present, ``_probe_zero_plateau_near_mu1`` verifies by probing
-``μ₁ ± step``: a plateau shows zero winding with empty GBZ on both sides.
+Nearly degenerate pairs of PMGBZ points (0D ``PointSubset``s) can signal a
+zero-plateau boundary. The clustering pre-check uses both angular
+coordinates. When every point has a nearby neighbour,
+``_probe_zero_plateau_near_mu1`` evaluates ``μ₁ ± step``. After evaluating
+both sides of a step, a plateau is reported if either probe has zero
+winding and an empty GBZ.
 '''
 
 from __future__ import annotations
@@ -40,14 +40,12 @@ def _check_pmgbz_points_clustered(
 
     Thin SGBZ adapter over
     :func:`pygbz2d.core.check_points_clustered_on_torus`: extracts ``(θ₁, θ₂)``
-    from the result's ``PointSubset``s (SGBZ points are PointSubsets, unlike
-    amoeba's ``(θ₁, θ₂, jump)`` tuples) and forwards.
+    from the result's ``PointSubset``s and forwards the angular pairs.
 
-    At a genuine GBZ point the PMGBZ points are well-separated (they
-    partition the circle into meaningful segments).  At a zero-plateau
-    boundary the winding changes sign over a vanishingly narrow angular
-    region, so the points cluster into nearly degenerate pairs — each
-    point sits within ``tol_normalized`` of a neighbour.
+    Nearly degenerate pairs can indicate winding changes confined to a
+    narrow angular region near a plateau boundary. Clustering only selects
+    candidates for the winding probe; it does not establish a plateau by
+    itself. The tolerance is normalized by the angular period ``2π``.
     """
     twopi = TWO_PI
     points: list[tuple[float, float]] = [

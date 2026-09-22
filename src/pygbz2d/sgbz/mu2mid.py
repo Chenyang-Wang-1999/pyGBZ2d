@@ -53,7 +53,7 @@ from .pairwise import (
 
 
 def logabs_clamped(roots: np.ndarray) -> np.ndarray:
-    """``np.log(np.abs(roots))`` with ±∞ clamped to ``±LOGABS_CLAMP``."""
+    """Clip log-moduli, including finite values, to ``±LOGABS_CLAMP``."""
     return np.clip(np.log(np.abs(roots)), -LOGABS_CLAMP, LOGABS_CLAMP)
 
 
@@ -173,7 +173,7 @@ class Mu2Mid:
 
     @property
     def breakpoints(self) -> np.ndarray:
-        """True derivative-discontinuity points (quad split points).
+        """Knots with unequal endpoint values or derivatives (quad split points).
 
         Ordinary C1 knots are NOT returned: a quad segment may span several
         smooth pieces as long as value and derivative join continuously.

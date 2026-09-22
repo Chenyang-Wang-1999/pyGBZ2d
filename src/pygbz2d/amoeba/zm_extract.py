@@ -178,7 +178,7 @@ def find_crossings(
     avoided_segments: Optional[list[tuple[int, int]]] = None,
     return_refined: bool = False,
 ) -> list[tuple[complex, complex]]:
-    """Find all crossings of ``ln|β₂| = μ₂`` over the ZM tracks.
+    """Find crossings of ``ln|β₂| = μ₂`` represented by the ZM mesh.
 
     Traverses every segment and every track column.  A ``(seg_idx, col_idx)``
     present in ``avoided_segments`` is skipped entirely.  Exact touches at
@@ -191,6 +191,11 @@ def find_crossings(
     otherwise bracketed polynomial solves refine each crossing and persist
     their samples in ``zm``. The updated mesh is rescanned after refinement.
     Failure raises rather than supplying an unrefined winding partition.
+
+    This function does not insert track extrema before scanning. The inner
+    amoeba solver performs that preprocessing; standalone callers must
+    supply a sufficiently resolved mesh. Same-sign interval endpoints can
+    still hide multiple crossings or an interior tangency.
     """
     avoided = set(avoided_segments or ())
     if return_refined:

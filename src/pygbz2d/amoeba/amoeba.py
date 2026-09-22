@@ -42,15 +42,14 @@ def _check_zeros_are_clustered(
     """Whether every amoeba zero has a neighbour within *tol_normalized*.
 
     Thin amoeba adapter over
-    :func:`pygbz2d.core.check_points_clustered_on_torus`: amoeba zeros carry a
-    trailing ``jump`` component, so only the first two are forwarded as
-    ``(θ₁, θ₂)``.
+    :func:`pygbz2d.core.check_points_clustered_on_torus`: the current winding
+    pipeline supplies ``(θ₁, θ₂)`` pairs. Only those first two coordinates
+    are forwarded, so legacy tuples with extra fields also work.
 
-    At a genuine GBZ point zeros are well-separated (they partition the
-    circle into meaningful segments).  At a zero-plateau boundary the
-    winding changes sign over a vanishingly narrow angular region, so
-    the zeros cluster into nearly degenerate pairs — each zero sits
-    within tol_normalized of a neighbour.
+    Nearly degenerate pairs can indicate winding changes confined to a
+    narrow angular region near a plateau boundary. Clustering is a
+    pre-check; the nearby winding probe determines whether a plateau is
+    present. The tolerance is normalized by the angular period ``2π``.
     """
     points = [(z[0], z[1]) for z in zeros]
     return check_points_clustered_on_torus(points, tol_normalized)
@@ -381,8 +380,11 @@ def collect_GBZ_subsets(
     for subset extraction (no second run).
 
     Returns:
-        GBZResult with connected subsets.  ``gbz.is_empty`` means E_ref is
-        outside the amoeba GBZ spectrum.
+        GBZResult with connected subsets. Check ``gbz.success`` first:
+        an empty successful result is outside the amoeba GBZ spectrum;
+        an empty failed result does not establish spectral membership.
+        ``debug_mode=True`` re-raises solver/assembly exceptions. Polynomial
+        construction occurs before that exception handler.
     """
     char_poly = CharPoly(coeffs, degs)
 

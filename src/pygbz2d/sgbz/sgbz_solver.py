@@ -63,9 +63,9 @@ def _evaluate_winding(
 
     Builds a fresh ``Mu2MidZM`` at *mu1* (mu1 is the bisection variable, so
     each probe needs its own ZM) and runs :meth:`analyze` — the analysis
-    both detects the continuum inline (§1/§6.3: ``has_continuum``) and
+    both detects the continuum inline (``has_continuum``) and
     provides the piecewise-smooth path the winding integral needs, so the
-    root-solving cost is amortised (§6.3).  When a continuum is detected W is
+    same tracked roots serve both tasks. When a continuum is detected W is
     undefined → returns ``(None, None, zm)``; the caller resolves it via
     left/right limits and, if it is the boundary, materialises the
     LineSubsets from the built *zm*.  Otherwise runs crossing detection +
@@ -102,9 +102,9 @@ def _resolve_continuum_winding(
     """Compute the left / right winding limits at a continuum-degenerate mu1.
 
     Tries perturbation scales (1, 2, 4, 8) × *continuum_perturb* to escape
-    the degenerate band.  Both sides are evaluated in sweep mode (the
-    continuum gate short-circuits; the precise 0D subsets are not needed
-    here — only the winding sign matters for the bisection).
+    the degenerate band. Each side uses the full winding evaluation;
+    continuum points short-circuit and the returned 0D subsets are discarded
+    because only the winding limits are needed here.
 
     Returns ``(w_left, w_right, eps)`` where *eps* is the first scale at
     which BOTH sides escaped the degenerate band — the caller needs it to
@@ -163,8 +163,9 @@ def solve_SGBZ_for_E(
     ``_find_mu2_for_w2_zero``).
 
     Returns:
-        dict with keys "mu1", "subsets" (list[PointSubset] or None for
-        continuum), "winding" (float or None), "is_continuum", plus debug
+        dict with keys "mu1", "subsets" (PointSubsets for discrete results,
+        LineSubsets for continuum results), "winding" (float or None),
+        "is_continuum", plus debug
         fields "_mu1_bracket", "_winding_bracket", "_w_limits"
         (continuum only), "_exit_reason".
     """
@@ -173,8 +174,8 @@ def solve_SGBZ_for_E(
     # tolerances): returns the full (winding, subsets, zm)
     # triple.  The subsets are used by the callers
     # below (gbz_low/gbz_high/gbz_mid/gbz_final), so this is the general
-    # evaluation, not a winding-only cheap probe (that lives in
-    # _resolve_continuum_winding, which discards the subsets).
+    # evaluation; _resolve_continuum_winding uses the same evaluation but
+    # discards its subsets.
     def winding_at(mu1_val: float):
         return _evaluate_winding(
             poly, E_ref, mu1_val,
@@ -241,9 +242,8 @@ def solve_SGBZ_for_E(
         return False, (mu1_val + eps, w_r), None       # zero right of band
 
     # --- Step 1: bracket expansion ---
-    # Initialize bracket variables before defining handle_continuum closure.
-    # The closure reads these at call time; during expansion the right bracket
-    # may not yet be established, so we initialize to None and set them later.
+    # The right endpoint is initially unknown; diagnostics passed to
+    # handle_continuum must preserve that state during left expansion.
     mu1_low = mu1_guess[0]
     mu1_high = None
     w_low = None
@@ -464,7 +464,6 @@ def collect_GBZ_subsets(
             f(E, beta1, beta2).
         degs: (n_terms, 3) integer exponents of (E, beta1, beta2) per term.
         E_ref: reference energy to test.
-        perc: progress fraction in [0, 1], printed as a percentage.
         debug_mode: if True, re-raise solver exceptions instead of returning
             a failed GBZResult.
         Explicit keyword arguments only (no catch-all options dict): every
@@ -473,8 +472,11 @@ def collect_GBZ_subsets(
         instead of being silently ignored.
 
     Returns:
-        GBZResult with connected subsets.  ``gbz.index == (0, 0)`` means
-        E_ref is outside the SGBZ spectrum.  A 1D continuum result carries
+        GBZResult with connected subsets. For a successful solve,
+        ``gbz.index == (0, 0)`` means E_ref is outside the SGBZ spectrum.
+        Check ``success`` first: a failed result also defaults to empty.
+        Polynomial construction occurs before the exception handler.
+        A 1D continuum result carries
         its materialized LineSubsets in ``subsets`` with
         ``index == (0, n_1d)``.
     """

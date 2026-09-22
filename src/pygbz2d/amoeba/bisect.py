@@ -175,9 +175,9 @@ def _extreme_over_segments(
 ) -> float:
     """Current global extreme of selected track columns over all segments.
 
-    The last segment's final row is the θ=2π copy of the θ=0 row, but its
-    columns are permuted by ``boundary_perm``; it is skipped here because the
-    θ=0 row already covers that physical point in the correct frame.
+    Includes every stored row, including both copies of the cyclic seam.
+    Column indices are used in each segment's stored track frame; the
+    θ=2π row is not relabelled into the θ=0 frame for this reduction.
     """
     all_vals = np.vstack(zm.seg_logabs)
     return float(np.max(all_vals[:, cols]) if mode == 'max' else np.min(all_vals[:, cols]))
@@ -328,9 +328,8 @@ def _bisect_mu2_discrete(
         w_mid, zeros = _calculate_a2_winding_and_zeros(
             zm, mu1, mu2_mid, return_refined=True)
 
-        # SGBZ-parity exit rule (sgbz_solver.py:387): drop the bracket-width
-        # exit, keep only the winding-zero exit.  Both halves of the old
-        # condition were needed to *terminate*, but only `abs(w_mid) < wtol`
+        # A narrow bracket alone does not establish zero winding; require
+        # the refined winding itself to satisfy the requested tolerance.
         if abs(w_mid) < wtol:
             return {
                 "mu2": mu2_mid,
@@ -488,7 +487,8 @@ def _handle_continuum(
     """Resolve a continuum inner result by perturbing μ₁.
 
     Keeps ``μ₂`` fixed at the continuum level.  At each of ``mu1_val ± eps``
-    a fresh ZM is built and ``find_crossings`` locates the zeros of
+    a fresh ZM is built, bracketed track extrema are inserted, and
+    ``find_crossings`` locates the mesh-visible zeros of
     ``ln|β₂| = μ₂``; those zeros are then fed to the a1 average-winding
     integral.  Returns:
 
@@ -694,9 +694,8 @@ def bisect_amoeba_ronkin_min(
             zeros_mid, direction=1,
         )
 
-        # SGBZ-parity exit rule (sgbz_solver.py:387, 2026-08-15): the bracket
-        # width is NOT an exit reason. Bisection now ends
-        # only on a genuine winding zero, matching SGBZ.
+        # A narrow mu1 bracket can still carry nonzero winding, so only
+        # the winding tolerance establishes discrete convergence.
         if abs(w1_mid) < wtol:
             return {
                 "mu1": mu1_mid,

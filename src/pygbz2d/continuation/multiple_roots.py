@@ -13,7 +13,7 @@ from cmath import exp
 # predicate of the MR machinery (unified 2026-08 to the ZeroManager.run
 # side value; the old direct-call default 1e-6 is retired).
 CLUSTER_TOL: float = 1e-4
-#: Closest-pair distance below which the MR interval trigger arms.
+#: Per-pair Euclidean distance below which the MR interval trigger arms.
 MIN_DIST_THRESHOLD: float = 0.1
 
 from ..core import (
@@ -35,10 +35,10 @@ from scipy.sparse.csgraph import connected_components
 class MultipleRootInfo(NamedTuple):
     """Information about a detected multiple root."""
     theta1: float
-    cluster_indices: list[tuple[int, ...]]  # indices into the modulus-sorted root array
-    roots: np.ndarray            # modulus-sorted β₂ roots at this θ₁
+    cluster_indices: list[tuple[int, ...]]  # indices into this record's roots
+    roots: np.ndarray            # boundary: modulus-sorted; interior: track frame
     # Per-cluster spread of the *raw* roots before snapping to the mean
-    # (``sqrt(mean(|β − mean|²))``), same order as ``cluster_indices``.
+    # (standard deviation of branch-unwrapped log-roots), same cluster order.
     # Empty when no cluster was detected.  A small value means the numerical
     # roots were already nearly coincident; a large one flags a loose cluster.
     # tuple (not list): a NamedTuple literal default must be immutable —
@@ -130,7 +130,7 @@ def snap_clusters_to_mean(
 #                    implicit-function derivative diverges (∂f/∂β₂ → 0),
 #                    so any finite arclength step in θ₁ space becomes tiny.
 #
-#   interval_trigger — closest-pair distance derivative flips sign
+#   interval_trigger — an armed pair's squared-distance derivative flips sign
 #                    (approaching → separating) → an MR lies BETWEEN
 #                    two successive steps.  This catches "accidental"
 #                    multiple roots where the tangent stays well-conditioned
@@ -162,8 +162,9 @@ class MRTriggerRecord(NamedTuple):
 
     Emitted by :class:`MultipleRootIntervalTrigger` when a pair went from
     approaching (deriv < 0) at *theta_lo* to separating (deriv > 0) at
-    *theta_hi*: a local minimum of that pair's distance — a multiple root
-    of those two tracks — lies inside ``(*theta_lo*, *theta_hi*)``.
+    *theta_hi*. This brackets a local distance minimum inside
+    ``(*theta_lo*, *theta_hi*)``; a refined cluster check must establish
+    whether it is a multiple root.
     """
 
     pair: tuple[int, int]        # track indices (i < j)
@@ -181,9 +182,9 @@ class MultipleRootIntervalTrigger:
     of ``|β_i − β_j|²`` for all root pairs at once (vectorized
     :func:`_pairwise_dist_deriv`) and tracks each pair's sign across steps.
     A pair triggers when ITS OWN derivative flips from negative
-    (approaching) to positive (separating) — a local minimum of that pair's
-    distance, i.e. a multiple root of those two tracks, lies between the
-    previous and current θ₁.
+    (approaching) to positive (separating). This brackets a local distance
+    minimum, which is an MR candidate; cluster verification after refinement
+    distinguishes a degeneracy from a nonzero closest approach.
 
     Per-pair tracking replaces the old single closest-pair state with its
     same-pair guard: when two pairs degenerate simultaneously (a symmetric
@@ -507,8 +508,10 @@ def solve_multiple_roots_in_interval(
     Returns
     -------
     theta1_mr : float
-        The θ₁ value where the derivative crosses zero, i.e. the
-        multiple-root location (not wrapped to [0, 2π)).
+        Candidate MR angle (not wrapped to [0, 2π)), located by the
+        derivative zero or the point-solver fallback. The caller must still
+        verify a root cluster at fixed mu1. A fallback angle outside the
+        original trigger interval raises ValueError.
     """
     if theta1_right < theta1_left:
         theta1_right += TWO_PI

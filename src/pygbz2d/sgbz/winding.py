@@ -3,7 +3,7 @@ author:        wangchenyang <cy-wang21@mails.tsinghua.edu.cn>
 date:          2026-08-10
 Copyright © Department of Physics, Tsinghua University. All rights reserved
 
-Topological charge + average major-axis winding (§3, §6.4), plus the 0D
+Topological charge + average major-axis winding, plus the 0D
 PointSubset materialization from analyzed EventGroups.
 
 Computes the average major-axis winding number ``W(E_ref, mu1)`` — the
@@ -12,17 +12,18 @@ quantity whose zero in ``mu1`` defines the SGBZ — from a
 fixed ``(E_ref, mu1)`` together with the charge list from
 :func:`detect_crossings_simple` below.
 
-Design (``log/2026-08-13-SGBZ算法梳理.md`` §3/§6.4):
+Design rationale:
 
   * The loop is ``β₂ = exp(μ₂_mid(θ₁) + iθ₂)`` with ``θ₁ ∈ [0, 2π)`` and
     fixed ``θ₂``; ``μ₂_mid`` is the piecewise-smooth boundary-pair mean — a
     first-class object with analytic values and derivatives and left/right
-    derivatives at its breakpoints (§2.0).  The loop winding is the integral
+    derivatives at its breakpoints. The loop winding is the integral
     of ``Im[f'/f]`` over ``θ₁``, split at the μ₂_mid breakpoints so each quad
-    segment is smooth (§6.4).  This replaces the old mesh-row argument-change
-    summation: the path is the *exact* piecewise-smooth μ₂_mid, not a polyline
-    approximation, and the integration honours the analytic derivative.
-  * Crossings come in two kinds.  **Ordinary** (charge ±1, SOFT): the winding
+    segment is smooth. A global interpolant across a derivative jump would
+    distort the loop. The path instead uses local Hermite interpolation
+    (linear fallback at singular tangents), and the integrand uses the
+    derivative of that interpolated path.
+  * Crossings come in two kinds. **Ordinary** (charge -1/0/+1, SOFT): the winding
     across it is fixed by its charge, so it only partitions ``θ₂`` into
     intervals *within* a region.  **MR / tangent / unknown** (HARD): the
     charge is UNKNOWN (the charge dict stores ``None``, never a numeric
@@ -31,10 +32,10 @@ Design (``log/2026-08-13-SGBZ算法梳理.md`` §3/§6.4):
     fails with ``TypeError``.
   * Therefore: partition the circle into regions delimited by hard
     boundaries; within each region, ordinary boundaries split it into
-    intervals.  Pick ONE seed interval per region (the safest — farthest from
-    all roots), compute ``w₀`` there, and propagate across the region's soft
-    boundaries via charges.  Each region contributes exactly one loop-winding
-    evaluation; ±1 numerical noise is confined to the per-region seed.
+    intervals. Pick one seed per region with positive angular width by
+    maximizing the sampled minimum of ``|f|``, compute ``w₀`` there, and
+    propagate across soft boundaries via charges. This reduces the number
+    of quadratures near zeros, where ``f'/f`` is ill-conditioned.
 '''
 
 from __future__ import annotations
@@ -106,7 +107,7 @@ def get_winding_number(
     excluded), each interval between consecutive breakpoints — plus the
     ``[start, first_bp]`` and ``[last_bp, end]`` ends — is handed to
     ``scipy.integrate.quad`` separately.  Splitting at the μ₂_mid breakpoints
-    keeps every quad segment on a single smooth piece (§6.4).  Otherwise the
+    keeps each quad segment away from derivative jumps. Otherwise the
     range is split into *n_seg* equal pieces.
 
     Returns the real-valued winding number (unrounded; callers round).
@@ -147,9 +148,9 @@ def _loop_winding_quad(
     """Loop winding number via quad of ``Im[f'/f]`` over the μ₂_mid loop.
 
     The loop is ``β₂ = exp(μ₂_mid(θ₁) + iθ₂)``, ``θ₁ ∈ [0, 2π)``, with the
-    analytic ``dβ₂/dθ₁ = β₂ · μ₂_mid'(θ₁)`` from the piecewise-smooth path
-    (§6.4).  The integration is split at the μ₂_mid breakpoints so every quad
-    segment lies on one smooth piece.  Consecutive segments share their
+    analytic ``dβ₂/dθ₁ = β₂ · μ₂_mid'(θ₁)`` of the interpolated path.
+    The integration is split at value/derivative discontinuities; ordinary
+    C1 knots need no split. Consecutive root-tracking segments share their
     MR-boundary row exactly, so the cross-segment seam contributes nothing
     extra (the breakpoint split already isolates it).
     """
@@ -182,17 +183,14 @@ def _loop_min_f(
     zm: Mu2MidZM,
     poly: CharPoly,
 ) -> float:
-    """Minimum ``|f(E, β₁, β₂)|`` along the μ₂_mid loop at fixed *theta2*.
+    """Minimum sampled ``|f|`` at fixed *theta2* on the μ₂_mid mesh.
 
-    The TRUE safety metric for a loop-winding seed (§3.2 "离零点最远" =
-    farthest from the zeros of f, not from the β₂ roots).  The loop is
-    ``β₁=exp(μ₁+iθ₁), β₂=exp(μ₂_mid(θ₁)+iθ₂)``; the quad of ``Im[f'/f]``
-    is reliable only while the loop stays clear of char-poly zeros, and a
-    zero of f is reached when ``β₂_loop`` meets a tracked root — but
-    ``|f|`` also depends on β₁ and on ``|∂f/∂β₂|``, so the β₂-distance
-    proxy underestimates the danger (a loop 0.5 from a β₂ root can still
-    have ``|f|≈0`` where ``|∂f/∂β₂|`` is large).  Maximising ``min |f|``
-    picks a θ₂ where the whole loop is genuinely far from any zero.
+    Uses ``seg_mu2_values`` at the stored θ₁ rows. A small denominator
+    makes the winding integrand ``Im[f'/f]`` sensitive to numerical error.
+    Distance to a β₂ root alone omits the polynomial's local scale: near
+    a simple root, ``|f|`` also scales with ``|∂f/∂β₂|``. Maximizing this
+    sampled minimum is a seed-selection heuristic, not a certified lower
+    bound on ``|f|`` between mesh rows or a geometric distance to its zeros.
     """
     if zm.mu2_mid is None:
         raise RuntimeError("_loop_min_f requires Mu2MidZM.analyze()")
@@ -221,13 +219,12 @@ def _pick_seed_theta2(
     *,
     n_per_interval: Optional[int] = None,
 ) -> tuple[float, int]:
-    """Pick the θ₂ maximizing ``min |f|`` along the loop over *intervals*.
+    """Pick the candidate θ₂ maximizing the mesh-sampled minimum of ``|f|``.
 
     The loop-winding seed must lie inside one of the region's intervals and
     stay clear of char-poly zeros for the quad to be reliable, so the safest
-    θ₂ maximises ``min |f(E, β₁(θ₁), β₂_loop(θ₁))|`` over θ₁ (§3.2 — the
-    true safety metric, accounting for β₁ and |∂f/∂β₂| that a β₂-distance
-    proxy ignores).  Samples are strictly interior (excluding the endpoints,
+    θ₂ maximises the sampled ``min |f(E, β₁(θ₁), β₂_loop(θ₁))|``.
+    Candidate θ₂ samples are strictly interior (excluding the endpoints,
     which are crossing root phases).
 
     Returns ``(theta2, interval_index)`` — the interval index lets the caller
@@ -260,8 +257,8 @@ def compute_average_winding(
 ) -> float:
     """Compute the average major-axis winding number ``W(E_ref, mu1)``.
 
-    Topology (§3): crossings come in two kinds:
-      * ordinary (charge ±1, SOFT): the winding across it is fixed by its
+    Crossings come in two kinds:
+      * ordinary (charge -1/0/+1, SOFT): the winding across it is fixed by its
         charge, so it only partitions θ₂ into intervals *within* a region.
       * mr / tangent / unknown (HARD): the charge is UNKNOWN — the charge
         dict stores ``None`` — so it DELIMITES regions.  Across a hard
@@ -276,8 +273,8 @@ def compute_average_winding(
 
     Therefore: partition the circle into REGIONS delimited by hard
     boundaries; within each region, ordinary boundaries split it into
-    intervals.  Pick ONE seed interval per region (the safest — farthest
-    from all boundaries), compute w₀ there via :func:`_loop_winding_quad`,
+    intervals. Pick one seed per region with positive width using the
+    sampled minimum of ``|f|``, compute w₀ via :func:`_loop_winding_quad`,
     and propagate across the region's soft boundaries via charges.
 
     No boundary grouping: coincident boundaries (an MR's θ₂_a == θ₂_b, or
@@ -485,11 +482,10 @@ def detect_crossings_and_winding(
 ) -> tuple[list[PointSubset], float]:
     """Crossing detection + average major-axis winding.
 
-    Builds μ₂_mid once (in :func:`detect_crossings_simple` via
-    :func:`ensure_mu2mid`); the winding reuses that built ``Mu2MidZM`` — the
-    shared instance is read from the crossing detector's bootstrap.  When the
-    caller passes a plain ``ZeroManager`` both stages rebuild a fresh
-    ``Mu2MidZM`` (the bisection path avoids this by constructing one itself).
+    Calls :func:`ensure_mu2mid` once, then passes the same analyzed
+    ``Mu2MidZM`` to both point materialization and winding. A plain
+    ``ZeroManager`` requires one fresh build; an already analyzed
+    ``Mu2MidZM`` is reused directly.
 
     Returns ``(subsets, W_avg)``.
     """

@@ -13,7 +13,7 @@ brute-force-non-hermitian/
 │   │                          #   CharPoly (the single polynomial entry point),
 │   │                          #   PointSubset (0D), LineSubset (1D, eager beta2_arr),
 │   │                          #   GBZResult, ConnectedSubset = Union[Point, Line],
-│   │                          #   TWO_PI (the single project-wide 2π constant)
+│   │                          #   TWO_PI (shared 2π constant)
 │   │                          # + shared utils: sort_by_root_abs, chordal_cost_matrix,
 │   │                          #   hungarian_match_indices, find_cyclic_true_intervals,
 │   │                          #   get_minor_degrees, generate_probe_steps, to_sphere_r3,
@@ -25,7 +25,7 @@ brute-force-non-hermitian/
 │   │                          #   (pure-numpy fallback), make_laurent factory
 │   │                          #   (arg > POLY_BACKEND env > numpy default;
 │   │                          #    poly_tools only when explicitly requested)
-│   ├── (constants)            # NO central config: numerical constants live in
+│   ├── (constants)            # Policy, not a directory: constants live in
 │   │                          #   their home modules (single-consumer locality);
 │   │                          #   the 7 cross-package ones sit in core.py with
 │   │                          #   live_defaults.  Full map: doc/constants.md.
@@ -52,7 +52,8 @@ brute-force-non-hermitian/
 │   │   └── sgbz_solver.py     # solve_SGBZ_for_E, collect_GBZ_subsets (returns GBZResult)
 │   ├── amoeba/                # Amoeba / Ronkin function formulation
 │   │   ├── __init__.py        # Whitelist exports (re-exports core classes)
-│   │   ├── ronkin_winding.py  # fsolve crossing refinement, avg winding from zeros
+│   │   ├── ronkin_winding.py  # Brent refinement with retained mesh rows;
+│   │   │                      #   average winding from root counts
 │   │   ├── bisect.py          # μ₁/μ₂ bisection, fast μ₂ gap test, continuum handling
 │   │   ├── zm_extract.py      # AmoebaZeroManager, detect_continuum, find_crossings,
 │   │   │                      #   calculate_a2_average_winding
@@ -82,6 +83,8 @@ brute-force-non-hermitian/
 │                               #   test_interpolation, test_counterexamples
 │                               #   (slow: --run-slow), test_regressions, test_debug_tool
 ├── conftest.py                 # checkout-src import + shared build_HN2D_polynomial + slow marker
+├── application/                # HN benchmark script, Typst guide and compiled PDF;
+│                               #   fixed examples, random comparisons, coarse/fine sweeps
 ├── playground/                 # Unofficial runnable demo scripts (demo_unified.py shows the GBZResult API;
 │                               #   Haldane-model-gainloss.py: sweeps, plots, recompute_failed_SGBZ)
 ├── debug_tool/                 # Fixed-(E_ref, mu1) debugging (see debug_tool/README.md):
@@ -112,14 +115,14 @@ brute-force-non-hermitian/
 
 ## Development Principles
 
-- **反常输出是改进算法的机会，不是需要绕过的 bug。** 遇到 unexpected behavior（如 winding 非单调、plateau check 误触发）时，优先追查根因并修复底层算法，而不是加 workaround（如调阈值、加预检查、限制探针范围等）。3cdb22d 版本没有 plateau check 时反而结果正确，说明问题出在后来引入的逻辑。对比不同 commit 是定位问题的有效手段。
+- **Unexpected output is an opportunity to improve the algorithm.** Investigate the root cause of unexpected behavior, such as non-monotonic winding or a false plateau classification, and repair the underlying algorithm. Do not substitute threshold changes, extra pre-checks, or restricted probe ranges for that investigation. In the plateau regression, commit `3cdb22d` produced the correct result before plateau checking was introduced, locating the regression in the later logic. Comparing commits is a useful diagnostic method.
 
-- 注释应当讲述“为什么”，而不是“做什么”。
+- Comments should explain why the implementation is needed, rather than restating what it does.
 
-- Ask WHY before HOW. Check the FACT before reach the CONCLUSION. Never assert a bug before you get the solid evidence.
+- Ask why before deciding how. Check the facts before drawing conclusions. Do not assert a bug without solid evidence.
 
-- 遇到与预期不符的结果时，要立刻停止并汇报。
+- Stop immediately and report any result that differs from expectations.
 
-- 修改计划需要我批准后再执行。
+- Obtain my approval for the modification plan before implementing it.
 
 - You can answer either in Chinese or English. I can understand both.
