@@ -113,7 +113,7 @@ res_amoeba = amoeba.collect_GBZ_subsets(coeffs, degs, 1 + 1j)
 res_xstrip = sgbz.collect_GBZ_subsets(coeffs, degs, 1 + 1j)
 ```
 
-Their optional parameters differ. For example, `sgbz` accepts `mu1_guess`, whereas `amoeba` accepts `mu1_low`, `mu1_high`, `mu2_low`, and `mu2_high`. Both accept `perc`, an optional progress fraction printed as a percentage, and `debug_mode=True`, which propagates solver exceptions for diagnosis. All numerical options are explicitly named; there is no catch-all keyword dictionary. See #link("../doc/constants.md")[`doc/constants.md`] for the live default settings.
+Their optional parameters differ. For example, `sgbz` accepts `mu1_guess`, whereas `amoeba` accepts `mu1_low`, `mu1_high`, `mu2_low`, and `mu2_high`. Both accept `debug_mode=True`, which propagates solver exceptions for diagnosis. Progress reporting belongs to the scan helper; the library entry points do not accept `perc`. All numerical options are explicitly named; there is no catch-all keyword dictionary. See #link("../doc/constants.md")[`doc/constants.md`] for the live default settings.
 
 === Reading the result
 `GBZResult`, defined in `src/pygbz2d/core.py`, stores the reference energy, solver status, and connected subsets:
@@ -241,7 +241,7 @@ From the repository root, run
 ```sh
 python application/benchmark-2D-Hatano-Nelson.py --compare-only
 ```
-This executes the factorization reconstruction check, the eight point/line comparisons, and sixteen additional spectral-membership comparisons. To inspect one result from within the accompanying script or an interactive session with its functions loaded, use
+The default `--mode demo` executes eight point/line comparisons and sixteen additional spectral-membership comparisons. The separate `check_factorization()` helper can be called explicitly to check hopping reconstruction. To inspect one result from within the accompanying script or an interactive session with its functions loaded, use
 ```python
 hoppings = (1 + 1j, 1.5 + 1.2j, -1 + 1j, -1.2 - 0.5j)
 res = calculate_subsets(1 + 1j, *hoppings, "11-strip")
@@ -259,11 +259,11 @@ print_comparison(report)
   [Real], [$rmi$], [Outside: off the real axis], [Outside: off the real axis],
   [Complex], [$2+2rmi$], [Inside], [Outside],
 )
-All sixteen additional comparisons passed in the current checkout: thirteen returned verified empty results and three returned nonempty point subsets. The last case checks geometry-dependent membership explicitly. For example, replacing `1 + 1j` by `2 + 2j` in the code above gives a verified empty $[11]$ result, with `index=(0, 0)`, `n_samples=0`, and `analytic_is_gbz=False`.
+In the recorded benchmark run, all sixteen additional comparisons passed: thirteen returned verified empty results and three returned nonempty point subsets. The last case checks geometry-dependent membership explicitly. For example, replacing `1 + 1j` by `2 + 2j` in the code above gives a verified empty $[11]$ result, with `index=(0, 0)`, `n_samples=0`, and `analytic_is_gbz=False`.
 
-The optional `--random-benchmark --compare-only` mode uses random hoppings and samples an energy from the Cartesian GBZ. That guarantees Cartesian spectral membership, but does not guarantee $[11]$-strip membership. Its results are therefore judged by the same analytic membership test, rather than by requiring every solver result to be nonempty.
+The optional `--mode benchmark --compare-only` mode uses random hoppings and samples an energy from the Cartesian GBZ. That guarantees Cartesian spectral membership, but does not guarantee $[11]$-strip membership. Its results are therefore judged by the same analytic membership test, rather than by requiring every solver result to be nonempty.
 
-The following results were obtained on 2026-09-21 with the current checkout, the NumPy polynomial backend (NumPy 1.26.4, SciPy 1.11.4), and the default solver settings. $N$ counts all stored samples, including any shared endpoints. Adaptive sampling and future solver changes can alter $N$ and the last digits of the errors.
+The following results were obtained on 2026-09-21 with that checkout, the NumPy polynomial backend (NumPy 1.26.4, SciPy 1.11.4), and the default solver settings. $N$ counts all stored samples, including any shared endpoints. Adaptive sampling and future solver changes can alter $N$ and the last digits of the errors.
 
 #figure(
   table(
@@ -294,7 +294,7 @@ so a common scan region can be selected from an amoeba-only coarse scan. We use 
   inset: 6pt,
   table.header([*Stage*], [*Energy grid*], [*Methods*], [*Output*]),
   [Coarse], [$20 times 20$], [amoeba], [Display the spectrum and retain results only in memory.],
-  [Fine], [$101 times 101$], [All four GBZs], [Save complete results in `application/data`.],
+  [Fine], [$100 times 100$], [All four GBZs], [Save complete results in `application/data`.],
 )
 
 The Python section beginning with `Full GBZ sweep` lists its own imports, model parameters, and basis choices. Together with `get_HN_charpoly`, it can be copied into a separate script using an installed `pyGBZ2d`. The scan itself does not depend on the earlier plotting or closed-form comparison helpers. `sweep_GBZ` constructs the characteristic polynomial once for the selected basis; `_sweep_worker` directly calls `amoeba.collect_GBZ_subsets` or `sgbz.collect_GBZ_subsets` for each energy.
@@ -316,7 +316,7 @@ python application/benchmark-2D-Hatano-Nelson.py --mode coarse-sweep --n-process
 The command above requests 20 processes; `N_PROCESS` sets the script's default process count. If no spectral points are detected, the scan cannot determine a fine window. If occupied points touch the coarse-grid boundary, the window may be truncated. Either condition is reported as an error rather than silently producing a fine scan. Even when neither occurs, a finite coarse grid is an estimate of the support; it cannot establish that arbitrarily narrow spectral features were resolved. In particular, the 20-point grid does not include zero, so it is not suited to the real-line spectrum of `demo_line_subsets` without changing the grid.
 
 === Fine scan: compute and save all four GBZs
-`fine_sweep` places 101 equally spaced points along each expanded interval. All four methods evaluate the same $101^2=10,201$ energies, for 40,804 fine-grid solves in total. No grid point is skipped based on an analytic classification or on another method's result. The function computes, saves, and optionally plots the numerical results; it does not require a closed-form solution.
+`fine_sweep` defaults to 100 equally spaced points along each expanded interval. All four methods evaluate the same $100^2=10,000$ energies, for 40,000 fine-grid solves in total. Direct callers can change `grid_size`. No grid point is skipped based on an analytic classification or on another method's result. The function computes, saves, and optionally plots the numerical results; it does not require a closed-form solution.
 
 The complete two-stage workflow is
 ```sh
@@ -333,9 +333,9 @@ if __name__ == "__main__":
     fine = fine_sweep(coarse, n_process=20)
 ```
 
-`sweep_GBZ` distributes independent energies across the requested worker processes, reports progress in the parent process, and restores the original energy order when workers finish out of order. Each spawned worker uses one BLAS thread. The hopping argument order is consistently `(Jx1, Jx2, Jy1, Jy2)`. A solver exception stops the scan and reports the GBZ choice, energy index, and reference energy. Returned failed `GBZResult` objects are retained and plotted as red crosses rather than exterior points; a coarse scan containing failures cannot be used to infer a fine window.
+`sweep_GBZ` distributes independent energies across the requested worker processes, reports progress in the parent process, and restores the original energy order when workers finish out of order. Each spawned worker uses one BLAS thread. The hopping argument order is consistently `(Jx1, Jx2, Jy1, Jy2)`. An exception propagated out of the library stops the scan and reports the GBZ choice, energy index, and reference energy. Returned failed `GBZResult` objects are retained and plotted as red crosses rather than exterior points; a coarse scan containing failures cannot be used to infer a fine window.
 
-The output directory is resolved relative to the Python script and is created with `mkdir(parents=True, exist_ok=True)` when needed. Each completed method is saved as
+The default output directory is resolved relative to the Python script and is created with `mkdir(parents=True, exist_ok=True)` when needed. Each completed method is saved as
 ```text
 application/data/HN2D-<UTC run ID>-amoeba.pkl
 application/data/HN2D-<UTC run ID>-x-strip.pkl
@@ -378,11 +378,15 @@ data = load_sweep("application/data/HN2D-<UTC run ID>-11-strip.pkl")
 plot_sweep_spectra(data)
 
 results = data["results"]["11-strip"]
-energy_grid = data["real_axis"][None, :] + 1j * data["imag_axis"][:, None]
+energy_grid = (
+    data["real_axis"][None, :] + 1j * data["imag_axis"][:, None]
+)
 energies = energy_grid.ravel(order=data["flatten_order"])
 mask = np.array([r.is_gbz for r in results])
 spectral_energies = energies[mask]
-membership_grid = mask.reshape(energy_grid.shape, order=data["flatten_order"])
+membership_grid = mask.reshape(
+    energy_grid.shape, order=data["flatten_order"],
+)
 
 for result in results:
     for subset in result.subsets:

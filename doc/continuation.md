@@ -49,12 +49,17 @@ Each step:
 1. Compute tangent $\mathbf{V}$, propose $\Delta\theta_1 = h / \|\mathbf{V}\|_2$.
 2. Predict roots at $\theta_1 + \Delta\theta_1$ via $\beta_{2,j} \leftarrow \beta_{2,j} \cdot \exp(V_j \cdot \Delta\theta_1)$.
 3. Solve actual roots at the new $\theta_1$ via `np.roots`.
-4. Hungarian-match predicted → actual, compute max chordal distance as error.
+4. Hungarian-match predicted → actual. Divide the maximum chordal distance
+   by `atol + rtol * median(abs(finite_actual_roots))` to obtain `error_norm`;
+   if no finite roots exist, the denominator is `atol`.
 5. If `error_norm < 1`: accept step, update $h \leftarrow h \cdot \min(10,\ 0.9 \cdot \text{error}^{-0.5})$.
 6. If `error_norm ≥ 1`: reject step, $h \leftarrow h \cdot \max(0.2,\ 0.9 \cdot \text{error}^{-0.5})$, retry.
 
 The error exponent $-0.5 = -1/(p+1)$ corresponds to a first-order method ($p=1$ for
-linear tangent extrapolation).
+linear tangent extrapolation). An accepted step after a rejection cannot
+grow immediately; `StepControl.max_step` caps the next step. Step retries
+stop at `min_step` or `max_iter`. This follows RK45-style acceptance logic
+but does not integrate an ODE with an RK45 tableau.
 
 | Constant | Value | Meaning |
 |----------|-------|---------|
@@ -80,7 +85,7 @@ Two complementary triggers detect multiple roots during integration:
 | Trigger | Mechanism | Catches |
 |---------|-----------|---------|
 | **Point trigger** (`multiple_root_point_trigger`) | $\Delta\theta_1 = h/\|\mathbf{V}\|_2$ collapses below `min_dtheta` | $\|\mathbf{V}\|_2$ diverges at the root — the solver is **at** the MR |
-| **Interval trigger** (`MultipleRootIntervalTrigger`) | Sign of $d(\min|\beta_i-\beta_j|^2)/d\theta_1$ flips from approaching to separating | "Accidental" MR where tangent stays well-conditioned — the MR lies **between** steps |
+| **Interval trigger** (`MultipleRootIntervalTrigger`) | Sign of $d|\beta_i-\beta_j|^2/d\theta_1$ for any armed pair flips from approaching to separating | "Accidental" MR where tangent stays well-conditioned — the MR lies **between** steps |
 
 The point trigger is essential for **generic double roots** — points where
 $\partial f/\partial\beta_2 = 0$ but $\partial f/\partial\beta_1 \neq 0$.  At such
@@ -102,9 +107,12 @@ its own distance stays below `MIN_DIST_THRESHOLD`.  One stop emits a
 `list[MRTriggerRecord]` — one record per flipped pair, all sharing the
 trigger bracket $(\theta_{lo}, \theta_{hi})$.
 
-**Non-generic double roots** (where both $\partial f/\partial\beta_1 = 0$ and
-$\partial f/\partial\beta_2 = 0$) have a finite tangent via l'Hôpital's rule and
-are handled by Hungarian matching without special detection.
+**Non-generic double roots** can have finite branchwise limiting tangents,
+but `compute_tangent` does not evaluate these limits. When its denominator
+is exactly zero, it stores `inf` even for a 0/0 ratio. Such points enter
+the MR machinery; interval triggers can detect them before the singular
+row is reached. A derivative sign flip is only an MR candidate and still
+requires cluster verification.
 
 Both triggers surface their result through `SegmentResult.stop_reason`:
 
@@ -118,13 +126,16 @@ Both triggers surface their result through `SegmentResult.stop_reason`:
 
 Two complementary approaches for locating multiple roots:
 
-**Brent-based (1D, fixed μ₁):** `solve_multiple_roots_in_interval` locates the exact
+**Brent-based (1D, fixed μ₁):** `solve_multiple_roots_in_interval` refines the candidate
 $\theta_1$ of a multiple root via Brent's method on a pairwise distance
 derivative.  With `min_pair` given, $g(\theta)$ is **that pair's own**
 derivative — continuous across closest-pair identity changes, which an
 argmin-based $g$ is not exactly at the flip; without it, the closest pair's
-derivative is used.  The root pair is tracked via Hungarian matching to
-maintain identity across the bracketing interval.
+derivative is used.  The root pair is matched against a tangent prediction from the right
+endpoint. If Brent fails, a four-real-variable point solve starts from the
+midpoint of the last retained sign bracket; a candidate angle outside the
+original interval is rejected. The caller verifies clusters on the fixed
+mu1 circle after refinement.
 
 **Newton-based (4D, free β₁):** `solve_multiple_roots_iterative` solves the
 $4 \times 4$ real system
@@ -144,7 +155,8 @@ It requires a good initial guess `(beta1_approx, beta2_approx)` — typically ob
 from the Brent-based solver or the ZeroManager's MR detection — and returns the
 refined `(beta1_mr, beta2_mr)`.
 
-**Cluster detection:** `detect_cluster` finds all touching root groups via connected
+**Cluster detection:** `detect_cluster` excludes roots classified as singular
+by the radius thresholds, then finds close finite-root groups via connected
 components of the chordal-distance proximity graph (using
 `scipy.sparse.csgraph.connected_components`).
 
@@ -177,12 +189,19 @@ components of the chordal-distance proximity graph (using
    iteration's segment is vstacked onto the pending one, preserving `left_mr`, and the
    merged segment is then closed at the next real MR or at $2\pi$.  This replaces the
    former `right_mr == -2` post-loop patch.
-4. **Fallback**: if `completed` was never reached (e.g. all segments ended at MRs),
+4. **Same-MR restart**: if refinement returns the preceding MR with the same
+   cluster identities and no forward progress, increase the restart jump by
+   `MR_REDETECT_RETRY_FACTOR`, up to `MR_REDETECT_MAX_RETRIES` retries.
+   Distinct MR clusters are not treated as repeats.
+5. **Fallback**: if `completed` was never reached (e.g. all segments ended at MRs),
    manually match the last segment's right boundary to the left boundary.
 
 Results are stored in:
 - `multiple_roots: list[MultipleRootInfo]` — each with `.theta1`, `.cluster_indices`
-  (list of tuples, one per cluster), and `.roots` (modulus-sorted).
+  (list of tuples, one per cluster), `.roots`, and `.cluster_stds` (the
+  spreads of branch-unwrapped log-roots before snapping). The boundary MR
+  at zero is modulus-sorted; interior MR records use the adjacent segments'
+  track frame.
 - `segments: list[SegmentData]` — each with `.theta1_arr`, `.tracked_roots`,
   `.abs_argsort`, `.left_mr`, `.right_mr` (indices into `multiple_roots`, -1 if none).
 
@@ -194,10 +213,11 @@ at every accepted step, maintaining continuous identity across $\theta_1$.
 Each `SegmentData` stores:
 - `tracked_roots`: track-ordered (column $j$ = physical root $j$), shape $(N, K)$.
 - `abs_argsort`: per-row `np.argsort(|β₂|)`, shape $(N, K)$ — for compatibility
-  with SGBZ's `solve_roots_on_mesh` output.
+  with the per-column extraction used by both GBZ formulations.
 
 After the full $[0, 2\pi)$ loop, `ZeroManager.boundary_perm` stores the permutation
-from the right boundary ($\theta_1 = 2\pi$) to the left boundary ($\theta_1 = 0$).
+satisfying `roots_right[boundary_perm] == roots_left`: left column `j`
+corresponds to right column `boundary_perm[j]`.
 
 ### 2.8 Unified Hermite interpolation
 
@@ -215,15 +235,16 @@ Both follow the numpy `poly` convention (highest power first), so evaluation is
 `np.polyval`, differentiation `np.polyder`, and curve intersection
 `np.roots(np.polysub(p1, p2))`; `len(poly)` distinguishes cubic from linear.
 Consumers: `arclength.predict_roots_hermite` (root-track prediction),
-`Mu2MidZM` sort-change refinement and μ₂_mid path evaluation, and SGBZ crossing
-bracketing.
+`Mu2Mid` path construction, and the SGBZ multi-crossing mesh screen.
+Actual SGBZ pair-crossing refinement uses a linear matching anchor and Brent
+solves of the true log-modulus difference.
 
 ## 3. API
 
 ### 3.1 Top-level entry point
 
 ```python
-from continuation import ZeroManager
+from pygbz2d.continuation import ZeroManager, StepControl
 
 zm = ZeroManager(poly, E_ref, mu1)
 zm.run(
@@ -248,7 +269,8 @@ zm.boundary_perm       # np.ndarray (K,) — right→left permutation
 ```python
 mr.theta1            # float — θ₁ of the multiple root
 mr.cluster_indices   # list[tuple[int, ...]] — root indices grouped by cluster
-mr.roots             # np.ndarray (K,) — modulus-sorted β₂ roots at this θ₁
+mr.roots             # np.ndarray (K,) — roots in this MR record's track frame
+mr.cluster_stds      # tuple[float, ...] — pre-snap log-root spreads
 ```
 
 `SegmentData` (dataclass):
@@ -267,12 +289,22 @@ Hungarian matching against `interpolate_roots` (the prediction anchor), and spli
 row into `SegmentData.theta1_arr`, `tracked_roots`, `abs_argsort`, and `tangents` *in place*
 (at mesh index `i + 1`).  Any external references to those arrays are invalidated by the
 splice — callers must re-fetch `segments[seg_idx]` after `insert_solution` returns.  This is
-the hook `Mu2MidZM` overrides to densify the mesh at μ₂-refinement sites.
+the insertion hook used by SGBZ event/refinement passes. `AmoebaZeroManager`
+overrides it to refresh cached log-moduli after each insertion.
+`Mu2MidZM` inherits it; inserting rows after analysis does not rebuild its
+ItemViews, EventGroups, or mu2_mid path automatically.
+
+`ZeroManager.solve_at(..., interp="hermite")` performs the same solve and
+matching without insertion, returning `(roots, tangents)`. Existing right
+endpoints must be read from the mesh: `solve_at` accepts only the left-closed,
+right-open interval, while `insert_solution` can return either existing
+endpoint without a new solve. `ZeroManager.run()` raises if called twice
+on the same instance.
 
 ### 3.2 Low-level functions
 
 ```python
-from continuation import (
+from pygbz2d.continuation import (
     compute_tangent, predict_roots, estimate_error, arclength_step,
     cubic_hermite_poly, hermite_interp_poly,
     multiple_root_point_trigger, MultipleRootIntervalTrigger,
@@ -289,10 +321,10 @@ from continuation import (
 | `cubic_hermite_poly(h, v0, dv0, v1, dv1)` | `np.ndarray` (len 4) | Pure cubic Hermite poly (numpy poly order) |
 | `hermite_interp_poly(h, v0, dv0, v1, dv1)` | `np.ndarray` (len 4 or 2) | Cubic Hermite, or linear fallback when an endpoint derivative is not finite |
 | `estimate_error(predicted, actual)` | `error_norm` | Chordal-distance error norm |
-| `arclength_step(poly, E_ref, mu1, theta1, roots, h, ctrl=StepControl())` | `StepResult` | One adaptive step |
-| `multiple_root_point_trigger(dtheta, *, min_dtheta=1e-10)` | `bool` | Step-size collapse check |
-| `MultipleRootIntervalTrigger(min_dist_threshold)` | callable | Per-pair sign-flip detector; returns `list[MRTriggerRecord]` |
-| `detect_cluster(roots, *, cluster_tol=1e-6)` | `list[tuple[int,...]]` | Connected components of close roots |
+| `arclength_step(poly, E_ref, mu1, theta1, roots, h, ctrl=None)` | `StepResult` | One adaptive step |
+| `multiple_root_point_trigger(dtheta, *, min_dtheta=None)` | `bool` | Step-size collapse check |
+| `MultipleRootIntervalTrigger(min_dist_threshold=None)` | callable | Per-pair sign-flip detector; returns `list[MRTriggerRecord]` |
+| `detect_cluster(roots, *, cluster_tol=None)` | `list[tuple[int,...]]` | Finite-root clusters; live default `CLUSTER_TOL = 1e-4` |
 | `solve_multiple_roots_in_interval(poly, E_ref, mu1, theta1_left, theta1_right, roots_ref, min_pair=None)` | `theta1_mr` | Brent refinement (1D, fixed μ₁) |
 | `solve_multiple_roots_iterative(poly, E_ref, beta1_approx, beta2_approx)` | `(beta1_mr, beta2_mr)` | Newton refinement (4D, free β₁) |
 | `integrate_segment(poly, E_ref, mu1, theta_start, roots_start, theta_end, *, h0, ctrl, min_dtheta, min_dist_threshold)` | `SegmentResult` | Segment integration |
@@ -313,7 +345,7 @@ The test suite includes analytically constructed polynomials for stress-testing:
 ## 5. Key Design Decisions
 
 1. **np.roots, not ODE integration**.  The tangent is only used for step-size
-   control and prediction; roots are always solved exactly at each step via
+   control and prediction; roots are solved numerically afresh at each step via
    `np.roots`.  This avoids error accumulation from ODE integration.
 
 2. **No artificial tangent cap**.  When $\partial f/\partial\beta_2 \approx 0$,
@@ -329,7 +361,8 @@ The test suite includes analytically constructed polynomials for stress-testing:
 4. **Two complementary MR triggers**.  The point trigger catches generic double
    roots where the tangent diverges; the interval trigger catches accidental
    double roots where the tangent stays well-conditioned.  Together they cover
-   the full space of multiple-root behaviours.
+   complementary regimes; finite sampling and tolerance-based cluster
+   verification still limit detection.
 
 5. **Compatible output format**.  `SegmentData.tracked_roots` and `.abs_argsort`
    mirror the shape amoeba's per-column extraction and SGBZ's `Mu2MidZM` /
@@ -341,7 +374,7 @@ The test suite includes analytically constructed polynomials for stress-testing:
 ```
 continuation/
 ├── __init__.py          # Re-exports public API
-├── arclength.py         # Low-level step functions (~318 lines):
+├── arclength.py         # Low-level step functions :
 │                        #   StepControl (RK45-style tolerances bundled so
 │                        #     arclength_step / integrate_segment / ZeroManager.run
 │                        #     share one knob set), StepResult, compute_tangent,
@@ -352,19 +385,19 @@ continuation/
 │                        #   cubic_hermite_poly (pure cubic, no checks),
 │                        #   hermite_interp_poly (automatic linear fallback when
 │                        #     an endpoint derivative is not finite)
-├── multiple_roots.py    # MR detection & refinement (~448 lines):
+├── multiple_roots.py    # MR detection & refinement :
 │                        #   MultipleRootInfo (with cluster_stds),
 │                        #   snap_clusters_to_mean, multiple_root_point_trigger,
 │                        #   MultipleRootIntervalTrigger, detect_cluster,
 │                        #   _pair_distance_deriv, _closest_pair_deriv,
 │                        #   solve_multiple_roots_in_interval (1D Brent, fixed μ₁),
 │                        #   solve_multiple_roots_iterative (4D Newton, free β₁)
-└── zero_manager.py      # Orchestration (~1100 lines):
+└── zero_manager.py      # Orchestration :
                          #   StopReason, _MREndpoint, SegmentResult, SegmentData,
                          #   _PendingSeg (held-back false-positive-MR segment),
                          #   integrate_segment, ZeroManager (with .locate,
                          #   .interpolate_roots, .insert_solution — mutating,
-                         #   overrides hook for Mu2MidZM — ._predict_roots_at_2pi,
+                         #   cache-refresh hook for AmoebaZeroManager — ._predict_roots_at_2pi,
                          #   ._boundary_perm_from_right, ._refine_mr)
 
 tests/

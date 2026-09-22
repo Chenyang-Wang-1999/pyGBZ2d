@@ -4,8 +4,11 @@ Run with ``--compare-only`` for the numerical checks without plotting.
 Without this option, the same checks also display the point and line subsets.
 The comparison covers every stored sample, but does not establish that the
 solver has found every connected component of an equal-energy set.
-Use ``--coarse-sweep`` to inspect a 20 x 20 amoeba scan, or ``--full-sweep``
+Use ``--mode coarse-sweep`` for a 20 x 20 amoeba scan, or ``--mode full-sweep``
 to follow it with a 100 x 100 scan of all four GBZs saved in application/data.
+Use ``--no-show`` for scans without figures and ``--mode benchmark`` for
+random hopping comparisons. The default ``--mode demo`` runs the fixed
+point, line, and spectral-membership examples.
 
 author:        Wang Chenyang <cy-wang21@mails.tsinghua.edu.cn>
 date:          2026-09-15
@@ -533,7 +536,9 @@ def sweep_GBZ(
 
     Argument order is (Jx1, Jx2, Jy1, Jy2), as in get_HN_charpoly. The
     polynomial is built once in the selected basis and passed to workers.
-    The parent reports progress; worker exceptions immediately abort the pool.
+    The parent reports progress; propagated worker exceptions abort the pool.
+    Solver failures returned as GBZResult(success=False) remain in the list
+    for inspection and are not classified as exterior energies.
     No closed-form solution is needed for scanning. With multiple
     processes, each worker uses one BLAS thread to avoid oversubscribing
     the machine. Call from an ``if __name__ == '__main__'`` guard on Windows.
@@ -715,7 +720,8 @@ def fine_sweep(coarse: dict, *, n_process: int = N_PROCESS, grid_size: int = 100
     Returned scans and per-method files use the same six-field structure;
     files simply contain one entry in the results mapping. The energy grid
     is represented by its axes and flatten order. Run-specific filenames
-    prevent overwriting previous scans. A solver exception stops the scan;
+    prevent overwriting previous scans. A propagated exception stops the scan;
+    returned failed GBZResults are retained in completed method files;
     previously completed files remain usable and no incomplete file is
     presented as a completed scan.
     """
