@@ -2,9 +2,25 @@
 Pseudo-arclength continuation for beta2 root tracking along theta1.
 
 Uses analytic derivatives from CharPoly.eval_partials to compute the tangent
-vector V = [1, d(ln β₂₁)/dθ₁, ..., d(ln β₂ₙ)/dθ₁]ᵀ, then adapts the step
-size Δθ₁ = h / ‖V‖₂ so that the arclength step in (θ₁, ln β₂)-space is
+vector V = [1, d(ln β₂₁)/dθ₁, ..., d(ln β₂ₙ)/dθ₁]ᵀ, then turns the step size
+h into Δθ₁ = h / ‖V‖₂ so that the arclength step in (θ₁, ln β₂)-space is
 approximately constant.
+
+TWO INDEPENDENT ADAPTIVITY SOURCES live in this module; keep them apart when
+interpreting a result:
+
+  * the arclength metre above fixes the *relative* β₂ step,
+    |Δβ₂| ≈ |β₂|·h.  It therefore self-refines only where |β₂| is itself the
+    small quantity (β₂ → 0 or ∞), or where dβ₂/dθ₁ diverges at an exact branch
+    point (∂f/∂β₂ = 0).  It is GAP-BLIND at a near-degeneracy at β₂ = c ≠ 0:
+    there |Δβ₂| ≈ |c|·h no longer depends on how close the two branches are.
+  * the RK45-style controller below sets h itself from estimate_error.  That is
+    what resolves such a near-degeneracy: the curvature inflates the prediction
+    error, the step is rejected, and the accepted step stays below the gap.
+
+A fixed-h arclength march (no controller) therefore suffices for the first
+regime and not for the second.  The poly_G tests in tests/test_continuation.py
+pin both halves of that division of labour.
 
 Adaptive step-size control follows the pattern of scipy's RK45 integrator:
 error between tangent-predicted roots and np.roots-actual roots drives the
@@ -54,13 +70,17 @@ from .interpolation import hermite_interp_poly
 
 @dataclass(frozen=True)
 class StepControl:
-    """Tolerances and factors for the adaptive pseudo-arclength step controller.
+    """Tolerances and factors for the error-controlled step-size adapter.
 
     Bundles the RK45-style controller knobs (SAFETY / MIN_FACTOR /
     MAX_FACTOR / ERROR_EXPONENT) and the arclength step bounds so that
     ``arclength_step``, ``integrate_segment`` and ``ZeroManager.run`` don't
     each re-declare nine parameters.  Add a knob here once; all three layers
     carry the same ``StepControl`` instance.
+
+    These knobs set ``h``.  The arclength metre that converts ``h`` into
+    ``Δθ₁ = h/‖V‖₂`` has no knobs of its own — see the module docstring for
+    which of the two resolves a close approach.
 
     Fields left as ``None`` (the default) resolve from this module's constants
     at CONSTRUCTION time, so a global ``SAFETY = ...`` override
@@ -99,7 +119,7 @@ class StepControl:
 # ---------------------------------------------------------------------------
 
 class StepResult(NamedTuple):
-    """Result of one adaptive pseudo-arclength step."""
+    """Result of one error-controlled pseudo-arclength step."""
     theta1_new: float
     roots_new: np.ndarray       # (n_roots,) solved roots
     h_new: float
@@ -327,7 +347,7 @@ def arclength_step(
     h: float,
     ctrl: Optional[StepControl] = None,
 ) -> StepResult:
-    """Take one adaptive pseudo-arclength step along θ₁.
+    """Take one error-controlled pseudo-arclength step along θ₁.
 
     1. Compute tangent, propose dθ₁ = h / ‖V‖₂.
     2. Predict roots via tangent extrapolation.
@@ -336,6 +356,10 @@ def arclength_step(
 
     *ctrl* carries the RK45-style tolerances and step bounds; see
     :class:`StepControl`.
+
+    The rejection loop is what makes the step small at a close approach
+    anywhere in the β₂ plane; the arclength metre only sets the direction
+    (see the module docstring).
     """
     if ctrl is None:
         ctrl = StepControl()
@@ -376,6 +400,11 @@ def arclength_step(
             # across theta1), so raw chordal matching old→new would swap two
             # near-degenerate tracks at a closest approach.  
             # So predicted→new is the right anchor for the identity-preserving permutation.
+            # Reaching this line means error_norm < 1, i.e. the prediction is
+            # within atol + rtol*median|β₂| of the solve — that guarantee is
+            # what makes the anchor trustworthy at a close approach, and it
+            # comes from the error controller, not from the arclength metre
+            # (see the module docstring).
             matches = hungarian_match_indices(predicted, roots_new)
             roots_new = roots_new[matches]
             return StepResult(theta1_new, roots_new, h_new, True, V, norm_V)

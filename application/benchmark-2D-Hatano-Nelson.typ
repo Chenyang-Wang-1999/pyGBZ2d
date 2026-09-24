@@ -26,9 +26,7 @@ The accompanying #link("./benchmark-2D-Hatano-Nelson.py")[Python script] demonst
 - Construct a characteristic polynomial from coefficients and exponents.
 - Compute amoebic and strip-GBZ subsets at a reference energy $E_("ref")$.
 - Read and visualize `PointSubset` and `LineSubset` data.
-- Compare every returned sample with the closed-form GBZ and check its energy residual.
-- Check whether an empty or nonempty result agrees with the analytic spectrum.
-- Locate the spectrum with a coarse amoeba scan, then sample all four GBZs on a finer energy grid.
+- Compute full 2D GBZ via energy-grid sweep.
 
 Run the script from the repository root with `python application/benchmark-2D-Hatano-Nelson.py`. It uses the local `src` directory by default and requires NumPy, SciPy, and Matplotlib for plotting. Add `--compare-only` to run the numerical checks without importing Matplotlib or opening figures. Set `RUN_IN_SRC = False` to use an installed copy of `pyGBZ2d` instead.
 
@@ -404,5 +402,9 @@ python application/benchmark-2D-Hatano-Nelson.py --mode plot --data-fname <saved
 ```
 `GBZResult` and its subset classes remain defined in `pygbz2d.core`, so that package must be importable when loading the files. The energy grid samples the spectral region, while the stored subset objects provide the corresponding GBZ coordinates. A finite scan is a sampled approximation of the full GBZ, with resolution set by both the energy grid and the solver's adaptive sampling of any line subsets.
 
+
+#(nt.hint)(title: "Known issue:")[
+  For $[11]$-strip GBZ, solver fails at $E=0$, since the moduli of two branches of  $beta_2$-zeros keep identical for all $mu_1$.
+]
 
 #bibliography("pyGBZ2d.bib", style: "american-physics-society")

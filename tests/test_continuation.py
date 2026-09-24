@@ -1,10 +1,13 @@
-"""Tests for continuation — pseudo-arclength root tracking.
+"""Tests for continuation — adaptive-step root tracking.
 
 Tests low-level functions (compute_tangent, predict_roots, estimate_error,
 arclength_step), multiple-root detection (detect_cluster,
 solve_multiple_roots_in_interval), and segment integration (integrate_segment).
 
-Uses synthetic polynomials A–F and the 2D Hatano-Nelson model.
+Uses synthetic polynomials A–G and the 2D Hatano-Nelson model.  Polynomial G is
+the near-degeneracy control: it pins the division of labour between the
+pseudo-arclength metre (gap-blind away from beta2 = 0/inf) and the
+error-controlled step size (gap-aware everywhere).
 """
 
 import numpy as np
@@ -97,6 +100,30 @@ def _make_poly_F():
     return CharPoly(coeffs, degs)
 
 
+#: mu1 of polynomial G.
+POLY_G_MU1 = 0.2
+#: Perturbation of c0 in polynomial G; the two branches pass 2*sqrt(|δ|) apart.
+POLY_G_DELTA = -1e-4
+
+
+def _make_poly_G(delta=POLY_G_DELTA, mu1=POLY_G_MU1):
+    """(β₂−1)² − β₁ − 1/β₁ − c₀ — polynomial F's neighbour with a NEAR degeneracy.
+
+    Roots are 1 ± sqrt(g), g = 2 cosh(μ₁ + iθ₁) + c₀, c₀ = 2 cosh(μ₁) + δ.  At
+    c₀ = 2 cosh(μ₁) the double root at θ₁ = π would sit at β₂ = 1; the small
+    δ ≠ 0 opens it into a finite gap 2 sqrt(|δ|) that never closes.  Unlike
+    poly_F, §2.4's point trigger cannot fire here (∂f/∂β₂ ≠ 0 on the real θ₁
+    circle), so this is the case only the error-controlled step size resolves —
+    see doc/continuation.md §2.1.1.
+    """
+    c0 = 2.0 * np.cosh(mu1) + delta
+    coeffs = np.array([1, -2, 1 - c0, -1, -1], dtype=complex)
+    degs = np.array([
+        [0, 0, 2], [0, 0, 1], [0, 0, 0], [0, 1, 0], [0, -1, 0],
+    ], dtype=int)
+    return CharPoly(coeffs, degs)
+
+
 # ===========================================================================
 # HN model
 # ===========================================================================
@@ -137,6 +164,10 @@ def poly_E():
 @pytest.fixture
 def poly_F():
     return _make_poly_F()
+
+@pytest.fixture
+def poly_G():
+    return _make_poly_G()
 
 @pytest.fixture
 def hn_poly():
@@ -414,6 +445,53 @@ class TestArclengthStepSynthetic:
         result = arclength_step(poly_B, 0j, mu1, theta1, roots, h=h0)
         assert result.accepted
         assert result.h_new >= h0
+
+
+class TestNearDegeneracyAwayFromOrigin:
+    """Pin the division of labour of doc/continuation.md §2.1.1.
+
+    The pseudo-arclength metre fixes the RELATIVE β₂ step, |Δβ₂| ≈ |β₂|·h, so
+    at a close approach at β₂ = c ≠ 0 it is blind to the gap.  Polynomial G is
+    the discriminating case — polynomial F's double root at β₂ = 1 opened into
+    a gap 2*sqrt(|δ|) that never closes, so the tangent stays finite and the
+    point trigger cannot fire.
+    """
+
+    def test_arclength_metre_is_gap_blind(self):
+        """100x smaller perturbation → 10x smaller gap, same step in β₂."""
+        mu1 = POLY_G_MU1
+        jumps, gaps = [], []
+        for delta in (-1e-4, -1e-6):
+            poly = _make_poly_G(delta, mu1)
+            theta1 = pi - 1e-3      # inside the neck around the closest approach
+            beta1 = exp(mu1 + 1j * theta1)
+            roots = np.asarray(poly.solve_roots_1d((0, 1), (0j, beta1), (2,)))
+            V, norm_V = compute_tangent(poly, 0j, beta1, roots)
+            beta1_new = exp(mu1 + 1j * (theta1 + 0.1 / norm_V))
+            roots_new = np.asarray(
+                poly.solve_roots_1d((0, 1), (0j, beta1_new), (2,)))
+            perm = hungarian_match_indices(roots, roots_new)
+            jumps.append(float(np.max(np.abs(roots_new[perm] - roots))))
+            gaps.append(2.0 * np.sqrt(abs(delta)))
+        assert gaps[0] / gaps[1] == pytest.approx(10.0, rel=1e-6)
+        # The step in β₂ barely moves while the gap shrinks tenfold ...
+        assert jumps[1] == pytest.approx(jumps[0], rel=0.2)
+        # ... and it exceeds the gap, so proximity matching cannot resolve it.
+        assert jumps[1] > gaps[1]
+
+    def test_error_control_keeps_every_step_below_the_local_gap(self, poly_G):
+        """The error-controlled step size is what suppresses the swap: every
+        accepted step moves a track by less than its distance to the neighbour."""
+        roots0 = np.asarray(
+            poly_G.solve_roots_1d((0, 1), (0j, exp(POLY_G_MU1)), (2,)))
+        seg = integrate_segment(
+            poly_G, 0j, POLY_G_MU1, 0.0, roots0, TWO_PI, h0=0.1)
+        tracked = seg.tracked_roots
+        local_gap = np.abs(tracked[:, 0] - tracked[:, 1])
+        ratio = np.max(np.abs(np.diff(tracked, axis=0)), axis=1) / local_gap[:-1]
+        assert np.max(ratio) < 1.0
+        # the tightest ratio sits at the close approach itself
+        assert seg.theta1_arr[int(np.argmax(ratio))] == pytest.approx(pi, abs=0.01)
 
 
 # ===========================================================================

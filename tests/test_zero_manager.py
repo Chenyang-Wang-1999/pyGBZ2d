@@ -49,6 +49,22 @@ def _make_poly_F():
     return CharPoly(coeffs, degs)
 
 
+def _make_poly_G(delta=-1e-4, mu1=0.2):
+    """(β₂−1)² − β₁ − 1/β₁ − c₀ with c₀ = 2 cosh(μ₁) + δ.
+
+    poly_F's double root at β₂ = 1 opened into a NEAR degeneracy: the branches
+    pass 2*sqrt(|δ|) apart and never meet, so ∂f/∂β₂ ≠ 0 on the real θ₁ circle
+    and the point trigger cannot fire.  Only the error-controlled step size
+    keeps the tracks apart — see doc/continuation.md §2.1.1.
+    """
+    c0 = 2.0 * np.cosh(mu1) + delta
+    coeffs = np.array([1, -2, 1 - c0, -1, -1], dtype=complex)
+    degs = np.array([
+        [0, 0, 2], [0, 0, 1], [0, 0, 0], [0, 1, 0], [0, -1, 0],
+    ], dtype=int)
+    return CharPoly(coeffs, degs)
+
+
 from conftest import build_HN2D_polynomial as _build_hn2d_raw
 
 
@@ -77,6 +93,10 @@ def poly_D():
 @pytest.fixture
 def poly_F():
     return _make_poly_F()
+
+@pytest.fixture
+def poly_G():
+    return _make_poly_G()
 
 @pytest.fixture
 def hn_poly():
@@ -153,6 +173,27 @@ class TestMultipleRootDetection:
         zm.run(h0=0.1, cluster_tol=1e-4, min_dtheta=1e-6)
         assert zm.n_multiple_roots >= 1
         assert zm.multiple_roots[0].theta1 == pytest.approx(0.0, abs=1e-6)
+
+    def test_poly_G_near_degeneracy_away_from_origin(self, poly_G):
+        """poly_F's exact double root opened into a gap that never closes.
+
+        Nothing here is a multiple root, so no MR may be recorded — and the
+        integrator must still get through the closest approach, which happens
+        only because the error-controlled step size shrinks there (the
+        arclength metre is gap-blind at β₂ = 1, doc/continuation.md §2.1.1).
+        """
+        gap = 2.0 * np.sqrt(1e-4)
+        zm = ZeroManager(poly_G, 0j, 0.2)
+        zm.run(h0=0.1)
+        assert zm.n_multiple_roots == 0
+        assert zm.n_segments == 1
+        seg = zm.segments[0]
+        assert seg.theta1_arr[0] == 0.0
+        assert seg.theta1_arr[-1] == pytest.approx(TWO_PI, abs=1e-9)
+        # well inside the neck the mesh still separates the two branches by
+        # about the true gap — the tracks were never aliased onto each other
+        assert np.min(np.abs(seg.tracked_roots[:, 0] - seg.tracked_roots[:, 1])) \
+            > 0.5 * gap
 
     def test_poly_A_no_generic_mr(self, poly_A):
         """Poly A at μ₁=0 has a non-generic double root at 0.  The initial

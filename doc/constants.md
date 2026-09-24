@@ -77,9 +77,12 @@ Two rules keep this mechanism sound (enforced by AST lint in
 positive quarter/half multiples of the input scales. `probe_radius` is a
 scale, not a hard upper bound on the probes.
 
-## `pygbz2d.continuation.arclength` — RK45-style stepper
+## `pygbz2d.continuation.arclength` — error-controlled stepper
 
-All single-consumer knobs of the pseudo-arclength step controller.
+All single-consumer knobs of the RK45-style **error** controller that sets the step size
+$h$.  The pseudo-arclength parameterization (same module) turns $h$ into
+$\Delta\theta_1 = h/\|\mathbf{V}\|_2$ and has no knobs of its own beyond the
+`ZERO_THRESHOLD` / `INF_THRESHOLD` / `PREDICT_MAX_ABS_ARG` guards below.
 `StepControl` fields left as `None` resolve from these **at construction**,
 so assigning `arclength.SAFETY` reaches every controller built afterwards.
 
@@ -111,7 +114,7 @@ together.
 
 | Constant | Default | Meaning |
 |---|---|---|
-| `H0` | 0.1 | Initial θ₁ arclength step. |
+| `H0` | 0.1 | Initial step $h_0$ in the $(\theta_1, \ln\beta_2)$ arclength parameter.  The first θ₁ step is $h_0/\|\mathbf{V}\|_2$, **not** $h_0$. |
 | `MIN_DTHETA` | 1e-10 | Step collapse threshold for the MR point trigger (neighbour of `arclength.MIN_STEP`: that is the stepper's floor, this is the MR detector's sensitivity — two roles, deliberately distinct). |
 | `MR_JUMP` | 1e-6 | Base restart distance past a refined MR. |
 | `MR_DENSE_MAX_STEP` | 1e-4 | Dense sampling between MR events of one trigger bracket: maximum θ₁ spacing of the regular rows sampled between two consecutive events. |

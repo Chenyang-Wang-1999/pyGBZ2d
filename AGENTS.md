@@ -1,6 +1,6 @@
 # AGENTS.md — brute-force-non-hermitian
 
-Non-Hermitian skin effect computation for 2D tight-binding models. Packaged as **pyGBZ2d** (import name `pygbz2d`, src-layout, `pip install -e .`). Two complementary GBZ modules (SGBZ and amoeba) implementing brute-force polynomial root-solving approaches, plus a pseudo-arclength continuation module for adaptive root tracking along θ₁. All GBZ entry points (`collect_GBZ_subsets`) natively return the unified `GBZResult` type defined in `pygbz2d/core.py`.
+Non-Hermitian skin effect computation for 2D tight-binding models. Packaged as **pyGBZ2d** (import name `pygbz2d`, src-layout, `pip install -e .`). Two complementary GBZ modules (SGBZ and amoeba) implementing brute-force polynomial root-solving approaches, plus an adaptive-step continuation module for root tracking along θ₁ (pseudo-arclength parameterization; the step size itself is set by an RK45-style error controller — that controller, not the parameterization, is what resolves close approaches away from β₂ = 0/∞). All GBZ entry points (`collect_GBZ_subsets`) natively return the unified `GBZResult` type defined in `pygbz2d/core.py`.
 
 ## Project Structure
 
@@ -58,7 +58,8 @@ brute-force-non-hermitian/
 │   │   ├── zm_extract.py      # AmoebaZeroManager, detect_continuum, find_crossings,
 │   │   │                      #   calculate_a2_average_winding
 │   │   └── amoeba.py          # collect_GBZ_subsets, subset assembly, plateau check
-│   ├── continuation/          # Pseudo-arclength continuation for β₂-root tracking along θ₁
+│   ├── continuation/          # Adaptive-step β₂-root tracking along θ₁ (pseudo-arclength
+│   │                          #   parameterization + RK45-style error-controlled step size)
 │   │   ├── __init__.py        # Public API re-exports
 │   │   ├── interpolation.py   # hermite_interp_poly (cubic Hermite kernel shared by
 │   │   │                      #   predict_roots_hermite and Mu2Mid pieces)

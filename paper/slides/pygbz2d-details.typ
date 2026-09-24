@@ -34,7 +34,7 @@
 #set list(spacing: 1em)
 #set enum(spacing: 1em)
 #set par(spacing: 1.2em)
-#show math.equation.where(block: true): set block(above: 0.5em, below: 0.5em)
+#show math.equation.where(block: true): set block(above: 0.6em, below: 0.6em)
 
 #title-slide()
 
@@ -315,7 +315,14 @@
 - If the signs do not straddle zero, continue on the appropriate side.
   A zero-winding plateau with no zeros represents an exterior energy.
 
-= Pseudo-arclength continuation of zeros
+= Self-adaptive continuation of zeros
+
+== Limitation of uniform $theta_1$ sampling
+- Solving equation for $ln|beta_1|=mu_1$: $ beta_2^2=beta_1 + beta_1^(-1) + 2 cosh(mu_1) - 10^(-4) $
+#v(-1em)
+#align(center)[
+  #image("Figures/self-adaptive-260923.pdf", width: 80%)
+]
 
 == Root tracks at fixed energy and decay rate
 - Fix $(E,mu_1)$ and vary $theta_1$, with $beta_1=exp(mu_1+rmi theta_1)$.
@@ -328,7 +335,6 @@
   solve the polynomial again and match the roots to their predicted positions.
 
 == Tangent and arclength step
-#show math.equation.where(block: true): set block(above: 0.5em, below: 0.5em)
 Implicit differentiation along a regular root gives
 $ partial_(beta_1)f dot rmi beta_1 + partial_(beta_2)f dot frac(dif beta_2,dif theta_1)=0. $
 Hence the logarithmic tangent of track $j$ is
@@ -406,35 +412,26 @@ An accepted step cannot grow immediately after a rejection.
 
 = Benchmark: 2D complex Hatano-Nelson model
 
-== Hopping parameters and geometry
+== 2D Hatano-Nelson (HN) model
 $ h(beta_x,beta_y)=J_(x 1) beta_x^(-1)+J_(x 2) beta_x
                  +J_(y 1) beta_y^(-1)+J_(y 2) beta_y. $
-#grid(columns: (1fr,1.2fr), gutter: 28pt,
+
+  - Factorization: $J_(alpha 1) = rme^(gamma_(alpha) + rmi delta_(alpha)) J_(alpha) , quad J_(alpha 2) = rme^(- gamma_(alpha) + rmi delta_(alpha)) J_(alpha)^(*) , quad alpha = x , y$
+#grid(columns: (1fr,1fr), gutter: 28pt,
 [
-  For $alpha=x,y$, write the nonzero hoppings as
-  $ J_(alpha 1)=exp(gamma_alpha+rmi delta_alpha)J_alpha, $
-  $ J_(alpha 2)=exp(-gamma_alpha+rmi delta_alpha)J_alpha^*. $
-  - $gamma_alpha$: nonreciprocal decay rate.
-  - $delta_alpha$: common hopping phase.
-  - Compare amoeba with $x$-, $y$-, and $[11]$-strip GBZs.
+  - The Amoeba GBZ, $x$-strip GBZ and \ $y$-strip GBZ are identical.
+  $ beta_(x) & = exp (gamma_(x) + rmi theta_(x)) , \
+beta_(y) & = exp (gamma_(y) + rmi theta_(y)) , $
+
+  - The $[11]$-strip GBZ:
+    $ tilde(beta)_([11]) & = rme^(gamma_(x) + gamma_(y) + rmi theta_([11])) , \
+tilde(beta)_(y) & = rme^(gamma_(y) + rmi theta_(y)) sqrt(lr(abs(frac(J_(x)^(*) rme^(rmi Delta_(x y) + rmi theta_([11])) + J_(y), J_(x) rme^(rmi Delta_(x y) - rmi theta_([11])) + J_(y)^(*))))) , $
 ],
 [
-  #align(center + horizon)[#image("../../application/Figures/HN-example-20250524.pdf", width: 100%)]
+  #align(center + horizon)[#image("Figures/HN-model.pdf", width: 100%)]
 ])
 #v(0.5em)
-#reference-item("Wang, C., et al.", "arXiv", "2506.22743v3, Eqs. (S3.16), (S3.30)", "2025")
-
-== Closed-form GBZ constraints
-#show math.equation.where(block: true): set block(above: 0.5em, below: 0.5em)
-*Cartesian coordinates: amoeba, $x$ strip, and $y$ strip*
-$ |beta_x|=exp(gamma_x), quad |beta_y|=exp(gamma_y). $
-*Diagonal strip: $(beta_1,beta_2)=(beta_x beta_y,beta_y)$*
-$ |beta_1|=exp(gamma_x+gamma_y), quad
-  A=frac(J_(x 1),beta_1)+J_(y 2), quad B=J_(x 2)beta_1+J_(y 1). $
-At fixed $beta_1$, the characteristic equation becomes
-$ A beta_2^2-E beta_2+B=0, quad |beta_2|=sqrt(lr(|B/A|)). $
-- The product of the two roots is $B/A$. Equal moduli give the transverse GBZ radius.
-- The $[11]$ radius generally varies with $theta_1$. These formulas apply where $A$ and $B$ are nonzero.
+#reference-item("Wang, C., et al.", "arXiv", "2506.22743v3", "2025")
 
 == Accuracy measures and test cases
 For every returned point and every stored line sample, compare
@@ -451,8 +448,6 @@ $ epsilon_E=max_n frac(|E-h(beta_(x,n),beta_(y,n))|,
 - Check spectral membership independently, including successful empty results.
 
 == Numerical errors for all four GBZs
-#set par(spacing: 0.6em)
-#set text(size: 20pt)
 // Current-checkout results from application/benchmark-2D-Hatano-Nelson.py.
 // Recomputed 2026-09-22 with NumPy 1.26.4 and SciPy 1.11.4.
 #table(
@@ -471,33 +466,15 @@ $ epsilon_E=max_n frac(|E-h(beta_(x,n),beta_(y,n))|,
 #v(0.5em)
 All eight cases pass. Each point case contains four points and each line case contains two line subsets.
 
-#text(size: 17pt)[NumPy backend, default solver settings. Sample accuracy does not by itself prove that every branch was found.]
+#text(size: 17pt, fill: blue)[NumPy backend, default solver settings. ]
 
-== Spectral membership beyond nonempty examples
-#set par(spacing: 0.7em)
-#set list(spacing: 0.8em)
-Let $u=2exp(rmi delta_x)|J_x|$ and $v=2exp(rmi delta_y)|J_y|$.
-- Cartesian spectra: $E in {u s+v t: s,t in [-1,1]}$.
-- Diagonal strip: $E^2 in "conv"{0,(u+v)^2,(u-v)^2}$.
-#table(
-  columns: (auto,auto,1fr,1fr), inset: 9pt, stroke: 0.5pt + luma(75%),
-  table.header([*Hoppings*], [*$E$*], [*Amoeba / $x$ / $y$*], [*$[11]$ strip*]),
-  [Complex case], [$6+6rmi$], [Outside], [Outside],
-  [Real case], [$6$], [Outside], [Outside],
-  [Real case], [$rmi$], [Outside], [Outside],
-  [Complex case], [$2+2rmi$], [Inside], [Outside],
-)
-Sixteen solver comparisons agree with the independent analytic classification:
-13 empty results and 3 nonempty results. Failed solves do not count as exterior energies.
-
-== Energy-grid benchmark
-#set par(spacing: 0.55em)
+== Full GBZ sweep
 // Plotted from the four application/data/HN2D-20260921T144330717373Z-*.pkl files.
 #align(center)[#image("Figures/hn-benchmark-spectra.pdf", height: 250pt)]
 - All four methods evaluate the same $100 times 100$ grid, with zero failed results.
 - Amoeba, $x$ strip, and $y$ strip share all 4,832 in-spectrum grid points.
   The $[11]$ strip contains 1,108 points on the same grid.
-#text(size: 17pt)[Complex hopping case. Dots are computed grid points. Finite sampling does not certify arbitrarily narrow spectral features.]
+#text(size: 17pt, fill: blue)[Dots are computed grid points; red dotted lines are the closed-form GBZ boundaries. ]
 
 // Application slides are reserved for the next part of the talk.
 // = Applications

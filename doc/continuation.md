@@ -1,8 +1,14 @@
-# continuation — Pseudo-Arclength Continuation Root Tracking
+# continuation — Adaptive-Step Root Tracking (Pseudo-Arclength Parameterization)
 
-Adaptive-step root tracking along $\theta_1$ using analytic derivatives, Hungarian matching,
-and pseudo-arclength step-size control.  The top-level `ZeroManager` class orchestrates
-full-circle integration with automatic multiple-root detection and refinement.
+Adaptive-step root tracking along $\theta_1$ using analytic derivatives and Hungarian
+matching.  The top-level `ZeroManager` class orchestrates full-circle integration with
+automatic multiple-root detection and refinement.
+
+Two **independent** adaptivity sources are combined, and it matters which one does what:
+the pseudo-arclength parameterization supplies the metre ($\Delta\theta_1 =
+h/\|\mathbf{V}\|_2$), while an RK45-style error controller supplies the step size $h$.
+Only the second is aware of how close two branches are when they approach *away from*
+$\beta_2 \in \{0,\infty\}$ — see §1 and §2.1.1.
 
 ## 1. Motivation
 
@@ -11,8 +17,19 @@ which replaces the prior fixed uniform $\theta_1$ meshes.  When roots change rap
 near degeneracies, crossings, or poles — a uniform mesh may miss features or produce
 incorrect Hungarian matchings.
 
-The pseudo-arclength approach adapts the step size to the local root dynamics: steps are
-small where roots move quickly, large where they are quiescent.
+The step is made small where the roots move quickly by **two distinct mechanisms**, and
+they are not interchangeable:
+
+| Mechanism | Rule | Self-refines when |
+|-----------|------|-------------------|
+| Pseudo-arclength parameterization | $\Delta\theta_1 = h/\|\mathbf{V}\|_2$ with $\mathbf{V} = (1, d\ln\beta_{2,1}/d\theta_1, \ldots, d\ln\beta_{2,n}/d\theta_1)^\mathsf{T}$ | $\|\mathbf{V}\|$ grows: $\beta_2 \to 0$ or $\infty$, or $d\beta_2/d\theta_1$ diverges at an exact branch point ($\partial f/\partial\beta_2 = 0$) |
+| RK45-style error control | $h$ from `estimate_error` between the tangent prediction and the re-solved roots | the tangent prediction degrades — i.e. **any** close approach, wherever it sits in the $\beta_2$ plane |
+
+Because the arclength rule holds the step constant in the $(\theta_1, \ln\beta_2)$ metre,
+it fixes the *relative* change $|\Delta\beta_2| \approx |\beta_2|\,h$.  At a
+near-degeneracy at $\beta_2 = c \neq 0$ that quantity does not shrink as the gap shrinks,
+so the pseudo-arclength rule **alone** is gap-blind there; the error controller is what
+keeps the Hungarian match unambiguous.  §2.1.1 makes this quantitative.
 
 ## 2. Algorithm
 
@@ -41,7 +58,45 @@ $$\mathbf{V} = \begin{pmatrix} 1 \\ V_1 \\ \vdots \\ V_n \end{pmatrix},
 The arclength step condition: $\Delta\theta_1 = h / \|\mathbf{V}\|_2$, so that one step
 covers arclength $h$ in the state space.
 
+#### 2.1.1 What the arclength metre resolves — and what it does not
+
+The metre uses the *logarithmic* $\beta_2$ coordinate, so one accepted step moves a root by
+
+$$|\Delta\beta_{2,j}| \;\approx\; |\beta_{2,j}| \cdot |V_j| \cdot \Delta\theta_1
+  \;\approx\; |\beta_{2,j}| \, h,$$
+
+i.e. a fixed **relative** step.  For two branches separated by a gap $s$, the match between
+successive solved sets is unambiguous only while $|\Delta\beta_2| \lesssim s$:
+
+* **Degeneracy at $\beta_2 = 0$ or $\infty$.**  Then $|\beta_2|$ itself is the small
+  quantity, $|\beta_2| \sim s$, and the condition becomes $h \lesssim 1$ — satisfied
+  automatically, and more comfortably as the gap closes.  This is why the $\ln\beta_2$
+  metre looks self-refining on such models.
+* **Degeneracy at $\beta_2 = c \neq 0$.**  Then $|\Delta\beta_2| \approx |c|\,h$ is
+  **independent of the gap**: shrinking $s$ by any factor leaves the step in $\beta_2$
+  unchanged.  The rule does shrink $\Delta\theta_1$ (it scales like $s$ near a generic
+  close approach, since $\|\mathbf{V}\| \propto 1/\sqrt{\delta}$ and $s \propto
+  \sqrt{\delta}$), but that only samples more densely in $\theta_1$ — it does **not** make
+  the sampling finer in $\beta_2$.
+* **Exact branch point** ($\partial f/\partial\beta_2 = 0$, $s = 0$).  Here
+  $d\beta_2/d\theta_1$ itself diverges, so $\|\mathbf{V}\|_2 \to \infty$ for any finite
+  non-zero $\beta_2$; the step collapses and the point trigger of §2.4 fires.  This regime
+  is *not* metre-blind.
+
+The near-degeneracy of the second bullet — a gap that stays non-zero — is covered **only**
+by the error-controlled $h$ of §2.2: the large curvature there inflates `estimate_error`,
+the step is rejected, and the accepted step keeps $|\Delta\beta_2| \lesssim
+\text{atol} + \text{rtol}\cdot\text{median}|\beta_2|$.  Test polynomial **G** (§4) is
+exactly this case — the `playground/demo_zero_manager.py` model $f = \beta_2^2 - \beta_1 -
+\beta_1^{-1} - c_0$ shifted to $\beta_2 = 1$ — and
+`tests/test_continuation.py` pins both halves: a fixed-$h$ arclength step stays gap-blind,
+while the error-controlled stepper keeps every accepted step below the local gap.
+
 ### 2.2 Adaptive step-size control
+
+This is the mechanism that keeps the step small at a close approach wherever it occurs
+(§2.1.1); the arclength metre of §2.1 only converts that `h` into a θ₁ increment along the
+curve.
 
 Modelled after scipy's RK45 integrator (`scipy.integrate._ivp.rk.RungeKutta._step_impl`).
 
@@ -91,6 +146,10 @@ The point trigger is essential for **generic double roots** — points where
 $\partial f/\partial\beta_2 = 0$ but $\partial f/\partial\beta_1 \neq 0$.  At such
 points $d\beta_2/d\theta_1$ diverges, making $\|\mathbf{V}\|_2 \to \infty$ and
 $\Delta\theta_1 \to 0$, even though the tangent prediction error may remain small.
+It needs a branch point to actually be *reached*: a **near**-degeneracy, where the two
+branches pass at a finite gap and the tangent stays finite (§2.1.1), is outside its reach.
+That regime is handled by the error-controlled step size of §2.2 — there is no trigger for
+it, and no trigger is needed, because the step shrinks before the match can go wrong.
 
 The interval trigger catches **accidental multiple roots** where the tangent stays
 well-conditioned and the step size never collapses.  It computes the pairwise
@@ -341,6 +400,7 @@ The test suite includes analytically constructed polynomials for stress-testing:
 | **D** $(\beta_2-0.5\beta_1)(\beta_2-1.5\beta_1)(\beta_2-2\beta_1)$ | $0.5\beta_1,\ 1.5\beta_1,\ 2\beta_1$ | Well-separated identical-k roots, modulus ordering |
 | **E** $(\beta_2-\beta_1)(\beta_2-(1+\varepsilon)\beta_1)$ | $\beta_1,\ (1+\varepsilon)\beta_1$ | Near-degenerate monomial, Hungarian matching stress |
 | **F** $(\beta_2-1)^2 - (\beta_1-1)$ | $1\pm\sqrt{\beta_1-1}$ | **Generic double root** — $\partial f/\partial\beta_2=0$, $\partial f/\partial\beta_1\neq0$, tangent diverges |
+| **G** $(\beta_2-1)^2 - \beta_1 - 1/\beta_1 - c_0$, $c_0 = 2\cosh\mu_1 - \delta$ | $1\pm\sqrt{g(\theta_1)}$, gap $2\sqrt{\delta}$ at $\theta_1=\pi$ | ***Near*-degeneracy at $\beta_2 = 1$** — the gap never closes, so the tangent stays finite and the point trigger cannot fire; resolved by the error-controlled step size only (§2.1.1) |
 
 ## 5. Key Design Decisions
 

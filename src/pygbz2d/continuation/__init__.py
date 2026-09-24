@@ -1,9 +1,15 @@
 """
-continuation — Pseudo-arclength continuation for root tracking.
+continuation — Adaptive-step root tracking (pseudo-arclength parameterization).
 
 Provides adaptive-step root tracking along theta1 using analytic derivatives
-from CharPoly, Hungarian matching, and pseudo-arclength step-size control
-modelled after scipy's RK45 integrator.
+from CharPoly and Hungarian matching.  The step size h is chosen by an
+RK45-style *error* controller; the pseudo-arclength parameterization then maps
+it to dtheta1 = h / ||V|| with V = [1, d ln beta2_j/dtheta1].
+
+The two are independent.  The parameterization self-refines only where
+||V|| grows (beta2 -> 0 or infinity, or the tangent diverges at an exact
+branch point); a close approach elsewhere in the beta2 plane is resolved by
+the error controller alone.  See doc/continuation.md §2.1.1.
 
 Public API
 ----------

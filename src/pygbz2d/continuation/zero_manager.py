@@ -264,7 +264,10 @@ def integrate_segment(
             # anchored on the tangent prediction (see arclength_step).  No
             # second matching here — re-matching on the raw old→new chordal
             # distance swaps two near-degenerate tracks at a closest
-            # approach and fabricates a spurious |b2|=1 crossing.
+            # approach and fabricates a spurious |b2|=1 crossing.  That anchor
+            # is trustworthy because arclength_step only accepts steps whose
+            # prediction error is below tolerance (the error controller, not
+            # the arclength metre — see the arclength module docstring).
             roots_new = result.roots_new
 
             theta1_list.append(theta1_new)
@@ -647,7 +650,10 @@ class ZeroManager:
                 # 2π, and match predicted → left_boundary_roots (≡ solve(0)).
                 # Anchoring on a smooth continuation of each track (rather
                 # than a bare match between two solved sets) avoids swapping
-                # near-degenerate tracks at a closest approach.
+                # near-degenerate tracks at a closest approach.  The anchor is
+                # only as good as the local mesh density, which the
+                # error-controlled step size guarantees (the arclength metre
+                # alone does not — see the arclength module docstring).
                 predicted_2pi = self._predict_roots_at_2pi(
                     new_seg_theta1, new_seg_tracked_roots,
                 )
@@ -1145,6 +1151,12 @@ class ZeroManager:
         near-degenerate tracks at a closest approach, exactly the failure
         ``arclength_step`` avoids by matching *predicted → solved*.  Here we
         reuse the same principle via :func:`predict_roots_hermite`.
+
+        Like ``arclength_step``, this anchor is only reliable while the
+        surrounding mesh is fine compared with the local inter-track
+        separation — a property supplied by the error-controlled step size;
+        the arclength metre alone provides it only for degeneracies at
+        β₂ = 0/∞ (see the arclength module docstring).
 
         Two-endpoint (``ref_theta2``/``ref_roots2`` given, endpoints share a
         track frame, target inside the interval) → cubic Hermite.
