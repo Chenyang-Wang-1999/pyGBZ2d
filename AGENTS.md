@@ -106,7 +106,8 @@ brute-force-non-hermitian/
 │   ├── SGBZ.md                 # SGBZ theory, architecture, API
 │   ├── amoeba.md               # Amoeba theory, algorithm, API
 │   ├── continuation.md         # Continuation module (arclength/MR/ZeroManager/interpolation)
-│   └── constants.md           # Per-module numerical-constant reference (user-facing)
+│   ├── constants.md           # Per-module numerical-constant reference (user-facing)
+│   └── experimental.md        # Trial-stage clustering, meshes, refinement and Chern algorithms
 ├── TODO/                       # Optimization checklists + engineering plans
 │                               #   (exact-degeneracy-boundary-behavior.md — open;
 │                               #   warm-start ZM — open; resolved items are

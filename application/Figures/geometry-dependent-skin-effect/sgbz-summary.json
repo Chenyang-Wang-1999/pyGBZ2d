@@ -1,0 +1,74 @@
+{
+  "a1": {
+    "source": "D:\\research-works\\brute-force-SGBZ-amoeba\\data\\Haldane-gain-loss-a1-SGBZ.pkl",
+    "total": 40401,
+    "pending": 0,
+    "failed": 0,
+    "in_spectrum": 9991,
+    "samples": 60402,
+    "invalid_samples": 0,
+    "max_abs_mu": [
+      2.2204460492503136e-16,
+      9.147673725430784e-10
+    ],
+    "p99_abs_mu": [
+      2.2204460492503128e-16,
+      2.620524797125258e-11
+    ],
+    "failures": []
+  },
+  "a2": {
+    "source": "D:\\research-works\\brute-force-SGBZ-amoeba\\data\\Haldane-gain-loss-a2-SGBZ.pkl",
+    "total": 40401,
+    "pending": 0,
+    "failed": 0,
+    "in_spectrum": 9991,
+    "samples": 60402,
+    "invalid_samples": 0,
+    "max_abs_mu": [
+      2.2204460492503136e-16,
+      9.147673725430784e-10
+    ],
+    "p99_abs_mu": [
+      2.2204460492503128e-16,
+      2.620524797125258e-11
+    ],
+    "failures": []
+  },
+  "x": {
+    "source": "D:\\research-works\\brute-force-SGBZ-amoeba\\data\\Haldane-gain-loss-x-SGBZ.pkl",
+    "total": 40401,
+    "pending": 0,
+    "failed": 0,
+    "in_spectrum": 9991,
+    "samples": 60402,
+    "invalid_samples": 0,
+    "max_abs_mu": [
+      1.464784145358355e-05,
+      0.00011545223455860449
+    ],
+    "p99_abs_mu": [
+      2.2204460492503128e-16,
+      4.578065815227791e-11
+    ],
+    "failures": []
+  },
+  "y": {
+    "source": "D:\\research-works\\brute-force-SGBZ-amoeba\\data\\Haldane-gain-loss-y-SGBZ.pkl",
+    "total": 40401,
+    "pending": 0,
+    "failed": 0,
+    "in_spectrum": 6656,
+    "samples": 79184,
+    "invalid_samples": 0,
+    "max_abs_mu": [
+      0.00010000000000000135,
+      0.5899714195747858
+    ],
+    "p99_abs_mu": [
+      2.2204460492503128e-16,
+      0.5046170186213965
+    ],
+    "failures": []
+  }
+}

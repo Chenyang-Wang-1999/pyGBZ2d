@@ -315,6 +315,101 @@
 - If the signs do not straddle zero, continue on the appropriate side.
   A zero-winding plateau with no zeros represents an exterior energy.
 
+= Self-adaptive continuation of zeros
+
+== Limitation of uniform $theta_1$ sampling
+- Solving equation for $ln|beta_1|=mu_1$: $ beta_2^2=beta_1 + beta_1^(-1) + 2 cosh(mu_1) - 10^(-4) $
+#v(-1em)
+#align(center)[
+  #image("Figures/self-adaptive-260923.pdf", width: 80%)
+]
+
+== Root tracks at fixed energy and decay rate
+- Fix $(E,mu_1)$ and vary $theta_1$, with $beta_1=exp(mu_1+rmi theta_1)$.
+  Solve $f(E,beta_1,beta_2)=0$ for all $K=M_2+N_2$ roots.
+- A uniform $theta_1$ mesh can underresolve rapid root motion near a multiple root.
+  Sorting roots independently at each step also loses their track identities.
+- The continuation state is
+  $ bold(y)=(theta_1, ln beta_2^((1)), dots.c, ln beta_2^((K))). $
+- Adapt the angular step to motion in this state space. At each new angle,
+  solve the polynomial again and match the roots to their predicted positions.
+
+== Tangent and arclength step
+Implicit differentiation along a regular root gives
+$ partial_(beta_1)f dot rmi beta_1 + partial_(beta_2)f dot frac(dif beta_2,dif theta_1)=0. $
+Hence the logarithmic tangent of track $j$ is
+$ V_j := frac(dif ln beta_2^((j)),dif theta_1)
+  = -rmi frac(beta_1, beta_2^((j)))
+    frac(partial_(beta_1)f, partial_(beta_2)f), quad
+  bold(V)=(1,V_1,dots.c,V_K). $
+The proposed angular increment is
+$ Delta theta_1=frac(h,norm(bold(V))_2), quad
+  norm(bold(V))_2=sqrt(1+sum_j |V_j|^2). $
+- Fast root motion increases $norm(bold(V))_2$ and reduces $Delta theta_1$.
+- $h$ controls the approximate arclength step and adapts to prediction error.
+- Undefined tangents of zero/infinite padding roots are excluded from the norm.
+
+== Prediction, polynomial solve, and track matching
+#my-pseudo(line-gap: 0.6em)[
+  + *Predict*: $hat(beta)_2^((j))=beta_2^((j)) exp(V_j Delta theta_1)$.
+  + *Solve*: compute all roots $tilde(beta)_2^((k))$ at the trial angle.
+  + *Match*: find a one-to-one assignment $pi$ minimizing
+    $ sum_j d_("chord")(hat(beta)_2^((j)),tilde(beta)_2^((pi(j)))). $
+  + *Accept or retry*: compare matched roots with the predictions.
+]
+
+#v(-.4em)
+- Hungarian matching uses distance on the Riemann sphere:
+  $ d_("chord")(z,w)=frac(2|z-w|,sqrt(1+|z|^2)sqrt(1+|w|^2)). $
+- The sphere metric handles roots near zero and infinity.
+  A prediction anchor reduces track swaps at close approaches.
+- Each regular root sample comes from a polynomial solve.
+
+== Adaptive step-size control
+Use the largest matched prediction error:
+$ e=frac(max_j d_("chord")(hat(beta)_2^((j)),tilde(beta)_2^((pi(j)))),
+  "atol"+"rtol" dot limits("median")_(k:"finite") |tilde(beta)_2^((k))|). $
+
+#v(.4em)
+
+#grid(columns: (1fr,1fr), gutter: 30pt,
+[
+  *Accepted step: $e<1$*
+  - Store the solved roots in track order.
+  - Propose $h_("next") = h min(10,0.9 e^(-1/2))$.
+  - For $e=0$, use the maximum growth factor.
+],
+[
+  *Rejected step: $e>=1$*
+  - Reduce $h$ and solve again.
+  - Use $h <- h max(0.2,0.9 e^(-1/2))$.
+  - Stop after the retry budget or minimum step is reached.
+])
+#v(0.5em)
+Defaults: $"atol"=10^(-12)$, $"rtol"=10^(-3)$, $h_("max")=0.5$.
+An accepted step cannot grow immediately after a rejection.
+
+== Multiple roots split the continuation tracks
+#table(
+  columns: (1fr, 2fr), inset: 9pt, stroke: 0.5pt + luma(75%),
+  table.header([*Trigger*], [*Candidate condition*]),
+  [Step collapse], [$Delta theta_1 < 10^(-10)$ near a singular implicit derivative.],
+  [Pairwise approach], [For a nearby root pair, $dif |beta_i-beta_j|^2 \/ dif theta_1$ changes from negative to positive.],
+)
+- Refine a point candidate by solving $f=0$ and $partial_(beta_2)f=0$.
+  For an interval candidate, first locate its distance-derivative zero.
+- A close approach is only a candidate. Confirm a finite-root cluster before splitting the segment.
+- Store the multiple root as a shared endpoint, restart beyond it, and track the next segment.
+- At $theta_1=2pi$, retain the permutation relating the closing roots to $theta_1=0$.
+
+== Root tracking shared by both GBZ solvers
+- `ZeroManager` returns tracked roots, analytic tangents, and multiple-root boundaries on an adaptive mesh.
+- *SGBZ*: refine equal-modulus events, build $mu_(2,"mid")(theta_1)$, and extract boundary points or line intervals.
+- *Amoeba*: locate crossings of $ln|beta_2|=mu_2$ and reuse the same tracks throughout the inner $mu_2$ search.
+- Cubic Hermite interpolation supplies matching anchors and the SGBZ loop path.
+  Singular endpoint derivatives require linear fallback.
+- Step control resolves root motion. Additional crossing and extremum refinement resolves the level sets used by each solver.
+
 = Benchmark: 2D complex Hatano-Nelson model
 
 == 2D Hatano-Nelson (HN) model
@@ -340,7 +435,7 @@ tilde(beta)_(y) & = rme^(gamma_(y) + rmi theta_(y)) sqrt(lr(abs(frac(J_(x)^(*) r
 
 == Accuracy measures and test cases
 For every returned point and every stored line sample, compare
-$ epsilon_mu=max_(j=1,2) max_n |ln|beta_(j,n)|-mu_j^"exact" (theta_(1,n))|, $
+$ epsilon_mu=max_(j=1,2) max_n |ln|beta_(j,n)|-mu_j^"exact"(theta_(1,n))|, $
 $ epsilon_E=max_n frac(|E-h(beta_(x,n),beta_(y,n))|,
  |E|+|J_(x 1)/beta_(x,n)|+|J_(x 2)beta_(x,n)|+|J_(y 1)/beta_(y,n)|+|J_(y 2)beta_(y,n)|). $
 #table(

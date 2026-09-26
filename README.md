@@ -155,6 +155,7 @@ Detailed documentation is available in the `doc/` directory:
 - [doc/SGBZ.md](doc/SGBZ.md) — SGBZ formulation, architecture, API reference
 - [doc/amoeba.md](doc/amoeba.md) — Amoeba formulation, algorithm design, API reference
 - [doc/continuation.md](doc/continuation.md) — continuation module (arclength / multiple roots / ZeroManager)
+- [doc/experimental.md](doc/experimental.md) — trial-stage band clustering, periodic meshes, adaptive refinement, Chern integration, parameters, validation and references
 
 ## Running Tests
 
@@ -179,6 +180,12 @@ python application/benchmark-2D-Hatano-Nelson.py --mode demo --compare-only
 Use `--mode coarse-sweep` or `--mode full-sweep` for energy scans, and
 `--no-show` to disable their plots. Matplotlib is needed for plotting;
 NumPy and SciPy suffice for the numerical checks.
+
+The [QWZ Chern benchmark](application/Chern-number-calculation.typ) calls
+`pygbz2d.experimental` for periodic meshing, adaptive refinement and Chern
+integration. Its [Python script](application/Chern-number-calculation.py)
+can run outside the checkout after installing this package and the example's
+dependencies; it imports no playground or sibling application scripts.
 
 ## Playground Scripts
 

@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]) + "/src")
 import pygbz2d.sgbz as bfs
 import pygbz2d.amoeba as bfa
 import pygbz2d
-from pygbz2d.core import PointSubset, LineSubset
+from pygbz2d.core import PointSubset, LineSubset, GBZResult
 from pygbz2d.backend import make_laurent
 print("Using ", bfs.__file__)
 print("Polynomial backend:", type(make_laurent(np.array([1, 1]), np.array([[1, 0, 0], [0, 1, 0]]))))
@@ -471,47 +471,7 @@ def plot_SGBZ(which="a1"):
     plt.plot(E_list[ind_failed].real, E_list[ind_failed].imag, '.', label="Failed")
     plt.legend()
 
-
-def plot_GBZ_mu(fname):
-    with open(fname, "rb") as fp:
-        data = pickle.load(fp)
-    E_real, E_imag, res, params = data["E_real"], data["E_imag"], data["results"], data["params"]
-    E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
-    E_list = (E_real_mesh + 1j * E_imag_mesh).flatten()
-    
-    mu1 = []
-    mu2 = []
-    for item in res:
-        if item.success and item.is_gbz:
-            for point in item.subsets:
-                if isinstance(point, LineSubset):
-                    mu1.extend(point.mu1 * np.ones_like(point.theta1_arr))
-                    mu2.extend(np.log(np.abs(point.beta2_arr)))
-                else:
-                    mu1.append(np.log(abs(point.beta1)))
-                    mu2.append(np.log(abs(point.beta2)))
-    print(len(mu1), len(mu2))
-    plt.figure()
-    plt.plot(mu1, mu2, '.')
-
-
-def plot_SGBZ_mu(which="a1"):
-    with open("data/Haldane-gain-loss-%s-SGBZ.pkl" % which, "rb") as fp:
-        data = pickle.load(fp)
-    E_real, E_imag, results, params = data["E_real"], data["E_imag"], data["results"], data["params"]
-    all_mu1 = []
-
-    E_real_mesh, E_imag_mesh = np.meshgrid(E_real, E_imag)
-    E_list = (E_real_mesh + 1j * E_imag_mesh).flatten()
-    E_SGBZ = []
-    for ind, res in enumerate(results):
-        if not res.is_empty:
-            if res["is_PMGBZ"]:
-                all_mu1.append(res["mu1"])
-                E_SGBZ.append(E_list[ind])
-    E_SGBZ = np.asarray(E_SGBZ)
-    sca = plt.scatter(E_SGBZ.real, E_SGBZ.imag, c=all_mu1)
-    plt.colorbar(sca)
+   
 
 
 def plot_index_E(which="", kind="amoeba"):
@@ -612,6 +572,41 @@ def Hermitian_Haldane_sweep():
     plt.show()
 
 
+def gbz_res_to_points(results: list[GBZResult]):
+    """将 GBZResult 转换为点集。
+    """
+    points = []
+    for res in results:
+        for subset in res.subsets:
+            if isinstance(subset, PointSubset):
+                points.append((subset.E, subset.beta1, subset.beta2))
+            elif isinstance(subset, LineSubset):
+                theta1_arr = subset.theta1_arr
+                beta2_arr = subset.beta2_arr
+                points.append(
+                    np.column_stack([
+                        subset.E * np.ones_like(theta1_arr),
+                        np.exp(subset.mu1 + 1j * theta1_arr),
+                        beta2_arr
+                    ])
+                )
+            else:
+                raise ValueError(f"Unknown type {type(subset)}")
+    return np.vstack(points)
+
+
+def plot_GBZ_mu(fname):
+    with open(fname, "rb") as fp:
+        data = pickle.load(fp)
+    E_real, E_imag, res, params = data["E_real"], data["E_imag"], data["results"], data["params"]
+    data_points = gbz_res_to_points(res)
+    fig = plt.figure()
+    ax = fig.gca()
+    ax.plot(data_points[:,0].real, np.log(np.abs(data_points[:,2])), '.')
+    plt.show()
+
+ 
+
 if __name__ == "__main__":
     # sweep_amoeba()
     # sweep_amoeba_multiband()
@@ -624,23 +619,23 @@ if __name__ == "__main__":
     # recompute_failed_SGBZ("x", out_fname="data/Haldane-gain-loss-x-SGBZ-recomputed.pkl")
     # recompute_failed_SGBZ("a1", out_fname="data/Haldane-gain-loss-a1-SGBZ-recomputed.pkl")
     # recompute_failed_SGBZ("a2", out_fname="data/Haldane-gain-loss-a2-SGBZ-recomputed.pkl")
-    plot_amoebic_spectrum()
+    # plot_amoebic_spectrum()
     # plot_GBZ_mu("data/Haldane-gain-loss-amoeba-xy.pkl")
     # plot_GBZ_mu("data/Haldane-gain-loss-amoeba.pkl")
-    # plot_GBZ_mu("data/Haldane-gain-loss-y-SGBZ.pkl")
+    plot_GBZ_mu("data/Haldane-gain-loss-y-SGBZ.pkl")
     # plot_GBZ_mu("data/Haldane-gain-loss-a1-SGBZ.pkl")
     # plot_GBZ_mu("data/Haldane-gain-loss-a2-SGBZ.pkl")
-    plot_amoebic_spectrum("-xy")
-    plot_SGBZ("a1")
-    plot_SGBZ("a2")
-    plot_SGBZ("x")
-    plot_SGBZ("y")
+    # plot_amoebic_spectrum("-xy")
+    # plot_SGBZ("a1")
+    # plot_SGBZ("a2")
+    # plot_SGBZ("x")
+    # plot_SGBZ("y")
     # plot_index_E("a1", kind="SGBZ")
     # plot_index_E("a2", kind="SGBZ")
     # plot_index_E("x", kind="SGBZ")
     # plot_index_E("y", kind="SGBZ")
     # plot_index_E("")
     # plot_index_E("-xy")
-    plt.show()
+    # plt.show()
     # debug_y_SGBZ()
     # Hermitian_Haldane_sweep()

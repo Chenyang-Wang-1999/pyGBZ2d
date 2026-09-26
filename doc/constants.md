@@ -206,6 +206,24 @@ scaled by the original energy-grid spacing. Line samples are not decimated.
 
 ---
 
+## Experimental mesh and Chern modules
+
+These defaults were extracted with the existing algorithms. Optional numeric
+API defaults resolve at call time; assigning a constant in its home module
+affects the next call. The modules depend only on NumPy/SciPy and the package.
+
+| Module | Constant | Default | Meaning |
+|---|---|---|---|
+| `experimental.torus_mesh` | `DEDUP_TOL` | 1e-5 | Near-coincident projected-vertex merge distance (radians). |
+| `experimental.mesh_refinement` | `EDGE_THRESH` | 0.2 | Target maximum short-arc edge length (radians). |
+| `experimental.mesh_refinement` | `MATCH_TOL` | 0.5 | Acceptance distance in the four-dimensional cosine/sine embedding. |
+| `experimental.mesh_refinement` | `MAX_ITERS` | 10 | Outer solving-round cap; does not certify convergence. |
+| `experimental.mesh_refinement` | `MAX_GEOMETRY_LEVELS` | 8 | Dyadic prediction/refinement depth per solving round. |
+| `experimental.mesh_refinement` | `BISECT_ITERS` | 6 | Index-boundary fallback bisections. |
+| `experimental.chern` | `DEFAULT_RCOND` | 1e-6 | Relative singular-value threshold for nullity diagnostics. |
+| `experimental.chern` | `LINK_EPS` | 1e-12 | Left/right self-overlap floor; its square bounds invariant edge products. |
+| `experimental.chern` | `LINK_BRANCH_CUT_TOL` | 1e-12 | Relative imaginary-part tolerance for detecting the negative-real square-root cut. |
+
 ## Same-pattern families (deliberately NOT merged)
 
 These constants share a *shape* but act on different quantities; merging

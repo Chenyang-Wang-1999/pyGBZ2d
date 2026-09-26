@@ -20,6 +20,13 @@ oriented triangle:
 
     flux(T) = -arg <u0|u1><u1|u2><u2|u0>.
 
+Biorthogonal mode instead uses Uij = <Li|Rj>, <Li|Ri> = 1, and
+Tij = Uij / sqrt(Uij Uji), with one square root per undirected edge and
+Tji = 1/Tij. Its complex flux is i Log(Tij Tjk Tki). Raw LR overlap
+products contain a second-order complex-metric contribution and cannot be
+used as local curvature on shrinking triangles. See doc/experimental.md for the
+derivation and references (Fukui-Hatsugai-Suzuki; Shen-Zhen-Fu).
+
 The default model loader matches playground/Haldane-model-gainloss.py and
 ALL_PARAMS, because that is the source of the current demo meshes.  For other
 models, pass --model-file and --factory NAME; the factory must be a zero-arg
@@ -55,39 +62,39 @@ from pygbz2d.core import TWO_PI
 
 
 DEFAULT_MODEL_FILE = Path(__file__).resolve().parent / "Haldane-model-gainloss.py"
-DEFAULT_RCOND = 1e-6
-LINK_EPS = 1e-12
+
+
+from pygbz2d.experimental.chern import (
+    DEFAULT_RCOND, LINK_EPS, LINK_BRANCH_CUT_TOL,
+    ChernResult, VertexDiagnostics, betas_from_mesh, svd_null_vector,
+    right_eigenvectors_on_mesh, left_right_eigenvectors_on_mesh,
+    make_vertex_diagnostics, triangle_flux_right, biorthogonal_edge_links,
+    triangle_flux_biorthogonal_complex, triangle_flux_biorthogonal, integrate_chern,
+)
+from pygbz2d.experimental.torus_mesh import (
+    unwrap_triangle, orient_triangles, regular_torus_mesh,
+)
 
 
 @dataclass
-class VertexDiagnostics:
-    n_vertices: int
-    nullity_one: int
-    nullity_zero: int
-    nullity_multi: int
-    residual_max: float
-    residual_p50: float
-    residual_p99: float
-    sigma_min_max: float
-    sigma_min_p50: float
-    gap_ratio_min: float
-    gap_ratio_p01: float
+class MeshChernResult(ChernResult):
+    """Demo file label attached to the library's array-based result."""
+    mesh: str = ""
 
 
-@dataclass
-class MeshChernResult:
-    mesh: str
-    n_vertices: int
-    n_triangles: int
-    orientation: str
-    n_orientation_flips: int
-    chern: float
-    total_flux: float
-    flux_p50_abs: float
-    flux_p99_abs: float
-    flux_max_abs: float
-    bad_links: int
-    vertex_diagnostics: VertexDiagnostics
+def calculate_chern(mesh_file: Path, Hfun, *, rcond=None, mode="right",
+                    orientation="positive", progress=0, save_flux=False):
+    """Demo file I/O wrapper; all numerical integration lives in the package."""
+    mesh_file = Path(mesh_file)
+    with np.load(mesh_file) as data:
+        result, flux = integrate_chern(
+            data["verts"], data["triangles"], data["E"], data["mu1"], data["mu2"],
+            Hfun, rcond=rcond, mode=mode, orientation=orientation, progress=progress)
+    if save_flux:
+        out = mesh_file.with_name(mesh_file.stem + "_chern_flux.npz")
+        np.savez(out, **flux)
+        print(f"    flux saved -> {out}")
+    return MeshChernResult(**vars(result), mesh=str(mesh_file))
 
 
 def import_module_from_file(path: Path):
@@ -170,224 +177,6 @@ def make_hamiltonian_function(model) -> Callable[[complex, complex], np.ndarray]
     )
 
 
-def betas_from_mesh(verts: np.ndarray, mu1: np.ndarray,
-                    mu2: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    beta1 = np.exp(mu1 + 1j * verts[:, 0])
-    beta2 = np.exp(mu2 + 1j * verts[:, 1])
-    return beta1, beta2
-
-
-def svd_null_vector(A: np.ndarray, rcond: float) -> tuple[np.ndarray, int, float, float]:
-    """Smallest right-singular vector plus nullity diagnostics."""
-    u, s, vh = la.svd(A, full_matrices=True, check_finite=False)
-    del u
-    scale = float(s[0]) if len(s) else 0.0
-    tol = rcond * scale
-    nullity = int(np.count_nonzero(s <= tol))
-    vec = vh.conj().T[:, -1]
-    vec = vec / la.norm(vec)
-    sigma_min = float(s[-1]) if len(s) else 0.0
-    if len(s) >= 2 and sigma_min > 0:
-        gap_ratio = float(s[-2] / sigma_min)
-    elif len(s) >= 2:
-        gap_ratio = float("inf")
-    else:
-        gap_ratio = float("nan")
-    return vec, nullity, sigma_min, gap_ratio
-
-
-def right_eigenvectors_on_mesh(Hfun, E: np.ndarray, beta1: np.ndarray,
-                               beta2: np.ndarray, rcond: float,
-                               progress: int = 0):
-    """Compute one right null vector of E I - H at every mesh vertex."""
-    vecs = []
-    nullities = np.empty(len(E), dtype=int)
-    residuals = np.empty(len(E), dtype=float)
-    sigma_min = np.empty(len(E), dtype=float)
-    gap_ratio = np.empty(len(E), dtype=float)
-
-    for j, (Ej, b1, b2) in enumerate(zip(E, beta1, beta2)):
-        H = Hfun(b1, b2)
-        A = np.eye(H.shape[0], dtype=complex) * Ej - H
-        vec, nullity, smin, gratio = svd_null_vector(A, rcond)
-        vecs.append(vec)
-        nullities[j] = nullity
-        residuals[j] = la.norm(A @ vec)
-        sigma_min[j] = smin
-        gap_ratio[j] = gratio
-        if progress and (j + 1) % progress == 0:
-            print(f"    eigenvectors {j + 1}/{len(E)}", flush=True)
-
-    return np.asarray(vecs), make_vertex_diagnostics(
-        nullities, residuals, sigma_min, gap_ratio
-    )
-
-
-def left_right_eigenvectors_on_mesh(Hfun, E: np.ndarray, beta1: np.ndarray,
-                                    beta2: np.ndarray, rcond: float,
-                                    progress: int = 0):
-    """Compute biorthogonal left/right null vectors of E I - H."""
-    right = []
-    left = []
-    nullities = np.empty(len(E), dtype=int)
-    residuals = np.empty(len(E), dtype=float)
-    sigma_min = np.empty(len(E), dtype=float)
-    gap_ratio = np.empty(len(E), dtype=float)
-
-    for j, (Ej, b1, b2) in enumerate(zip(E, beta1, beta2)):
-        H = Hfun(b1, b2)
-        A = np.eye(H.shape[0], dtype=complex) * Ej - H
-        rv, rn, smin, gratio = svd_null_vector(A, rcond)
-        lv, ln, _, _ = svd_null_vector(A.conj().T, rcond)
-        overlap = np.vdot(lv, rv)
-        if abs(overlap) > LINK_EPS:
-            lv = lv / overlap.conjugate()
-        right.append(rv)
-        left.append(lv)
-        nullities[j] = min(rn, ln)
-        residuals[j] = max(la.norm(A @ rv), la.norm(A.conj().T @ lv))
-        sigma_min[j] = smin
-        gap_ratio[j] = gratio
-        if progress and (j + 1) % progress == 0:
-            print(f"    eigenvectors {j + 1}/{len(E)}", flush=True)
-
-    return np.asarray(right), np.asarray(left), make_vertex_diagnostics(
-        nullities, residuals, sigma_min, gap_ratio
-    )
-
-
-def make_vertex_diagnostics(nullities: np.ndarray, residuals: np.ndarray,
-                            sigma_min: np.ndarray,
-                            gap_ratio: np.ndarray) -> VertexDiagnostics:
-    finite_gap = gap_ratio[np.isfinite(gap_ratio)]
-    if len(finite_gap) == 0:
-        finite_gap = np.array([np.inf])
-    return VertexDiagnostics(
-        n_vertices=int(len(nullities)),
-        nullity_one=int(np.count_nonzero(nullities == 1)),
-        nullity_zero=int(np.count_nonzero(nullities == 0)),
-        nullity_multi=int(np.count_nonzero(nullities > 1)),
-        residual_max=float(np.max(residuals)),
-        residual_p50=float(np.percentile(residuals, 50)),
-        residual_p99=float(np.percentile(residuals, 99)),
-        sigma_min_max=float(np.max(sigma_min)),
-        sigma_min_p50=float(np.percentile(sigma_min, 50)),
-        gap_ratio_min=float(np.min(finite_gap)),
-        gap_ratio_p01=float(np.percentile(finite_gap, 1)),
-    )
-
-
-def unwrap_triangle(verts: np.ndarray, tri: np.ndarray) -> np.ndarray:
-    """Triangle coordinates in one local sheet of the universal cover."""
-    p = verts[tri].copy()
-    p[:, 1:] -= np.round((p[:, 1:] - p[:, :1]) / TWO_PI) * TWO_PI
-    return p
-
-
-def orient_triangles(verts: np.ndarray, triangles: np.ndarray,
-                     positive: bool = True) -> tuple[np.ndarray, int, str]:
-    """Orient triangles by the standard theta1,theta2 orientation."""
-    tri = np.asarray(triangles, dtype=int).copy()
-    p = unwrap_triangle(verts, tri)
-    cross = ((p[:, 1, 0] - p[:, 0, 0]) * (p[:, 2, 1] - p[:, 0, 1])
-             - (p[:, 1, 1] - p[:, 0, 1]) * (p[:, 2, 0] - p[:, 0, 0]))
-    if positive:
-        flip = cross < 0
-        orientation = "positive"
-    else:
-        flip = cross > 0
-        orientation = "negative"
-    tri[flip, 1], tri[flip, 2] = tri[flip, 2], tri[flip, 1].copy()
-    return tri, int(np.count_nonzero(flip)), orientation
-
-
-def triangle_flux_right(vecs: np.ndarray, tri: np.ndarray) -> tuple[np.ndarray, int]:
-    """Wilson-loop Berry flux for right eigenvectors on every triangle."""
-    flux = np.empty(len(tri), dtype=float)
-    bad = 0
-    for n, (i, j, k) in enumerate(tri):
-        z01 = np.vdot(vecs[i], vecs[j])
-        z12 = np.vdot(vecs[j], vecs[k])
-        z20 = np.vdot(vecs[k], vecs[i])
-        if min(abs(z01), abs(z12), abs(z20)) <= LINK_EPS:
-            bad += 1
-        flux[n] = -np.angle(z01 * z12 * z20)
-    return flux, bad
-
-
-def triangle_flux_biorthogonal(right: np.ndarray, left: np.ndarray,
-                               tri: np.ndarray) -> tuple[np.ndarray, int]:
-    """Biorthogonal Wilson-loop Berry flux on every triangle."""
-    flux = np.empty(len(tri), dtype=float)
-    bad = 0
-    for n, (i, j, k) in enumerate(tri):
-        z01 = np.vdot(left[i], right[j])
-        z12 = np.vdot(left[j], right[k])
-        z20 = np.vdot(left[k], right[i])
-        if min(abs(z01), abs(z12), abs(z20)) <= LINK_EPS:
-            bad += 1
-        flux[n] = -np.angle(z01 * z12 * z20)
-    return flux, bad
-
-
-def calculate_chern(mesh_file: Path, Hfun, *, rcond: float = DEFAULT_RCOND,
-                    mode: str = "right", orientation: str = "positive",
-                    progress: int = 0, save_flux: bool = False) -> MeshChernResult:
-    """Calculate Chern number for one saved 2D-GBZ mesh file."""
-    z = np.load(mesh_file)
-    verts = np.asarray(z["verts"], dtype=float)
-    triangles = np.asarray(z["triangles"], dtype=int)
-    E = np.asarray(z["E"], dtype=complex)
-    mu1 = np.asarray(z["mu1"], dtype=float)
-    mu2 = np.asarray(z["mu2"], dtype=float)
-    beta1, beta2 = betas_from_mesh(verts, mu1, mu2)
-
-    if orientation == "keep":
-        oriented = triangles
-        flips = 0
-        orient_label = "kept"
-    else:
-        oriented, flips, orient_label = orient_triangles(
-            verts, triangles, positive=(orientation == "positive")
-        )
-
-    if mode == "right":
-        vecs, diag = right_eigenvectors_on_mesh(
-            Hfun, E, beta1, beta2, rcond, progress=progress
-        )
-        flux, bad = triangle_flux_right(vecs, oriented)
-    elif mode == "biorthogonal":
-        right, left, diag = left_right_eigenvectors_on_mesh(
-            Hfun, E, beta1, beta2, rcond, progress=progress
-        )
-        flux, bad = triangle_flux_biorthogonal(right, left, oriented)
-    else:
-        raise ValueError(f"unknown mode {mode!r}")
-
-    total_flux = float(np.sum(flux))
-    result = MeshChernResult(
-        mesh=str(mesh_file),
-        n_vertices=int(len(verts)),
-        n_triangles=int(len(oriented)),
-        orientation=orient_label,
-        n_orientation_flips=flips,
-        chern=total_flux / TWO_PI,
-        total_flux=total_flux,
-        flux_p50_abs=float(np.percentile(np.abs(flux), 50)),
-        flux_p99_abs=float(np.percentile(np.abs(flux), 99)),
-        flux_max_abs=float(np.max(np.abs(flux))) if len(flux) else 0.0,
-        bad_links=bad,
-        vertex_diagnostics=diag,
-    )
-
-    if save_flux:
-        out = mesh_file.with_name(mesh_file.stem + "_chern_flux.npz")
-        np.savez(out, flux=flux, oriented_triangles=oriented,
-                 beta1=beta1, beta2=beta2)
-        print(f"    flux saved -> {out}")
-    return result
-
-
 class QWZModel:
     """Small self-test model with Chern bands for m in (-2, 0)."""
     def __init__(self, m=-1.0):
@@ -401,21 +190,6 @@ class QWZModel:
         sz = np.array([[1, 0], [0, -1]], dtype=complex)
         return (np.sin(kx) * sx + np.sin(ky) * sy
                 + (self.m + np.cos(kx) + np.cos(ky)) * sz)
-
-
-def regular_torus_mesh(n: int):
-    """Periodic n x n square grid split into two oriented triangles/cell."""
-    t = np.linspace(0.0, TWO_PI, n, endpoint=False)
-    x, y = np.meshgrid(t, t, indexing="ij")
-    verts = np.column_stack([x.ravel(), y.ravel()])
-    def idx(i, j):
-        return (i % n) * n + (j % n)
-    tri = []
-    for i in range(n):
-        for j in range(n):
-            tri.append([idx(i, j), idx(i + 1, j), idx(i + 1, j + 1)])
-            tri.append([idx(i, j), idx(i + 1, j + 1), idx(i, j + 1)])
-    return verts, np.array(tri, dtype=int)
 
 
 def self_test(n: int = 31):
@@ -450,6 +224,7 @@ def print_result(res: MeshChernResult):
         f"C = {res.chern:+.12f}  "
         f"(flux={res.total_flux:+.12f}, nearest={round(res.chern):+d})"
     )
+    print(f"links: {res.link_rule}; Im(total flux)={res.total_flux_imag:+.3e}")
     print(
         f"mesh: V={res.n_vertices} F={res.n_triangles}, "
         f"orientation={res.orientation}, flips={res.n_orientation_flips}"

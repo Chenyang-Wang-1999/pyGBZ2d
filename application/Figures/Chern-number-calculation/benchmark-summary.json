@@ -1,0 +1,2453 @@
+{
+  "nontrivial": {
+    "mass": 1.2,
+    "gamma": 0.4,
+    "coarse": {
+      "total": 400,
+      "done": 400,
+      "in_spectrum": 36,
+      "failed": 0,
+      "elapsed_seconds": 28.546999999991385,
+      "boundary_in_spectrum": 0,
+      "real_range": [
+        -3.4000000000000004,
+        3.4000000000000004
+      ],
+      "imag_range": [
+        -0.7156854249492381,
+        0.6441168824543142
+      ]
+    },
+    "fine": {
+      "total": 40401,
+      "done": 40401,
+      "in_spectrum": 4302,
+      "failed": 0,
+      "elapsed_seconds": 3651.9850000000006,
+      "boundary_in_spectrum": 0,
+      "real_range": [
+        -3.7578947368421067,
+        3.7578947368421067
+      ],
+      "imag_range": [
+        -0.637253967444162,
+        0.637253967444162
+      ],
+      "samples": 25836,
+      "nonfinite_samples": 0,
+      "max_polynomial_residual": 6.226249456531153e-14,
+      "max_mu_symmetry_deviation": 1.0833772212670567e-07
+    }
+  },
+  "trivial": {
+    "mass": 2.6,
+    "gamma": 0.4,
+    "coarse": {
+      "total": 400,
+      "done": 400,
+      "in_spectrum": 16,
+      "failed": 0,
+      "elapsed_seconds": 18.594000000011874,
+      "boundary_in_spectrum": 0,
+      "real_range": [
+        -4.800000000000001,
+        4.800000000000001
+      ],
+      "imag_range": [
+        -0.7156854249492381,
+        0.6441168824543142
+      ]
+    },
+    "fine": {
+      "total": 40401,
+      "done": 40401,
+      "in_spectrum": 1416,
+      "failed": 0,
+      "elapsed_seconds": 1908.4219999999914,
+      "boundary_in_spectrum": 0,
+      "real_range": [
+        -5.305263157894737,
+        5.305263157894737
+      ],
+      "imag_range": [
+        -0.637253967444162,
+        0.637253967444162
+      ],
+      "samples": 8440,
+      "nonfinite_samples": 0,
+      "max_polynomial_residual": 6.56976380488761e-15,
+      "max_mu_symmetry_deviation": 4.141483406217006e-09
+    }
+  },
+  "chern": [
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "band": "lower",
+      "level": "before refinement",
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-lower-base-mesh.npz",
+      "n_vertices": 12918,
+      "n_triangles": 25836,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.0000000000000002,
+      "total_flux": -6.283185307179588,
+      "flux_p50_abs": 9.036872286657819e-05,
+      "flux_p99_abs": 0.0029168918049556807,
+      "flux_max_abs": 0.07073683128148271,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 12918,
+        "nullity_one": 12918,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.051253606222302e-13,
+        "residual_p50": 5.034405433428661e-16,
+        "residual_p99": 2.7299503086570254e-14,
+        "sigma_min_max": 2.0510664779475517e-13,
+        "sigma_min_p50": 3.296498448162377e-16,
+        "gap_ratio_min": 16368370085229.719,
+        "gap_ratio_p01": 114798536698269.1
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0,
+      "topology": {
+        "n_vertices": 12918,
+        "n_edges": 38754,
+        "n_triangles": 25836,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 0.9999999999999998
+      },
+      "max_edge": 0.6662981977516128,
+      "p99_edge": 0.35549405826297825,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-lower-base-mesh_right_flux.npz",
+      "literature_sign_chern": 1.0000000000000002
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "band": "lower",
+      "level": "before refinement",
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-lower-base-mesh.npz",
+      "n_vertices": 12918,
+      "n_triangles": 25836,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.0000000000000058,
+      "total_flux": -6.283185307179623,
+      "flux_p50_abs": 9.596893034480536e-05,
+      "flux_p99_abs": 0.002876380579078852,
+      "flux_max_abs": 0.048857305594039335,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 12918,
+        "nullity_one": 12918,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.2000605436063447e-13,
+        "residual_p50": 6.572564682527295e-16,
+        "residual_p99": 3.037855094572828e-14,
+        "sigma_min_max": 2.0510664779475517e-13,
+        "sigma_min_p50": 3.296498448162377e-16,
+        "gap_ratio_min": 16368370085229.719,
+        "gap_ratio_p01": 114798536698269.1
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 9.71445146547012e-17,
+      "topology": {
+        "n_vertices": 12918,
+        "n_edges": 38754,
+        "n_triangles": 25836,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 0.9999999999999998
+      },
+      "max_edge": 0.6662981977516128,
+      "p99_edge": 0.35549405826297825,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-lower-base-mesh_biorthogonal_flux.npz",
+      "literature_sign_chern": 1.0000000000000058
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "band": "lower",
+      "level": "after refinement",
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-lower-mesh.npz",
+      "n_vertices": 15274,
+      "n_triangles": 30548,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.0000000000000002,
+      "total_flux": -6.283185307179587,
+      "flux_p50_abs": 9.907791442239773e-05,
+      "flux_p99_abs": 0.002490357822740861,
+      "flux_max_abs": 0.009891701031515127,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 15274,
+        "nullity_one": 15274,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.051253606222302e-13,
+        "residual_p50": 4.965068306494546e-16,
+        "residual_p99": 2.5451128122779747e-14,
+        "sigma_min_max": 2.0510664779475517e-13,
+        "sigma_min_p50": 3.2960714914141224e-16,
+        "gap_ratio_min": 16368370085229.719,
+        "gap_ratio_p01": 113623563134113.03
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0,
+      "topology": {
+        "n_vertices": 15274,
+        "n_edges": 45822,
+        "n_triangles": 30548,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 0.9999999999999998
+      },
+      "max_edge": 0.2319238194700928,
+      "p99_edge": 0.1741628271327863,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-lower-mesh_right_flux.npz",
+      "literature_sign_chern": 1.0000000000000002
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "band": "lower",
+      "level": "after refinement",
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-lower-mesh.npz",
+      "n_vertices": 15274,
+      "n_triangles": 30548,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.0000000000000089,
+      "total_flux": -6.283185307179642,
+      "flux_p50_abs": 0.00010462700075651045,
+      "flux_p99_abs": 0.0024101100746425244,
+      "flux_max_abs": 0.007272625780527613,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 15274,
+        "nullity_one": 15274,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.2000605436063447e-13,
+        "residual_p50": 6.413552099459647e-16,
+        "residual_p99": 2.8410446664942946e-14,
+        "sigma_min_max": 2.0510664779475517e-13,
+        "sigma_min_p50": 3.2960714914141224e-16,
+        "gap_ratio_min": 16368370085229.719,
+        "gap_ratio_p01": 113623563134113.03
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 1.3877787807814457e-17,
+      "topology": {
+        "n_vertices": 15274,
+        "n_edges": 45822,
+        "n_triangles": 30548,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 0.9999999999999998
+      },
+      "max_edge": 0.2319238194700928,
+      "p99_edge": 0.1741628271327863,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-lower-mesh_biorthogonal_flux.npz",
+      "literature_sign_chern": 1.0000000000000089
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "band": "upper",
+      "level": "before refinement",
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-upper-base-mesh.npz",
+      "n_vertices": 12918,
+      "n_triangles": 25836,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 1.0,
+      "total_flux": 6.283185307179586,
+      "flux_p50_abs": 9.036872239650869e-05,
+      "flux_p99_abs": 0.002916891804955568,
+      "flux_max_abs": 0.07073683209037737,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 12918,
+        "nullity_one": 12918,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.057170290035247e-13,
+        "residual_p50": 5.084872064359365e-16,
+        "residual_p99": 2.7299860814793733e-14,
+        "sigma_min_max": 2.0513463983199563e-13,
+        "sigma_min_p50": 3.8352079655197726e-16,
+        "gap_ratio_min": 16362750990314.254,
+        "gap_ratio_p01": 114832166174952.77
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0,
+      "topology": {
+        "n_vertices": 12918,
+        "n_edges": 38754,
+        "n_triangles": 25836,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 0.9999999999999998
+      },
+      "max_edge": 0.6662981977516128,
+      "p99_edge": 0.35549405826297825,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-upper-base-mesh_right_flux.npz",
+      "literature_sign_chern": -1.0
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "band": "upper",
+      "level": "before refinement",
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-upper-base-mesh.npz",
+      "n_vertices": 12918,
+      "n_triangles": 25836,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 0.9999999999999949,
+      "total_flux": 6.283185307179554,
+      "flux_p50_abs": 9.596893034482379e-05,
+      "flux_p99_abs": 0.002876380579078829,
+      "flux_max_abs": 0.04885730559403845,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 12918,
+        "nullity_one": 12918,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.2061932617337318e-13,
+        "residual_p50": 6.497598922608231e-16,
+        "residual_p99": 3.025267431679385e-14,
+        "sigma_min_max": 2.0513463983199563e-13,
+        "sigma_min_p50": 3.8352079655197726e-16,
+        "gap_ratio_min": 16362750990314.254,
+        "gap_ratio_p01": 114832166174952.77
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 0.0,
+      "topology": {
+        "n_vertices": 12918,
+        "n_edges": 38754,
+        "n_triangles": 25836,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 0.9999999999999998
+      },
+      "max_edge": 0.6662981977516128,
+      "p99_edge": 0.35549405826297825,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-upper-base-mesh_biorthogonal_flux.npz",
+      "literature_sign_chern": -0.9999999999999949
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "band": "upper",
+      "level": "after refinement",
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-upper-mesh.npz",
+      "n_vertices": 15274,
+      "n_triangles": 30548,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 1.0000000000000002,
+      "total_flux": 6.283185307179587,
+      "flux_p50_abs": 9.932578055077992e-05,
+      "flux_p99_abs": 0.002488331174891127,
+      "flux_max_abs": 0.009683406960698419,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 15274,
+        "nullity_one": 15274,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.0514111670180926e-13,
+        "residual_p50": 5.019559591980756e-16,
+        "residual_p99": 2.54413422984583e-14,
+        "sigma_min_max": 2.0478772792430559e-13,
+        "sigma_min_p50": 3.7262273429417585e-16,
+        "gap_ratio_min": 16347973403090.447,
+        "gap_ratio_p01": 113561902751538.36
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0,
+      "topology": {
+        "n_vertices": 15274,
+        "n_edges": 45822,
+        "n_triangles": 30548,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 0.9999999999999998
+      },
+      "max_edge": 0.2319238194700928,
+      "p99_edge": 0.1741628271327863,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-upper-mesh_right_flux.npz",
+      "literature_sign_chern": -1.0000000000000002
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "band": "upper",
+      "level": "after refinement",
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-upper-mesh.npz",
+      "n_vertices": 15274,
+      "n_triangles": 30548,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 1.0000000000000024,
+      "total_flux": 6.283185307179602,
+      "flux_p50_abs": 0.00010462700075647424,
+      "flux_p99_abs": 0.0024101100746425057,
+      "flux_max_abs": 0.007272625780527787,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 15274,
+        "nullity_one": 15274,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.1999318269740156e-13,
+        "residual_p50": 6.361115321354882e-16,
+        "residual_p99": 2.8420012793058723e-14,
+        "sigma_min_max": 2.0478772792430559e-13,
+        "sigma_min_p50": 3.7262273429417585e-16,
+        "gap_ratio_min": 16347973403090.447,
+        "gap_ratio_p01": 113561902751538.36
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 0.0,
+      "topology": {
+        "n_vertices": 15274,
+        "n_edges": 45822,
+        "n_triangles": 30548,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 0.9999999999999998
+      },
+      "max_edge": 0.2319238194700928,
+      "p99_edge": 0.1741628271327863,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-upper-mesh_biorthogonal_flux.npz",
+      "literature_sign_chern": -1.0000000000000024
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "band": "lower",
+      "level": "before refinement",
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-lower-base-mesh.npz",
+      "n_vertices": 4220,
+      "n_triangles": 8440,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -5.466578358765419e-17,
+      "total_flux": -3.434752482434078e-16,
+      "flux_p50_abs": 6.851173286722342e-05,
+      "flux_p99_abs": 0.0021786538538651596,
+      "flux_max_abs": 0.035435455983270164,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 4220,
+        "nullity_one": 4220,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 5.5467502739637586e-14,
+        "residual_p50": 5.362906252748935e-16,
+        "residual_p99": 1.0090543816936398e-14,
+        "sigma_min_max": 5.5504525907690604e-14,
+        "sigma_min_p50": 3.6990301970494847e-16,
+        "gap_ratio_min": 47947989212567.836,
+        "gap_ratio_p01": 383055782649497.8
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0,
+      "topology": {
+        "n_vertices": 4220,
+        "n_edges": 12660,
+        "n_triangles": 8440,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 1.0
+      },
+      "max_edge": 0.7485401286752194,
+      "p99_edge": 0.4050376837958209,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-lower-base-mesh_right_flux.npz",
+      "literature_sign_chern": 5.466578358765419e-17
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "band": "lower",
+      "level": "before refinement",
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-lower-base-mesh.npz",
+      "n_vertices": 4220,
+      "n_triangles": 8440,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 1.1532271618466241e-15,
+      "total_flux": 7.245939959155123e-15,
+      "flux_p50_abs": 6.750357885877445e-05,
+      "flux_p99_abs": 0.0022238615432189743,
+      "flux_max_abs": 0.03797486491219868,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 4220,
+        "nullity_one": 4220,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 5.794436352916982e-14,
+        "residual_p50": 6.642699814787094e-16,
+        "residual_p99": 1.0491597477919088e-14,
+        "sigma_min_max": 5.5504525907690604e-14,
+        "sigma_min_p50": 3.6990301970494847e-16,
+        "gap_ratio_min": 47947989212567.836,
+        "gap_ratio_p01": 383055782649497.8
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": -3.426078865054194e-17,
+      "topology": {
+        "n_vertices": 4220,
+        "n_edges": 12660,
+        "n_triangles": 8440,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 1.0
+      },
+      "max_edge": 0.7485401286752194,
+      "p99_edge": 0.4050376837958209,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-lower-base-mesh_biorthogonal_flux.npz",
+      "literature_sign_chern": -1.1532271618466241e-15
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "band": "lower",
+      "level": "after refinement",
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-lower-mesh.npz",
+      "n_vertices": 5841,
+      "n_triangles": 11682,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -2.2087185287941088e-16,
+      "total_flux": -1.3877787807814457e-15,
+      "flux_p50_abs": 5.511771740129033e-05,
+      "flux_p99_abs": 0.0019298916907998635,
+      "flux_max_abs": 0.017716412893867238,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 5841,
+        "nullity_one": 5841,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 5.5467502739637586e-14,
+        "residual_p50": 5.280972382141609e-16,
+        "residual_p99": 7.13511567359546e-15,
+        "sigma_min_max": 5.5504525907690604e-14,
+        "sigma_min_p50": 3.642913503070332e-16,
+        "gap_ratio_min": 47947989212567.836,
+        "gap_ratio_p01": 485383457667461.3
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0,
+      "topology": {
+        "n_vertices": 5841,
+        "n_edges": 17523,
+        "n_triangles": 11682,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 1.0
+      },
+      "max_edge": 0.25348214987960016,
+      "p99_edge": 0.18761488018052955,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-lower-mesh_right_flux.npz",
+      "literature_sign_chern": 2.2087185287941088e-16
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "band": "lower",
+      "level": "after refinement",
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-lower-mesh.npz",
+      "n_vertices": 5841,
+      "n_triangles": 11682,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 1.4334583251873767e-15,
+      "total_flux": 9.006684287271582e-15,
+      "flux_p50_abs": 5.532411821203027e-05,
+      "flux_p99_abs": 0.002250983304018642,
+      "flux_max_abs": 0.015698929638071873,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 5841,
+        "nullity_one": 5841,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 5.794436352916982e-14,
+        "residual_p50": 6.50333926369705e-16,
+        "residual_p99": 7.378076834025205e-15,
+        "sigma_min_max": 5.5504525907690604e-14,
+        "sigma_min_p50": 3.642913503070332e-16,
+        "gap_ratio_min": 47947989212567.836,
+        "gap_ratio_p01": 485383457667461.3
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": -1.734723475976807e-17,
+      "topology": {
+        "n_vertices": 5841,
+        "n_edges": 17523,
+        "n_triangles": 11682,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 1.0
+      },
+      "max_edge": 0.25348214987960016,
+      "p99_edge": 0.18761488018052955,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-lower-mesh_biorthogonal_flux.npz",
+      "literature_sign_chern": -1.4334583251873767e-15
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "band": "upper",
+      "level": "before refinement",
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-upper-base-mesh.npz",
+      "n_vertices": 4220,
+      "n_triangles": 8440,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -6.695178040407142e-18,
+      "total_flux": -4.206704429243757e-17,
+      "flux_p50_abs": 6.851173291079231e-05,
+      "flux_p99_abs": 0.002178653887959557,
+      "flux_max_abs": 0.035435455388796416,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 4220,
+        "nullity_one": 4220,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 5.551493420899697e-14,
+        "residual_p50": 5.361114166855583e-16,
+        "residual_p99": 1.0816361937283663e-14,
+        "sigma_min_max": 5.53763544116946e-14,
+        "sigma_min_p50": 4.2999271044744675e-16,
+        "gap_ratio_min": 48058967365114.38,
+        "gap_ratio_p01": 378055963902555.56
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0,
+      "topology": {
+        "n_vertices": 4220,
+        "n_edges": 12660,
+        "n_triangles": 8440,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 1.0
+      },
+      "max_edge": 0.7485401286752194,
+      "p99_edge": 0.4050376837958209,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-upper-base-mesh_right_flux.npz",
+      "literature_sign_chern": 6.695178040407142e-18
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "band": "upper",
+      "level": "before refinement",
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-upper-base-mesh.npz",
+      "n_vertices": 4220,
+      "n_triangles": 8440,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 2.7070606468532797e-15,
+      "total_flux": 1.7008963681952594e-14,
+      "flux_p50_abs": 6.75035788591156e-05,
+      "flux_p99_abs": 0.002223861543220227,
+      "flux_max_abs": 0.03797486425329108,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 4220,
+        "nullity_one": 4220,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 5.805433321132186e-14,
+        "residual_p50": 6.481673612723837e-16,
+        "residual_p99": 1.1079165552131476e-14,
+        "sigma_min_max": 5.53763544116946e-14,
+        "sigma_min_p50": 4.2999271044744675e-16,
+        "gap_ratio_min": 48058967365114.38,
+        "gap_ratio_p01": 378055963902555.56
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 2.2551405187698492e-17,
+      "topology": {
+        "n_vertices": 4220,
+        "n_edges": 12660,
+        "n_triangles": 8440,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 1.0
+      },
+      "max_edge": 0.7485401286752194,
+      "p99_edge": 0.4050376837958209,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-upper-base-mesh_biorthogonal_flux.npz",
+      "literature_sign_chern": -2.7070606468532797e-15
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "band": "upper",
+      "level": "after refinement",
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-upper-mesh.npz",
+      "n_vertices": 5841,
+      "n_triangles": 11682,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 0.0,
+      "total_flux": 0.0,
+      "flux_p50_abs": 5.5078649230591844e-05,
+      "flux_p99_abs": 0.0019298912246339286,
+      "flux_max_abs": 0.01771641451494751,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 5841,
+        "nullity_one": 5841,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 5.548044431266349e-14,
+        "residual_p50": 5.245889398033907e-16,
+        "residual_p99": 7.141345192895277e-15,
+        "sigma_min_max": 5.5675624831332136e-14,
+        "sigma_min_p50": 4.2177854874821987e-16,
+        "gap_ratio_min": 47800638385883.8,
+        "gap_ratio_p01": 483053596350507.06
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0,
+      "topology": {
+        "n_vertices": 5841,
+        "n_edges": 17523,
+        "n_triangles": 11682,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 1.0
+      },
+      "max_edge": 0.25348214987960016,
+      "p99_edge": 0.18761488018052955,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-upper-mesh_right_flux.npz",
+      "literature_sign_chern": -0.0
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "band": "upper",
+      "level": "after refinement",
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-upper-mesh.npz",
+      "n_vertices": 5841,
+      "n_triangles": 11682,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 2.5091042487101076e-15,
+      "total_flux": 1.5765166949677223e-14,
+      "flux_p50_abs": 5.5324118212199836e-05,
+      "flux_p99_abs": 0.002250983304018743,
+      "flux_max_abs": 0.01569892963807194,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 5841,
+        "nullity_one": 5841,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 5.798259334083957e-14,
+        "residual_p50": 6.314870006956039e-16,
+        "residual_p99": 7.34927475412942e-15,
+        "sigma_min_max": 5.5675624831332136e-14,
+        "sigma_min_p50": 4.2177854874821987e-16,
+        "gap_ratio_min": 47800638385883.8,
+        "gap_ratio_p01": 483053596350507.06
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 0.0,
+      "topology": {
+        "n_vertices": 5841,
+        "n_edges": 17523,
+        "n_triangles": 11682,
+        "chi": 0,
+        "n_boundary_edges": 0,
+        "boundary_loops": [],
+        "n_components": 1,
+        "unused_vertices": 0,
+        "nonmanifold_edges": 0,
+        "phase_area_over_4pi2": 1.0
+      },
+      "max_edge": 0.25348214987960016,
+      "p99_edge": 0.18761488018052955,
+      "flux_file": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-upper-mesh_biorthogonal_flux.npz",
+      "literature_sign_chern": -2.5091042487101076e-15
+    }
+  ],
+  "refined_band_meshes": 4,
+  "expected_band_meshes": 4,
+  "all_refined_meshes_closed": true,
+  "all_refined_edges_below_target": false,
+  "diagnostics": {
+    "nontrivial": {
+      "case": "nontrivial",
+      "orientation_checks": [
+        {
+          "mode": "right",
+          "orientation": "positive",
+          "raw_chern": -1.0000000000000002,
+          "link_rule": "right-overlap",
+          "total_flux_imag": 0.0
+        },
+        {
+          "mode": "right",
+          "orientation": "negative",
+          "raw_chern": 0.9999999999999999,
+          "link_rule": "right-overlap",
+          "total_flux_imag": 0.0
+        },
+        {
+          "mode": "biorthogonal",
+          "orientation": "positive",
+          "raw_chern": -1.0000000000000089,
+          "link_rule": "biorthogonal-reciprocal-v1",
+          "total_flux_imag": 1.3877787807814457e-17
+        },
+        {
+          "mode": "biorthogonal",
+          "orientation": "negative",
+          "raw_chern": 1.0000000000000036,
+          "link_rule": "biorthogonal-reciprocal-v1",
+          "total_flux_imag": 8.326672684688674e-17
+        }
+      ],
+      "legacy_LR_shared_edge_phase_bias_raw": -0.0058993004092451826,
+      "reciprocal_link_checks": {
+        "max_local_orientation_error": 0.0,
+        "max_local_complex_gauge_error": 5.836365700627527e-15,
+        "max_edge_reciprocity_error": 8.881813830413478e-16,
+        "min_overlap_product_real": 0.9869448554239122,
+        "complex_chern_imag": 2.208718528794109e-18
+      },
+      "unique_long_edge_count": 8,
+      "long_edges": [
+        {
+          "length": 0.2120258325943622,
+          "theta_a": [
+            0.6845099789325537,
+            0.8167380802022379
+          ],
+          "theta_b": [
+            0.8439333636171158,
+            0.9565205472825218
+          ],
+          "E_a": [
+            -1.0146315789473688,
+            -0.3632347614431723
+          ],
+          "E_b": [
+            -1.0695564103932333,
+            -0.3460784408701542
+          ]
+        },
+        {
+          "length": 0.20580593276241924,
+          "theta_a": [
+            0.6845099789325537,
+            0.8167380802022379
+          ],
+          "theta_b": [
+            0.8888838894262635,
+            0.8409741415513626
+          ],
+          "E_a": [
+            -1.0146315789473688,
+            -0.3632347614431723
+          ],
+          "E_b": [
+            -1.0546005134638674,
+            -0.35349387123679843
+          ]
+        },
+        {
+          "length": 0.2319238194700928,
+          "theta_a": [
+            0.4729729105116983,
+            1.2217271737566016
+          ],
+          "theta_b": [
+            0.245185735450473,
+            1.1781191364787913
+          ],
+          "E_a": [
+            -1.0146315789473688,
+            -0.35686222176873067
+          ],
+          "E_b": [
+            -0.9905654323139024,
+            -0.37314333846250597
+          ]
+        },
+        {
+          "length": 0.2082351092255119,
+          "theta_a": [
+            1.221727198590589,
+            0.4729729007712246
+          ],
+          "theta_b": [
+            1.1665942327709458,
+            0.27216897452950267
+          ],
+          "E_a": [
+            -1.0146315789473688,
+            -0.35686222176873067
+          ],
+          "E_b": [
+            -0.991749351344833,
+            -0.37318721423135254
+          ]
+        },
+        {
+          "length": 0.2303168091783652,
+          "theta_a": [
+            5.810212399828332,
+            5.0614581266462295
+          ],
+          "theta_b": [
+            6.03603535453037,
+            5.106733127692554
+          ],
+          "E_a": [
+            -1.0146315789473688,
+            0.3568622217687307
+          ],
+          "E_b": [
+            -0.9906205564973486,
+            0.37311468164061684
+          ]
+        },
+        {
+          "length": 0.22110017014093541,
+          "theta_a": [
+            4.919352571271593,
+            5.910647476466709
+          ],
+          "theta_b": [
+            5.0919067503607,
+            6.0488876316866556
+          ],
+          "E_a": [
+            -1.0009964004624718,
+            0.35787907247020667
+          ],
+          "E_b": [
+            -0.9903759940450778,
+            0.3734666511832586
+          ]
+        },
+        {
+          "length": 0.2254630122520383,
+          "theta_a": [
+            5.910647374751258,
+            4.919352700697962
+          ],
+          "theta_b": [
+            6.03603535453037,
+            5.106733127692554
+          ],
+          "E_a": [
+            -1.0009964143221917,
+            0.3578790675045472
+          ],
+          "E_b": [
+            -0.9906205564973486,
+            0.37311468164061684
+          ]
+        },
+        {
+          "length": 0.22518454096727608,
+          "theta_a": [
+            0.37253791291242166,
+            1.3638326265282306
+          ],
+          "theta_b": [
+            0.245185735450473,
+            1.1781191364787913
+          ],
+          "E_a": [
+            -1.0009964115253787,
+            -0.3578790689433029
+          ],
+          "E_b": [
+            -0.9905654323139024,
+            -0.37314333846250597
+          ]
+        }
+      ]
+    },
+    "trivial": {
+      "case": "trivial",
+      "orientation_checks": [
+        {
+          "mode": "right",
+          "orientation": "positive",
+          "raw_chern": -2.2087185287941088e-16,
+          "link_rule": "right-overlap",
+          "total_flux_imag": 0.0
+        },
+        {
+          "mode": "right",
+          "orientation": "negative",
+          "raw_chern": 3.533949646070574e-17,
+          "link_rule": "right-overlap",
+          "total_flux_imag": 0.0
+        },
+        {
+          "mode": "biorthogonal",
+          "orientation": "positive",
+          "raw_chern": 1.4334583251873767e-15,
+          "link_rule": "biorthogonal-reciprocal-v1",
+          "total_flux_imag": -1.734723475976807e-17
+        },
+        {
+          "mode": "biorthogonal",
+          "orientation": "negative",
+          "raw_chern": -7.220300870627942e-15,
+          "link_rule": "biorthogonal-reciprocal-v1",
+          "total_flux_imag": 0.0
+        }
+      ],
+      "legacy_LR_shared_edge_phase_bias_raw": 1.874131958389269e-05,
+      "reciprocal_link_checks": {
+        "max_local_orientation_error": 0.0,
+        "max_local_complex_gauge_error": 5.455757449945088e-15,
+        "max_edge_reciprocity_error": 6.664521505870055e-16,
+        "min_overlap_product_real": 0.9709417957892184,
+        "complex_chern_imag": -2.7608981609926363e-18
+      },
+      "unique_long_edge_count": 23,
+      "long_edges": [
+        {
+          "length": 0.20976218004956518,
+          "theta_a": [
+            1.9954086528935837,
+            5.6678430875861325
+          ],
+          "theta_b": [
+            2.0361512456514412,
+            5.873610464287381
+          ],
+          "E_a": [
+            -2.387368421052632,
+            -0.06372539674441624
+          ],
+          "E_b": [
+            -2.2812631578947373,
+            -0.06372539674441624
+          ]
+        },
+        {
+          "length": 0.22193574394302418,
+          "theta_a": [
+            1.0086465909051745,
+            1.845449950128989
+          ],
+          "theta_b": [
+            0.8542700006822518,
+            1.6860029594684958
+          ],
+          "E_a": [
+            -2.599578947368421,
+            -0.012745079348883248
+          ],
+          "E_b": [
+            -2.3343157894736843,
+            0.006372539674441624
+          ]
+        },
+        {
+          "length": 0.22193574273239788,
+          "theta_a": [
+            1.845449939675517,
+            1.0086465994252698
+          ],
+          "theta_b": [
+            1.6860029542649297,
+            0.854270005520439
+          ],
+          "E_a": [
+            -2.599578947368421,
+            -0.012745079348883248
+          ],
+          "E_b": [
+            -2.3343157894736843,
+            0.006372539674441624
+          ]
+        },
+        {
+          "length": 0.20924094096052148,
+          "theta_a": [
+            0.8717688959454275,
+            2.0206044718451563
+          ],
+          "theta_b": [
+            0.6741877640430165,
+            1.951731634745132
+          ],
+          "E_a": [
+            -2.599578947368421,
+            -0.006372539674441624
+          ],
+          "E_b": [
+            -2.387368421052632,
+            0.0
+          ]
+        },
+        {
+          "length": 0.2534815750125581,
+          "theta_a": [
+            0.8717688959454275,
+            2.0206044718451563
+          ],
+          "theta_b": [
+            0.7453736220469288,
+            1.800883868334765
+          ],
+          "E_a": [
+            -2.599578947368421,
+            -0.006372539674441624
+          ],
+          "E_b": [
+            -2.333501869453884,
+            0.0027863679769419133
+          ]
+        },
+        {
+          "length": 0.20924093652817002,
+          "theta_a": [
+            2.020604484443468,
+            0.8717688864492169
+          ],
+          "theta_b": [
+            1.9517316354982155,
+            0.6741877633697332
+          ],
+          "E_a": [
+            -2.599578947368421,
+            -0.006372539674441624
+          ],
+          "E_b": [
+            -2.387368421052632,
+            0.0
+          ]
+        },
+        {
+          "length": 0.25348214987960016,
+          "theta_a": [
+            2.020604484443468,
+            0.8717688864492169
+          ],
+          "theta_b": [
+            1.8008824421659928,
+            0.7453749607842569
+          ],
+          "E_a": [
+            -2.599578947368421,
+            -0.006372539674441624
+          ],
+          "E_b": [
+            -2.333501865993952,
+            0.0027864099852985646
+          ]
+        },
+        {
+          "length": 0.2219357407172927,
+          "theta_a": [
+            4.597182340601534,
+            5.428915313148136
+          ],
+          "theta_b": [
+            4.437735375183028,
+            5.274538701491567
+          ],
+          "E_a": [
+            -2.3343157894736843,
+            -0.006372539674441624
+          ],
+          "E_b": [
+            -2.599578947368421,
+            0.012745079348883248
+          ]
+        },
+        {
+          "length": 0.24949180807515234,
+          "theta_a": [
+            4.597182340601534,
+            5.428915313148136
+          ],
+          "theta_b": [
+            4.368743986606303,
+            5.32860538980773
+          ],
+          "E_a": [
+            -2.3343157894736843,
+            -0.006372539674441624
+          ],
+          "E_b": [
+            -2.600586070734273,
+            0.009806806007559286
+          ]
+        },
+        {
+          "length": 0.2219357430204012,
+          "theta_a": [
+            5.4289153065998255,
+            4.597182347644371
+          ],
+          "theta_b": [
+            5.274538711165972,
+            4.437735363313309
+          ],
+          "E_a": [
+            -2.3343157894736843,
+            -0.006372539674441624
+          ],
+          "E_b": [
+            -2.599578947368421,
+            0.012745079348883248
+          ]
+        },
+        {
+          "length": 0.24949276699298503,
+          "theta_a": [
+            5.4289153065998255,
+            4.597182347644371
+          ],
+          "theta_b": [
+            5.328606647162968,
+            4.368742391367461
+          ],
+          "E_a": [
+            -2.3343157894736843,
+            -0.006372539674441624
+          ],
+          "E_b": [
+            -2.6005860694644083,
+            0.009806743239691468
+          ]
+        },
+        {
+          "length": 0.20924095263510728,
+          "theta_a": [
+            4.3314536716813805,
+            5.608997543809845
+          ],
+          "theta_b": [
+            4.262580864806063,
+            5.411416389008172
+          ],
+          "E_a": [
+            -2.387368421052632,
+            0.0
+          ],
+          "E_b": [
+            -2.599578947368421,
+            0.006372539674441624
+          ]
+        },
+        {
+          "length": 0.20924093946115274,
+          "theta_a": [
+            5.608997543136569,
+            4.331453672434455
+          ],
+          "theta_b": [
+            5.411416414197655,
+            4.262580831388002
+          ],
+          "E_a": [
+            -2.387368421052632,
+            0.0
+          ],
+          "E_b": [
+            -2.599578947368421,
+            0.006372539674441624
+          ]
+        },
+        {
+          "length": 0.25348212861244296,
+          "theta_a": [
+            4.262580864806063,
+            5.411416389008172
+          ],
+          "theta_b": [
+            4.482302859072137,
+            5.537810355484561
+          ],
+          "E_a": [
+            -2.599578947368421,
+            0.006372539674441624
+          ],
+          "E_b": [
+            -2.3335018632253,
+            -0.002786409088537216
+          ]
+        },
+        {
+          "length": 0.2534815727376956,
+          "theta_a": [
+            5.411416414197655,
+            4.262580831388002
+          ],
+          "theta_b": [
+            5.537811704318694,
+            4.482301422941898
+          ],
+          "E_a": [
+            -2.599578947368421,
+            0.006372539674441624
+          ],
+          "E_b": [
+            -2.333501866101448,
+            -0.0027863672019424073
+          ]
+        },
+        {
+          "length": 0.24949275037374172,
+          "theta_a": [
+            0.8542700006822518,
+            1.6860029594684958
+          ],
+          "theta_b": [
+            0.9545786846638225,
+            1.91444288681689
+          ],
+          "E_a": [
+            -2.3343157894736843,
+            0.006372539674441624
+          ],
+          "E_b": [
+            -2.6005860712037494,
+            -0.009806745456078793
+          ]
+        },
+        {
+          "length": 0.24949179635937896,
+          "theta_a": [
+            1.6860029542649297,
+            0.854270005520439
+          ],
+          "theta_b": [
+            1.914441288410178,
+            0.9545799449261315
+          ],
+          "E_a": [
+            -2.3343157894736843,
+            0.006372539674441624
+          ],
+          "E_b": [
+            -2.600586072721105,
+            -0.009806806501915984
+          ]
+        },
+        {
+          "length": 0.2097621523783813,
+          "theta_a": [
+            0.6153422134024339,
+            4.287776647453995
+          ],
+          "theta_b": [
+            0.4095748605001797,
+            4.247034076965495
+          ],
+          "E_a": [
+            -2.387368421052632,
+            0.06372539674441624
+          ],
+          "E_b": [
+            -2.2812631578947373,
+            0.06372539674441624
+          ]
+        },
+        {
+          "length": 0.20976218004956232,
+          "theta_a": [
+            4.287776654285998,
+            0.615342219593449
+          ],
+          "theta_b": [
+            4.247034061528144,
+            0.40957484289220264
+          ],
+          "E_a": [
+            -2.387368421052632,
+            0.06372539674441624
+          ],
+          "E_b": [
+            -2.2812631578947373,
+            0.06372539674441624
+          ]
+        },
+        {
+          "length": 0.23803851988724956,
+          "theta_a": [
+            1.8008824421659928,
+            0.7453749607842569
+          ],
+          "theta_b": [
+            1.914441288410178,
+            0.9545799449261315
+          ],
+          "E_a": [
+            -2.333501865993952,
+            0.0027864099852985646
+          ],
+          "E_b": [
+            -2.600586072721105,
+            -0.009806806501915984
+          ]
+        },
+        {
+          "length": 0.23803867102460888,
+          "theta_a": [
+            0.7453736220469288,
+            1.800883868334765
+          ],
+          "theta_b": [
+            0.9545786846638225,
+            1.91444288681689
+          ],
+          "E_a": [
+            -2.333501869453884,
+            0.0027863679769419133
+          ],
+          "E_b": [
+            -2.6005860712037494,
+            -0.009806745456078793
+          ]
+        },
+        {
+          "length": 0.23803867247078625,
+          "theta_a": [
+            5.537811704318694,
+            4.482301422941898
+          ],
+          "theta_b": [
+            5.328606647162968,
+            4.368742391367461
+          ],
+          "E_a": [
+            -2.333501866101448,
+            -0.0027863672019424073
+          ],
+          "E_b": [
+            -2.6005860694644083,
+            0.009806743239691468
+          ]
+        },
+        {
+          "length": 0.23803851616819457,
+          "theta_a": [
+            4.368743986606303,
+            5.32860538980773
+          ],
+          "theta_b": [
+            4.482302859072137,
+            5.537810355484561
+          ],
+          "E_a": [
+            -2.600586070734273,
+            0.009806806007559286
+          ],
+          "E_b": [
+            -2.3335018632253,
+            -0.002786409088537216
+          ]
+        }
+      ]
+    }
+  },
+  "bz_checks": [
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.0,
+      "n": 21,
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-BZ-g0-n21.npz",
+      "literature_sign_chern": 0.9999999999999999,
+      "min_abs_real_energy": 0.8,
+      "n_vertices": 441,
+      "n_triangles": 882,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -0.9999999999999999,
+      "total_flux": -6.283185307179585,
+      "flux_p50_abs": 0.0033757811115775914,
+      "flux_p99_abs": 0.03363293843985976,
+      "flux_max_abs": 0.03538533760707173,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 441,
+        "nullity_one": 441,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 1.9036290231356155e-15,
+        "residual_p50": 4.339069996293818e-16,
+        "residual_p99": 1.7596997233393551e-15,
+        "sigma_min_max": 1.8968809376435336e-15,
+        "sigma_min_p50": 2.5263546517870527e-16,
+        "gap_ratio_min": 2941271680279798.5,
+        "gap_ratio_p01": 3177619780375121.0
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.0,
+      "n": 21,
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-BZ-g0-n21.npz",
+      "literature_sign_chern": 0.9999999999999999,
+      "min_abs_real_energy": 0.8,
+      "n_vertices": 441,
+      "n_triangles": 882,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -0.9999999999999999,
+      "total_flux": -6.283185307179585,
+      "flux_p50_abs": 0.0033757811115776694,
+      "flux_p99_abs": 0.033632938439859754,
+      "flux_max_abs": 0.03538533760707141,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 441,
+        "nullity_one": 441,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 1.9054860341178066e-15,
+        "residual_p50": 4.577566798522237e-16,
+        "residual_p99": 1.7598346227341304e-15,
+        "sigma_min_max": 1.8968809376435336e-15,
+        "sigma_min_p50": 2.5263546517870527e-16,
+        "gap_ratio_min": 2941271680279798.5,
+        "gap_ratio_p01": 3177619780375121.0
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.0,
+      "n": 41,
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-BZ-g0-n41.npz",
+      "literature_sign_chern": 1.0,
+      "min_abs_real_energy": 0.8,
+      "n_vertices": 1681,
+      "n_triangles": 3362,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.0,
+      "total_flux": -6.283185307179586,
+      "flux_p50_abs": 0.0008372285257687265,
+      "flux_p99_abs": 0.008808391680593738,
+      "flux_max_abs": 0.009202906911706856,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 1681,
+        "nullity_one": 1681,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.595739707810043e-15,
+        "residual_p50": 4.2129050542199493e-16,
+        "residual_p99": 1.6829405569964645e-15,
+        "sigma_min_max": 2.5914020093779574e-15,
+        "sigma_min_p50": 2.4645515249833767e-16,
+        "gap_ratio_min": 2106950009000258.2,
+        "gap_ratio_p01": 2770072497382771.5
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.0,
+      "n": 41,
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-BZ-g0-n41.npz",
+      "literature_sign_chern": 1.0000000000000029,
+      "min_abs_real_energy": 0.8,
+      "n_vertices": 1681,
+      "n_triangles": 3362,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.0000000000000029,
+      "total_flux": -6.283185307179605,
+      "flux_p50_abs": 0.0008372285257688579,
+      "flux_p99_abs": 0.008808391680593958,
+      "flux_max_abs": 0.00920290691170685,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 1681,
+        "nullity_one": 1681,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.595739707810043e-15,
+        "residual_p50": 4.742874840267547e-16,
+        "residual_p99": 1.7200288478344588e-15,
+        "sigma_min_max": 2.5914020093779574e-15,
+        "sigma_min_p50": 2.4645515249833767e-16,
+        "gap_ratio_min": 2106950009000258.2,
+        "gap_ratio_p01": 2770072497382771.5
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 1.9721522630525295e-31
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.0,
+      "n": 81,
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-BZ-g0-n81.npz",
+      "literature_sign_chern": 1.0000000000000002,
+      "min_abs_real_energy": 0.8,
+      "n_vertices": 6561,
+      "n_triangles": 13122,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.0000000000000002,
+      "total_flux": -6.283185307179587,
+      "flux_p50_abs": 0.00022271853790546478,
+      "flux_p99_abs": 0.0022491313743843023,
+      "flux_max_abs": 0.0023523561283762826,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 6561,
+        "nullity_one": 6561,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.9439128635401257e-15,
+        "residual_p50": 4.1868926964388357e-16,
+        "residual_p99": 1.585885968305717e-15,
+        "sigma_min_max": 2.9521490011140493e-15,
+        "sigma_min_p50": 2.4590975107915874e-16,
+        "gap_ratio_min": 1917278178969597.0,
+        "gap_ratio_p01": 2906667222185259.0
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.0,
+      "n": 81,
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-BZ-g0-n81.npz",
+      "literature_sign_chern": 1.000000000000004,
+      "min_abs_real_energy": 0.8,
+      "n_vertices": 6561,
+      "n_triangles": 13122,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.000000000000004,
+      "total_flux": -6.283185307179612,
+      "flux_p50_abs": 0.00022271853790563882,
+      "flux_p99_abs": 0.0022491313743843717,
+      "flux_max_abs": 0.002352356128376943,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 6561,
+        "nullity_one": 6561,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.949248478335006e-15,
+        "residual_p50": 4.650147684918805e-16,
+        "residual_p99": 1.5949540909145727e-15,
+        "sigma_min_max": 2.9521490011140493e-15,
+        "sigma_min_p50": 2.4590975107915874e-16,
+        "gap_ratio_min": 1917278178969597.0,
+        "gap_ratio_p01": 2906667222185259.0
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": -1.1832913578315177e-30
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "n": 21,
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-BZ-g0.4-n21.npz",
+      "literature_sign_chern": 1.0,
+      "min_abs_real_energy": 0.565685424949238,
+      "n_vertices": 441,
+      "n_triangles": 882,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.0,
+      "total_flux": -6.283185307179586,
+      "flux_p50_abs": 0.003066215721771734,
+      "flux_p99_abs": 0.04113169700208638,
+      "flux_max_abs": 0.05457613614641652,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 441,
+        "nullity_one": 441,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.061236947518519e-15,
+        "residual_p50": 4.2457866502527573e-16,
+        "residual_p99": 1.5851317148107778e-15,
+        "sigma_min_max": 2.03888597763857e-15,
+        "sigma_min_p50": 2.709690377104821e-16,
+        "gap_ratio_min": 2890613740218919.5,
+        "gap_ratio_p01": 3498125386854901.0
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "n": 21,
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-BZ-g0.4-n21.npz",
+      "literature_sign_chern": 1.0000000000000002,
+      "min_abs_real_energy": 0.565685424949238,
+      "n_vertices": 441,
+      "n_triangles": 882,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.0000000000000002,
+      "total_flux": -6.283185307179588,
+      "flux_p50_abs": 0.0031484344466756243,
+      "flux_p99_abs": 0.05286774103748084,
+      "flux_max_abs": 0.09017509488894815,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 441,
+        "nullity_one": 441,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.083067044757094e-15,
+        "residual_p50": 5.51819327801512e-16,
+        "residual_p99": 1.719211712849032e-15,
+        "sigma_min_max": 2.03888597763857e-15,
+        "sigma_min_p50": 2.709690377104821e-16,
+        "gap_ratio_min": 2890613740218919.5,
+        "gap_ratio_p01": 3498125386854901.0
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 2.220446049250313e-16
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "n": 41,
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-BZ-g0.4-n41.npz",
+      "literature_sign_chern": 1.0,
+      "min_abs_real_energy": 0.565685424949238,
+      "n_vertices": 1681,
+      "n_triangles": 3362,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.0,
+      "total_flux": -6.283185307179586,
+      "flux_p50_abs": 0.0008330200437181435,
+      "flux_p99_abs": 0.010990515286549075,
+      "flux_max_abs": 0.013942721233346899,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 1681,
+        "nullity_one": 1681,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.6702483008812186e-15,
+        "residual_p50": 4.20934145542537e-16,
+        "residual_p99": 1.6715993258380867e-15,
+        "sigma_min_max": 2.6853770029932905e-15,
+        "sigma_min_p50": 2.426201293080064e-16,
+        "gap_ratio_min": 2068992819846516.2,
+        "gap_ratio_p01": 3037838033158543.5
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "n": 41,
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-BZ-g0.4-n41.npz",
+      "literature_sign_chern": 0.9999999999999999,
+      "min_abs_real_energy": 0.565685424949238,
+      "n_vertices": 1681,
+      "n_triangles": 3362,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -0.9999999999999999,
+      "total_flux": -6.283185307179585,
+      "flux_p50_abs": 0.0008177166000653813,
+      "flux_p99_abs": 0.01653880808831284,
+      "flux_max_abs": 0.025199832094858984,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 1681,
+        "nullity_one": 1681,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.7780891033483737e-15,
+        "residual_p50": 5.476013991409195e-16,
+        "residual_p99": 1.7525207536434685e-15,
+        "sigma_min_max": 2.6853770029932905e-15,
+        "sigma_min_p50": 2.426201293080064e-16,
+        "gap_ratio_min": 2068992819846516.2,
+        "gap_ratio_p01": 3037838033158543.5
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 4.440892098500626e-16
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "n": 81,
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-BZ-g0.4-n81.npz",
+      "literature_sign_chern": 1.0,
+      "min_abs_real_energy": 0.565685424949238,
+      "n_vertices": 6561,
+      "n_triangles": 13122,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.0,
+      "total_flux": -6.283185307179586,
+      "flux_p50_abs": 0.0002172278617408715,
+      "flux_p99_abs": 0.002819474100249461,
+      "flux_max_abs": 0.0035179023324802094,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 6561,
+        "nullity_one": 6561,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.711678544309865e-15,
+        "residual_p50": 4.2909429260823063e-16,
+        "residual_p99": 1.6897195763630732e-15,
+        "sigma_min_max": 2.6585618872791186e-15,
+        "sigma_min_p50": 2.584768468293109e-16,
+        "gap_ratio_min": 1833396246215205.0,
+        "gap_ratio_p01": 3034695985492164.5
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "nontrivial",
+      "mass": 1.2,
+      "gamma": 0.4,
+      "n": 81,
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-nontrivial-BZ-g0.4-n81.npz",
+      "literature_sign_chern": 1.0000000000000018,
+      "min_abs_real_energy": 0.565685424949238,
+      "n_vertices": 6561,
+      "n_triangles": 13122,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.0000000000000018,
+      "total_flux": -6.283185307179598,
+      "flux_p50_abs": 0.00020512268860839455,
+      "flux_p99_abs": 0.004189081578869856,
+      "flux_max_abs": 0.0065954480218715075,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 6561,
+        "nullity_one": 6561,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.715404719758462e-15,
+        "residual_p50": 5.579233166498663e-16,
+        "residual_p99": 1.7543211142440976e-15,
+        "sigma_min_max": 2.6585618872791186e-15,
+        "sigma_min_p50": 2.584768468293109e-16,
+        "gap_ratio_min": 1833396246215205.0,
+        "gap_ratio_p01": 3034695985492164.5
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": -2.220446049250313e-16
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.0,
+      "n": 21,
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-BZ-g0-n21.npz",
+      "literature_sign_chern": 4.8591807633470396e-17,
+      "min_abs_real_energy": 0.6000000000000001,
+      "n_vertices": 441,
+      "n_triangles": 882,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -4.8591807633470396e-17,
+      "total_flux": -3.0531133177191805e-16,
+      "flux_p50_abs": 0.0010124311724504518,
+      "flux_p99_abs": 0.019078457322103805,
+      "flux_max_abs": 0.04741984116642682,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 441,
+        "nullity_one": 441,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.8422546972206805e-15,
+        "residual_p50": 5.758177598465801e-16,
+        "residual_p99": 2.1089728115151008e-15,
+        "sigma_min_max": 2.8226015874775812e-15,
+        "sigma_min_p50": 4.616378515224963e-16,
+        "gap_ratio_min": 2572718575373218.0,
+        "gap_ratio_p01": 2983378912468635.5
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.0,
+      "n": 21,
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-BZ-g0-n21.npz",
+      "literature_sign_chern": 9.033658782767906e-16,
+      "min_abs_real_energy": 0.6000000000000001,
+      "n_vertices": 441,
+      "n_triangles": 882,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -9.033658782767906e-16,
+      "total_flux": -5.676015213396113e-15,
+      "flux_p50_abs": 0.0010124311724506454,
+      "flux_p99_abs": 0.019078457322104114,
+      "flux_max_abs": 0.047419841166426835,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 441,
+        "nullity_one": 441,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.845969504220731e-15,
+        "residual_p50": 6.150977271035302e-16,
+        "residual_p99": 2.1309289450869304e-15,
+        "sigma_min_max": 2.8226015874775812e-15,
+        "sigma_min_p50": 4.616378515224963e-16,
+        "gap_ratio_min": 2572718575373218.0,
+        "gap_ratio_p01": 2983378912468635.5
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.0,
+      "n": 41,
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-BZ-g0-n41.npz",
+      "literature_sign_chern": 1.1706208202608776e-16,
+      "min_abs_real_energy": 0.6000000000000001,
+      "n_vertices": 1681,
+      "n_triangles": 3362,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -1.1706208202608776e-16,
+      "total_flux": -7.355227538141662e-16,
+      "flux_p50_abs": 0.0002626658875350184,
+      "flux_p99_abs": 0.006572838484899811,
+      "flux_max_abs": 0.015099935945078394,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 1681,
+        "nullity_one": 1681,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 3.866323079159215e-15,
+        "residual_p50": 5.989807346552334e-16,
+        "residual_p99": 2.586974179333855e-15,
+        "sigma_min_max": 3.850021982202461e-15,
+        "sigma_min_p50": 4.734007720865024e-16,
+        "gap_ratio_min": 2293652934005902.0,
+        "gap_ratio_p01": 2828844407787773.0
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.0,
+      "n": 41,
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-BZ-g0-n41.npz",
+      "literature_sign_chern": -2.9155084580082237e-16,
+      "min_abs_real_energy": 0.6000000000000001,
+      "n_vertices": 1681,
+      "n_triangles": 3362,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 2.9155084580082237e-16,
+      "total_flux": 1.8318679906315083e-15,
+      "flux_p50_abs": 0.0002626658875350407,
+      "flux_p99_abs": 0.006572838484899792,
+      "flux_max_abs": 0.015099935945077836,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 1681,
+        "nullity_one": 1681,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 3.867576814101353e-15,
+        "residual_p50": 6.459552066529277e-16,
+        "residual_p99": 2.5873631226009325e-15,
+        "sigma_min_max": 3.850021982202461e-15,
+        "sigma_min_p50": 4.734007720865024e-16,
+        "gap_ratio_min": 2293652934005902.0,
+        "gap_ratio_p01": 2828844407787773.0
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": -1.3805065841367707e-30
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.0,
+      "n": 81,
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-BZ-g0-n81.npz",
+      "literature_sign_chern": 2.981770013872047e-16,
+      "min_abs_real_energy": 0.6000000000000001,
+      "n_vertices": 6561,
+      "n_triangles": 13122,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -2.981770013872047e-16,
+      "total_flux": -1.8735013540549517e-15,
+      "flux_p50_abs": 6.644489798716697e-05,
+      "flux_p99_abs": 0.0017799373362963127,
+      "flux_max_abs": 0.004094935876052152,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 6561,
+        "nullity_one": 6561,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 3.8377267974267925e-15,
+        "residual_p50": 6.064836047037589e-16,
+        "residual_p99": 2.247727720653568e-15,
+        "sigma_min_max": 3.834875977655097e-15,
+        "sigma_min_p50": 4.649343723592641e-16,
+        "gap_ratio_min": 2075787464111660.2,
+        "gap_ratio_p01": 2948754934066516.0
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.0,
+      "n": 81,
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-BZ-g0-n81.npz",
+      "literature_sign_chern": -1.464380384590494e-15,
+      "min_abs_real_energy": 0.6000000000000001,
+      "n_vertices": 6561,
+      "n_triangles": 13122,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 1.464380384590494e-15,
+      "total_flux": 9.200973316580985e-15,
+      "flux_p50_abs": 6.644489798715222e-05,
+      "flux_p99_abs": 0.0017799373362961288,
+      "flux_max_abs": 0.0040949358760522525,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 6561,
+        "nullity_one": 6561,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 3.840618013993155e-15,
+        "residual_p50": 6.501105426316427e-16,
+        "residual_p99": 2.2483530829796233e-15,
+        "sigma_min_max": 3.834875977655097e-15,
+        "sigma_min_p50": 4.649343723592641e-16,
+        "gap_ratio_min": 2075787464111660.2,
+        "gap_ratio_p01": 2948754934066516.0
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 2.7610131682735413e-30
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "n": 21,
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-BZ-g0.4-n21.npz",
+      "literature_sign_chern": 3.533949646070574e-17,
+      "min_abs_real_energy": 0.20000000000000026,
+      "n_vertices": 441,
+      "n_triangles": 882,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -3.533949646070574e-17,
+      "total_flux": -2.220446049250313e-16,
+      "flux_p50_abs": 0.001024403368247418,
+      "flux_p99_abs": 0.03334421406043339,
+      "flux_max_abs": 0.15933920929579828,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 441,
+        "nullity_one": 441,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.5735720465430346e-15,
+        "residual_p50": 6.39922537831991e-16,
+        "residual_p99": 2.1466156128232004e-15,
+        "sigma_min_max": 2.567504736064113e-15,
+        "sigma_min_p50": 4.691341213576291e-16,
+        "gap_ratio_min": 2754534003006456.0,
+        "gap_ratio_p01": 3127965118830920.0
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "n": 21,
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-BZ-g0.4-n21.npz",
+      "literature_sign_chern": -2.3942508852128142e-15,
+      "min_abs_real_energy": 0.20000000000000026,
+      "n_vertices": 441,
+      "n_triangles": 882,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 2.3942508852128142e-15,
+      "total_flux": 1.504352198367087e-14,
+      "flux_p50_abs": 0.0010441346116471933,
+      "flux_p99_abs": 0.01724995818170403,
+      "flux_max_abs": 0.2541018884109076,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 441,
+        "nullity_one": 441,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 2.5968161499311046e-15,
+        "residual_p50": 7.390492082589766e-16,
+        "residual_p99": 2.234411500603184e-15,
+        "sigma_min_max": 2.567504736064113e-15,
+        "sigma_min_p50": 4.691341213576291e-16,
+        "gap_ratio_min": 2754534003006456.0,
+        "gap_ratio_p01": 3127965118830920.0
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 5.551115123125783e-17
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "n": 41,
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-BZ-g0.4-n41.npz",
+      "literature_sign_chern": 7.067899292141149e-17,
+      "min_abs_real_energy": 0.20000000000000026,
+      "n_vertices": 1681,
+      "n_triangles": 3362,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -7.067899292141149e-17,
+      "total_flux": -4.440892098500626e-16,
+      "flux_p50_abs": 0.00026434154537539336,
+      "flux_p99_abs": 0.00707945104041182,
+      "flux_max_abs": 0.06179051190486792,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 1681,
+        "nullity_one": 1681,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 3.9583090416954455e-15,
+        "residual_p50": 6.3109611985757e-16,
+        "residual_p99": 2.2689166944288107e-15,
+        "sigma_min_max": 3.951338538832135e-15,
+        "sigma_min_p50": 4.643095541327886e-16,
+        "gap_ratio_min": 2182171852711200.0,
+        "gap_ratio_p01": 3029577082279143.5
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "n": 41,
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-BZ-g0.4-n41.npz",
+      "literature_sign_chern": -1.9436723053388158e-16,
+      "min_abs_real_energy": 0.20000000000000026,
+      "n_vertices": 1681,
+      "n_triangles": 3362,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 1.9436723053388158e-16,
+      "total_flux": 1.2212453270876722e-15,
+      "flux_p50_abs": 0.00028157303856645127,
+      "flux_p99_abs": 0.0055359095780082865,
+      "flux_max_abs": 0.1484460450338847,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 1681,
+        "nullity_one": 1681,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 3.998946624703877e-15,
+        "residual_p50": 7.369614944603283e-16,
+        "residual_p99": 2.361481676790361e-15,
+        "sigma_min_max": 3.951338538832135e-15,
+        "sigma_min_p50": 4.643095541327886e-16,
+        "gap_ratio_min": 2182171852711200.0,
+        "gap_ratio_p01": 3029577082279143.5
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": -1.1102230246251565e-16
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "n": 81,
+      "mode": "right",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-BZ-g0.4-n81.npz",
+      "literature_sign_chern": -5.300924469105861e-17,
+      "min_abs_real_energy": 0.20000000000000026,
+      "n_vertices": 6561,
+      "n_triangles": 13122,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": 5.300924469105861e-17,
+      "total_flux": 3.3306690738754696e-16,
+      "flux_p50_abs": 6.805924089391507e-05,
+      "flux_p99_abs": 0.0019138201353451469,
+      "flux_max_abs": 0.01890941843840933,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 6561,
+        "nullity_one": 6561,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 4.288563435170952e-15,
+        "residual_p50": 6.335327934766281e-16,
+        "residual_p99": 2.4642258197402464e-15,
+        "sigma_min_max": 4.283058603684019e-15,
+        "sigma_min_p50": 4.670123248261279e-16,
+        "gap_ratio_min": 1870224580228092.5,
+        "gap_ratio_p01": 2867628192962468.5
+      },
+      "link_rule": "right-overlap",
+      "total_flux_imag": 0.0
+    },
+    {
+      "case": "trivial",
+      "mass": 2.6,
+      "gamma": 0.4,
+      "n": 81,
+      "mode": "biorthogonal",
+      "mesh": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\QWZ-trivial-BZ-g0.4-n81.npz",
+      "literature_sign_chern": 6.464919133780357e-15,
+      "min_abs_real_energy": 0.20000000000000026,
+      "n_vertices": 6561,
+      "n_triangles": 13122,
+      "orientation": "positive",
+      "n_orientation_flips": 0,
+      "chern": -6.464919133780357e-15,
+      "total_flux": -4.0620284913472915e-14,
+      "flux_p50_abs": 7.116773076099037e-05,
+      "flux_p99_abs": 0.0014805153500991426,
+      "flux_max_abs": 0.0673617656493335,
+      "bad_links": 0,
+      "vertex_diagnostics": {
+        "n_vertices": 6561,
+        "nullity_one": 6561,
+        "nullity_zero": 0,
+        "nullity_multi": 0,
+        "residual_max": 4.319616811157577e-15,
+        "residual_p50": 7.481868586110709e-16,
+        "residual_p99": 2.5051199125350526e-15,
+        "sigma_min_max": 4.283058603684019e-15,
+        "sigma_min_p50": 4.670123248261279e-16,
+        "gap_ratio_min": 1870224580228092.5,
+        "gap_ratio_p01": 2867628192962468.5
+      },
+      "link_rule": "biorthogonal-reciprocal-v1",
+      "total_flux_imag": 5.551115123125783e-17
+    }
+  ],
+  "report_source_provenance": [
+    {
+      "module": "application",
+      "path": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\Chern-number-calculation.py",
+      "sha256": "13470b5b696415fc2e92d5af1ea1fcd0c4d329ce558fe978cd6c989bfa9094e4"
+    },
+    {
+      "module": "pygbz2d.core",
+      "path": "D:\\research-works\\brute-force-SGBZ-amoeba\\src\\pygbz2d\\core.py",
+      "sha256": "f0280f9263d4b542279f481c9986b5adcb29cd3b81dc571c507ee86119645498"
+    },
+    {
+      "module": "pygbz2d.amoeba.amoeba",
+      "path": "D:\\research-works\\brute-force-SGBZ-amoeba\\src\\pygbz2d\\amoeba\\amoeba.py",
+      "sha256": "69129143edd0fde2be6249cffecdcce3f275e315c0d4bfbc6931def33f47e910"
+    },
+    {
+      "module": "pygbz2d.amoeba.bisect",
+      "path": "D:\\research-works\\brute-force-SGBZ-amoeba\\src\\pygbz2d\\amoeba\\bisect.py",
+      "sha256": "da8a1223fdc22570f1486910be8c9f83f379a9d2021c498f888d5aaebb9eb972"
+    },
+    {
+      "module": "pygbz2d.experimental.band_clustering",
+      "path": "D:\\research-works\\brute-force-SGBZ-amoeba\\src\\pygbz2d\\experimental\\band_clustering.py",
+      "sha256": "fc3168cb59d37cc4077fee178c9b72f59762e04607219c271a8d0a200d867c57"
+    },
+    {
+      "module": "pygbz2d.experimental.torus_mesh",
+      "path": "D:\\research-works\\brute-force-SGBZ-amoeba\\src\\pygbz2d\\experimental\\torus_mesh.py",
+      "sha256": "56f74d82c4f5fcc0334124c70ba2261605bf4a734816f5ef7b7ca4c02ae62719"
+    },
+    {
+      "module": "pygbz2d.experimental.mesh_refinement",
+      "path": "D:\\research-works\\brute-force-SGBZ-amoeba\\src\\pygbz2d\\experimental\\mesh_refinement.py",
+      "sha256": "ba013480d3026121d96cf4e0ed387c1d4a7fd8a10b2fe5355a244968e1734bbc"
+    },
+    {
+      "module": "pygbz2d.experimental.chern",
+      "path": "D:\\research-works\\brute-force-SGBZ-amoeba\\src\\pygbz2d\\experimental\\chern.py",
+      "sha256": "e3c186ad487c22b7a854a6ac847e9d724761169bf936015c79c63cbc2ff5aacb"
+    }
+  ],
+  "legacy_biorthogonal_baseline": "D:\\research-works\\brute-force-SGBZ-amoeba\\application\\data\\QWZ-benchmark\\biorthogonal-raw-overlap-baseline",
+  "integration_input_meshes_unchanged": true
+}
