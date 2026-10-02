@@ -171,13 +171,15 @@ POLY_BACKEND=poly_tools pytest
 
 The [2D Hatano–Nelson benchmark](application/benchmark-2D-Hatano-Nelson.typ)
 checks spectral membership and returned GBZ samples against closed-form
-expressions. Run its fixed examples without figures:
+expressions. The first positional argument selects a mode, so
+`--help` lists them and `--help` after a mode lists its arguments. Run its
+fixed examples without figures:
 
 ```bash
-python application/benchmark-2D-Hatano-Nelson.py --mode demo --compare-only
+python application/benchmark-2D-Hatano-Nelson.py demo --no-show
 ```
 
-Use `--mode coarse-sweep` or `--mode full-sweep` for energy scans, and
+Use `coarse-sweep` or `full-sweep` for energy scans, and
 `--no-show` to disable their plots. Matplotlib is needed for plotting;
 NumPy and SciPy suffice for the numerical checks.
 

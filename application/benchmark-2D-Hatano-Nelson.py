@@ -1,20 +1,27 @@
 """Benchmark numerical GBZ subsets against the 2D Hatano-Nelson solution.
 
-Run with ``--compare-only`` for the numerical checks without plotting.
-Without this option, the same checks also display the point and line subsets.
+The first positional argument selects a mode; each mode then takes its own
+keyword arguments, so ``--help`` lists the modes and ``--help`` after a mode
+lists that mode's arguments. Every mode accepts ``--no-show`` to run without
+figures; Matplotlib is imported lazily, so the numerical checks need only NumPy
+and SciPy.
+
+  demo          fixed point, line, and spectral-membership examples.
+  benchmark     random hopping comparisons against the closed form.
+  coarse-sweep  unsaved 20 x 20 amoeba scan; its occupied box sets the fine window.
+  full-sweep    coarse scan, then a 100 x 100 scan of all four GBZs saved in
+                application/data.
+  plot          plot a saved or returned scan without rerunning either solver.
+
 The comparison covers every stored sample, but does not establish that the
 solver has found every connected component of an equal-energy set.
-Use ``--mode coarse-sweep`` for a 20 x 20 amoeba scan, or ``--mode full-sweep``
-to follow it with a 100 x 100 scan of all four GBZs saved in application/data.
-Use ``--no-show`` for scans without figures and ``--mode benchmark`` for
-random hopping comparisons. The default ``--mode demo`` runs the fixed
-point, line, and spectral-membership examples.
 
 author:        Wang Chenyang <cy-wang21@mails.tsinghua.edu.cn>
 date:          2026-09-15
 Copyright © Department of Physics, Tsinghua University. All rights reserved
 """
 
+import argparse
 from typing import Literal
 from pathlib import Path
 
@@ -436,6 +443,21 @@ def demo_spectrum_membership():
             calculate_subset_and_show(E_ref, *hoppings, which, show=False)
 
 
+def add_demo_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the keyword arguments of the `demo` mode."""
+    parser.add_argument(
+        "--show", action=argparse.BooleanOptionalAction, default=True,
+        help="Display the point and line subset figures."
+    )
+
+
+def main_demo(kargs: argparse.Namespace) -> None:
+    demo_point_subsets(show=kargs.show)
+    demo_line_subsets(show=kargs.show)
+    # Spectral membership only prints, and needs no plotting switch.
+    demo_spectrum_membership()
+
+
 def benchmark_random_coeffs(
     *,
     show: bool = True,
@@ -477,6 +499,22 @@ def benchmark_random_coeffs(
         calculate_subset_and_show(E_samp, Jx1, Jx2, Jy1, Jy2, which, show=show)
 
 
+def add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the keyword arguments of the `benchmark` mode."""
+    parser.add_argument(
+        "--show", action=argparse.BooleanOptionalAction, default=True,
+        help="Display the random-coefficient comparison figures."
+    )
+    parser.add_argument(
+        "--zero_Delta", action="store_true",
+        help="Set delta_x = delta_y."
+    )
+
+
+def main_benchmark(kargs: argparse.Namespace) -> None:
+    benchmark_random_coeffs(show=kargs.show, zero_Delta=kargs.zero_Delta)
+
+
 def compare_sweep_to_closed_form(scan: dict) -> dict[str, list[dict]]:
     """Validate a completed scan without rerunning solvers or changing its data.
 
@@ -504,6 +542,10 @@ def compare_sweep_to_closed_form(scan: dict) -> dict[str, list[dict]]:
 
 DEMO_HOPPINGS = (1 + 1j, 1.5 + 1.2j, -1 + 1j, -1.2 - 0.5j)
 N_PROCESS = 1
+# Shared with the CLI modes below so the two cannot silently drift apart.
+COARSE_GRID_SIZE = 20
+FINE_GRID_SIZE = 100
+COARSE_BOUNDS = (-5.0, 5.0)
 SWEEP_BASES = {"amoeba": "x-y", "x-strip": "x-y", "y-strip": "y-x", "11-strip": "11-y"}
 
 def _sweep_worker(task):
@@ -679,11 +721,27 @@ def plot_sweep_spectra(scan: dict, *, show: bool = True):
     return fig
 
 
+def add_plot_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the keyword arguments of the `plot` mode."""
+    parser.add_argument(
+        "--fname", type=Path, required=True,
+        help="Pickled scan to plot."
+    )
+    parser.add_argument(
+        "--show", action=argparse.BooleanOptionalAction, default=True,
+        help="Display the figures."
+    )
+
+
+def main_plot(kargs: argparse.Namespace) -> None:
+    plot_sweep_spectra(load_sweep(kargs.fname), show=kargs.show)
+
+
 def coarse_sweep(
     Jx1: complex = DEMO_HOPPINGS[0], Jx2: complex = DEMO_HOPPINGS[1],
     Jy1: complex = DEMO_HOPPINGS[2], Jy2: complex = DEMO_HOPPINGS[3],
-    *, n_process: int = N_PROCESS, grid_size: int = 20,
-    real_bounds=(-5.0, 5.0), imag_bounds=(-5.0, 5.0), show: bool = True,
+    *, n_process: int = N_PROCESS, grid_size: int = COARSE_GRID_SIZE,
+    real_bounds=COARSE_BOUNDS, imag_bounds=COARSE_BOUNDS, show: bool = True,
 ) -> dict:
     """Scan only amoeba, show its spectrum, and return the unsaved coarse data.
 
@@ -707,7 +765,7 @@ def coarse_sweep(
     return scan
 
 
-def fine_sweep(coarse: dict, *, n_process: int = N_PROCESS, grid_size: int = 100,
+def fine_sweep(coarse: dict, *, n_process: int = N_PROCESS, grid_size: int = FINE_GRID_SIZE,
                output_dir=None, show: bool = True) -> dict:
     """Scan every fine-grid energy with all four methods and save full results.
 
@@ -751,47 +809,120 @@ def fine_sweep(coarse: dict, *, n_process: int = N_PROCESS, grid_size: int = 100
     return scan
 
 
-#### Command-line demos and optional benchmark validation ####
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description=__doc__)
+def _add_sweep_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register what the coarse and fine stages share in both sweep modes."""
     parser.add_argument(
-        "--mode",
-        type=str,
-        default="demo",
-        help="Demo mode: \n\t"
-            "'demo': show PointSubset and LineSubset demos. \n\t"
-            "'benchmark': run random coefficient benchmark only. \n\t"
-            "'coarse-sweep': show the unsaved 20 x 20 amoeba scan only. \n\t"
-            "'full-sweep': coarse scan, then save all four 100 x 100 fine scans. \n\t"
-            "'plot': plot the GBZ scan, need --data-fname"
-        )
-    parser.add_argument("--compare-only", action="store_true", help="Run checks without opening plots.")
-    parser.add_argument("--n-process", type=int, default=N_PROCESS, help="Sweep worker count (default: 1).")
-    parser.add_argument("--no-show", action="store_true", help="Disable figures for batch sweep runs.")
-    parser.add_argument("--zero-Delta", action="store_true", help="Set delta_x = delta_y.")
-    parser.add_argument("--data-fname", type=str, help="Data filename for plot mode.")
-    args = parser.parse_args()
-    if args.mode == "coarse-sweep" or args.mode == "full-sweep":
-        if args.zero_Delta or args.compare_only:
-            parser.error("Sweep modes use the complex demo hoppings; use --no-show to disable their figures.")
-        coarse = coarse_sweep(n_process=args.n_process, show=not args.no_show)
-        if args.mode == "full-sweep":
-            fine = fine_sweep(coarse, n_process=args.n_process, show=not args.no_show)
-        compare_sweep_to_closed_form(coarse)
-        if args.mode == "full-sweep":
-            compare_sweep_to_closed_form(fine)
-    elif args.mode == "benchmark":
-        benchmark_random_coeffs(show=not args.compare_only, zero_Delta=args.zero_Delta)
-    elif args.mode == "plot":
-        if args.data_fname is None:
-            raise ValueError("--data-fname is required for plot mode.")
-        scan = load_sweep(args.data_fname)
-        plot_sweep_spectra(scan, show=not args.no_show)
-    elif args.mode == "demo":
-        demo_point_subsets(show=not args.compare_only)
-        demo_line_subsets(show=not args.compare_only)
-        demo_spectrum_membership()
+        "--n_process", type=int, default=N_PROCESS,
+        help="Worker processes; each worker is limited to one BLAS thread."
+    )
+    parser.add_argument(
+        "--real_bounds", type=float, nargs=2, default=COARSE_BOUNDS, metavar=("MIN", "MAX"),
+        help="Re(E) interval of the coarse scan."
+    )
+    parser.add_argument(
+        "--imag_bounds", type=float, nargs=2, default=COARSE_BOUNDS, metavar=("MIN", "MAX"),
+        help="Im(E) interval of the coarse scan."
+    )
+    parser.add_argument(
+        "--show", action=argparse.BooleanOptionalAction, default=True,
+        help="Display the scan figures."
+    )
+
+
+def add_coarse_sweep_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the keyword arguments of the `coarse-sweep` mode."""
+    _add_sweep_arguments(parser)
+    parser.add_argument(
+        "--grid_size", type=int, default=COARSE_GRID_SIZE,
+        help="Coarse-grid points along each axis."
+    )
+
+
+def main_coarse_sweep(kargs: argparse.Namespace) -> None:
+    coarse = coarse_sweep(
+        n_process=kargs.n_process,
+        grid_size=kargs.grid_size,
+        real_bounds=tuple(kargs.real_bounds),
+        imag_bounds=tuple(kargs.imag_bounds),
+        show=kargs.show,
+    )
+    # This scan is never saved, so validate it before the data are discarded.
+    compare_sweep_to_closed_form(coarse)
+
+
+def add_full_sweep_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the keyword arguments of the `full-sweep` mode."""
+    _add_sweep_arguments(parser)
+    parser.add_argument(
+        "--coarse_grid_size", type=int, default=COARSE_GRID_SIZE,
+        help="Coarse-grid points along each axis; it also sets the fine-scan window."
+    )
+    parser.add_argument(
+        "--grid_size", type=int, default=FINE_GRID_SIZE,
+        help="Fine-grid points along each axis."
+    )
+    parser.add_argument(
+        "--output_dir", type=Path, default=None,
+        help="Directory for the four fine-scan files (default: application/data)."
+    )
+
+
+def main_full_sweep(kargs: argparse.Namespace) -> None:
+    coarse = coarse_sweep(
+        n_process=kargs.n_process,
+        grid_size=kargs.coarse_grid_size,
+        real_bounds=tuple(kargs.real_bounds),
+        imag_bounds=tuple(kargs.imag_bounds),
+        show=kargs.show,
+    )
+    fine = fine_sweep(
+        coarse,
+        n_process=kargs.n_process,
+        grid_size=kargs.grid_size,
+        output_dir=kargs.output_dir,
+        show=kargs.show,
+    )
+    # The fine scan has saved its files by now, so an analytic mismatch here
+    # still leaves the numerical evidence on disk.
+    compare_sweep_to_closed_form(coarse)
+    compare_sweep_to_closed_form(fine)
+
+
+#### Command-line modes ####
+if __name__ == "__main__":
+    # The house-style © header is not encodable in a GBK console, which would
+    # make --help itself fail, so the help text uses an ASCII rendering of it.
+    # Raw formatting keeps the mode list in the docstring on separate lines.
+    parser = argparse.ArgumentParser(
+        description=__doc__.replace("©", "(c)"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    modes = parser.add_subparsers(dest="mode", required=True, metavar="mode")
+    add_demo_arguments(
+        modes.add_parser("demo", help="Run the fixed point, line and spectral-membership examples.")
+    )
+    add_benchmark_arguments(
+        modes.add_parser("benchmark", help="Compare random hoppings against the closed form.")
+    )
+    add_coarse_sweep_arguments(
+        modes.add_parser("coarse-sweep", help="Run the unsaved coarse amoeba scan.")
+    )
+    add_full_sweep_arguments(
+        modes.add_parser("full-sweep", help="Run the coarse scan, then the saved four-GBZ fine scan.")
+    )
+    add_plot_arguments(
+        modes.add_parser("plot", help="Plot a saved scan.")
+    )
+    kargs = parser.parse_args()
+    if kargs.mode == "demo":
+        main_demo(kargs)
+    elif kargs.mode == "benchmark":
+        main_benchmark(kargs)
+    elif kargs.mode == "coarse-sweep":
+        main_coarse_sweep(kargs)
+    elif kargs.mode == "full-sweep":
+        main_full_sweep(kargs)
+    elif kargs.mode == "plot":
+        main_plot(kargs)
     else:
-        raise ValueError(f"Unknown mode: {args.mode}")
+        raise ValueError(f"Unknown mode {kargs.mode}")

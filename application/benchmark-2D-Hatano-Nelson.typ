@@ -21,7 +21,7 @@ The accompanying #link("./benchmark-2D-Hatano-Nelson.py")[Python script] demonst
 - Read and visualize `PointSubset` and `LineSubset` data.
 - Compute full 2D GBZ via energy-grid sweep.
 
-Run the script from the repository root with `python application/benchmark-2D-Hatano-Nelson.py`. It uses the local `src` directory by default and requires NumPy, SciPy, and Matplotlib for plotting. Add `--compare-only` to run the numerical checks without importing Matplotlib or opening figures. Set `RUN_IN_SRC = False` to use an installed copy of `pyGBZ2d` instead.
+Run the script from the repository root with `python application/benchmark-2D-Hatano-Nelson.py <mode>`. The first positional argument selects a mode: `--help` lists the modes, and `--help` after a mode lists that mode's keyword arguments. The script uses the local `src` directory by default and requires NumPy, SciPy, and Matplotlib for plotting. Every mode accepts `--no-show` to run the numerical checks without importing Matplotlib or opening figures. Set `RUN_IN_SRC = False` to use an installed copy of `pyGBZ2d` instead.
 
 == Introduction
 
@@ -230,9 +230,9 @@ For a nonempty result with matching spectral membership, `compare_to_closed_form
 === Running the comparison
 From the repository root, run
 ```sh
-python application/benchmark-2D-Hatano-Nelson.py --compare-only
+python application/benchmark-2D-Hatano-Nelson.py demo --no-show
 ```
-The default `--mode demo` executes eight point/line comparisons and sixteen additional spectral-membership comparisons. The separate `check_factorization()` helper can be called explicitly to check hopping reconstruction. To inspect one result from within the accompanying script or an interactive session with its functions loaded, use
+The `demo` mode executes eight point/line comparisons and sixteen additional spectral-membership comparisons. The separate `check_factorization()` helper can be called explicitly to check hopping reconstruction. To inspect one result from within the accompanying script or an interactive session with its functions loaded, use
 ```python
 hoppings = (1 + 1j, 1.5 + 1.2j, -1 + 1j, -1.2 - 0.5j)
 res = calculate_subsets(1 + 1j, *hoppings, "11-strip")
@@ -252,7 +252,7 @@ print_comparison(report)
 )
 In the recorded benchmark run, all sixteen additional comparisons passed: thirteen returned verified empty results and three returned nonempty point subsets. The last case checks geometry-dependent membership explicitly. For example, replacing `1 + 1j` by `2 + 2j` in the code above gives a verified empty $[11]$ result, with `index=(0, 0)`, `n_samples=0`, and `analytic_is_gbz=False`.
 
-The optional `--mode benchmark --compare-only` mode uses random hoppings and samples an energy from the Cartesian GBZ. That guarantees Cartesian spectral membership, but does not guarantee $[11]$-strip membership. Its results are therefore judged by the same analytic membership test, rather than by requiring every solver result to be nonempty.
+The optional `benchmark --no-show` mode uses random hoppings and samples an energy from the Cartesian GBZ. That guarantees Cartesian spectral membership, but does not guarantee $[11]$-strip membership. Its results are therefore judged by the same analytic membership test, rather than by requiring every solver result to be nonempty.
 
 The following results were obtained on 2026-09-21 with that checkout, the NumPy polynomial backend (NumPy 1.26.4, SciPy 1.11.4), and the default solver settings. $N$ counts all stored samples, including any shared endpoints. Adaptive sampling and future solver changes can alter $N$ and the last digits of the errors.
 
@@ -302,20 +302,20 @@ Thus each side of the occupied bounding box is extended by one *coarse-grid* spa
 
 To inspect only the coarse scan, run from the repository root:
 ```sh
-python application/benchmark-2D-Hatano-Nelson.py --mode coarse-sweep --n-process 20
+python application/benchmark-2D-Hatano-Nelson.py coarse-sweep --n_process 20
 ```
 The command above requests 20 processes; `N_PROCESS` sets the script's default process count. If no spectral points are detected, the scan cannot determine a fine window. If occupied points touch the coarse-grid boundary, the window may be truncated. Either condition is reported as an error rather than silently producing a fine scan. Even when neither occurs, a finite coarse grid is an estimate of the support; it cannot establish that arbitrarily narrow spectral features were resolved. In particular, the 20-point grid does not include zero, so it is not suited to the real-line spectrum of `demo_line_subsets` without changing the grid.
 
 === Fine scan: compute and save all four GBZs
-`fine_sweep` defaults to 100 equally spaced points along each expanded interval. All four methods evaluate the same $100^2=10,000$ energies, for 40,000 fine-grid solves in total. Direct callers can change `grid_size`. No grid point is skipped based on an analytic classification or on another method's result. The function computes, saves, and optionally plots the numerical results; it does not require a closed-form solution.
+`fine_sweep` defaults to 100 equally spaced points along each expanded interval. All four methods evaluate the same $100^2=10,000$ energies, for 40,000 fine-grid solves in total. Direct callers and the `--grid_size` flag can change it. No grid point is skipped based on an analytic classification or on another method's result. The function computes, saves, and optionally plots the numerical results; it does not require a closed-form solution.
 
 The complete two-stage workflow is
 ```sh
-python application/benchmark-2D-Hatano-Nelson.py --mode full-sweep --n-process 20
+python application/benchmark-2D-Hatano-Nelson.py full-sweep --n_process 20
 ```
-The coarse plot is displayed first. Closing that figure allows the fine scan to start. After completion, four panels display the fine-grid spectra. Starting this command after a separate `--mode coarse-sweep` run recomputes the coarse scan, since its data were not saved. For an unattended calculation with the same grids and output files, use
+The coarse plot is displayed first. Closing that figure allows the fine scan to start. After completion, four panels display the fine-grid spectra. Starting this command after a separate `coarse-sweep` run recomputes the coarse scan, since its data were not saved. For an unattended calculation with the same grids and output files, use
 ```sh
-python application/benchmark-2D-Hatano-Nelson.py --mode full-sweep --n-process 20 --no-show
+python application/benchmark-2D-Hatano-Nelson.py full-sweep --n_process 20 --no-show
 ```
 To call the functions directly from a script that has imported them, use a main guard so Windows can start the worker processes safely:
 ```python
@@ -357,7 +357,7 @@ The separate `compare_sweep_to_closed_form` helper belongs to the earlier benchm
 coarse_reports = compare_sweep_to_closed_form(coarse)
 fine_reports = compare_sweep_to_closed_form(fine)
 ```
-The command-line demo performs this validation automatically after the requested scans finish: after the coarse scan for `--mode coarse-sweep`, or after both scans and all four fine-scan files have been saved for `--mode full-sweep`. With figures enabled, close the scan figures to proceed to validation. A mismatch reports the method, energy index, and energy while preserving the computed results and saved files. A completed numerical file does not itself imply that analytic validation passed. For a model without a closed-form solution, the scanning workflow can be used on its own and this benchmark-specific step omitted.
+The command-line demo performs this validation automatically after the requested scans finish: after the coarse scan for `coarse-sweep`, or after both scans and all four fine-scan files have been saved for `full-sweep`. With figures enabled, close the scan figures to proceed to validation. A mismatch reports the method, energy index, and energy while preserving the computed results and saved files. A completed numerical file does not itself imply that analytic validation passed. For a model without a closed-form solution, the scanning workflow can be used on its own and this benchmark-specific step omitted.
 
 === Reading the saved scan
 `load_sweep` reads the saved dictionary without conversion. Its result can be plotted immediately, just like the object returned by `fine_sweep`. Replace the filename below with the path printed by the scan:
@@ -391,7 +391,7 @@ for result in results:
 ```
 Alternatively, the command-line plot mode reads a saved scan without rerunning either solver:
 ```sh
-python application/benchmark-2D-Hatano-Nelson.py --mode plot --data-fname <saved-file.pkl>
+python application/benchmark-2D-Hatano-Nelson.py plot --fname <saved-file.pkl>
 ```
 `GBZResult` and its subset classes remain defined in `pygbz2d.core`, so that package must be importable when loading the files. The energy grid samples the spectral region, while the stored subset objects provide the corresponding GBZ coordinates. A finite scan is a sampled approximation of the full GBZ, with resolution set by both the energy grid and the solver's adaptive sampling of any line subsets.
 
