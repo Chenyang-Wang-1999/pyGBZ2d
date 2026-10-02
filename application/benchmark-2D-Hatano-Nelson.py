@@ -500,13 +500,7 @@ def compare_sweep_to_closed_form(scan: dict) -> dict[str, list[dict]]:
 
 
 #### Full GBZ sweep ####
-# This section can be copied with get_HN_charpoly into a separate script.
-# Repeat its imports here so none of the earlier benchmark helpers is needed.
-from pathlib import Path
-from typing import Literal
 
-import numpy as np
-from pygbz2d import GBZResult, amoeba, sgbz
 
 DEMO_HOPPINGS = (1 + 1j, 1.5 + 1.2j, -1 + 1j, -1.2 - 0.5j)
 N_PROCESS = 1
@@ -531,7 +525,7 @@ def sweep_GBZ(
     E_list: np.ndarray,
     which: str,
     n_process: int = N_PROCESS,
-) -> list[GBZResult]:
+) -> list[core.GBZResult]:
     """Solve every energy with the library, preserving the input order.
 
     Argument order is (Jx1, Jx2, Jy1, Jy2), as in get_HN_charpoly. The

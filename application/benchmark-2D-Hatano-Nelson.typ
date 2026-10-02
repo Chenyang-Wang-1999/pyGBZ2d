@@ -10,13 +10,6 @@
 )
 
 #show: nt.make
-#show raw.where(block: true): it => block(it, fill: rgb("edf6fd"), inset: 5pt, breakable: false)
-#show raw.where(block: false): it => highlight(it, fill: rgb("e0e0e0"), top-edge: 1.2em, bottom-edge: -.5em, extent: 0.2em)
-
-#let mathbf(x) = $bold(upright(#x))$
-#let rme = $upright(e)$
-#let rmi = $upright(i)$
-
 
 = Benchmark: 2D Hatano-Nelson model
 
@@ -35,20 +28,20 @@ Run the script from the repository root with `python application/benchmark-2D-Ha
 The Hamiltonian of the 2D HN model is
 $ H = sum_(i , j) (J_(x 1) c_(i + 1 , j)^(dagger) c_(i , j) + J_(x 2) c_(i - 1 , j)^(dagger) c_(i , j) + J_(y 1) c_(i , j + 1)^(dagger) c_(i , j) + J_(y 2) c_(i , j - 1)^(dagger) c_(i , j)) , $
 where $c_(i , j)$ annihilates a particle at site $(i,j)$ and the hopping amplitudes are complex. Throughout this benchmark, all four hopping amplitudes are nonzero. Each pair can be written as
-$ J_(alpha 1) = rme^(gamma_(alpha) + rmi delta_(alpha)) J_(alpha) , quad J_(alpha 2) = rme^(- gamma_(alpha) + rmi delta_(alpha)) J_(alpha)^(*) , quad alpha = x , y $
+$ J_(alpha 1) = ee^(gamma_(alpha) + ii delta_(alpha)) J_(alpha) , quad J_(alpha 2) = ee^(- gamma_(alpha) + ii delta_(alpha)) J_(alpha)^(*) , quad alpha = x , y $
 where $gamma_(alpha), delta_(alpha) in RR$ describe the hopping asymmetry and common phase, respectively. The pair $J_(alpha), J_(alpha)^*$ forms a Hermitian hopping pair before these factors are applied. A branch convention for this decomposition is
 $ gamma_(alpha) = & frac(1, 2) ln (frac(abs(J_(alpha 1)), abs(J_(alpha 2)))) \
 delta_(alpha) = & frac(1, 2) limits("Arg") (J_(alpha 1) J_(alpha 2)) \
-J_(alpha) = & J_(alpha 1) \/ rme^(gamma_(alpha) + rmi delta_(alpha)) $
+J_(alpha) = & J_(alpha 1) \/ ee^(gamma_(alpha) + ii delta_(alpha)) $
 
 Here, $limits("Arg")$ denotes the principal argument, as implemented by `numpy.angle`. The decomposition has a sign ambiguity: replacing $(delta_(alpha), J_(alpha))$ by $(delta_(alpha)+pi, -J_(alpha))$ leaves both hopping amplitudes unchanged. The convention above fixes a representative. The script implements it in `factorize_coefficients` and checks reconstruction in `check_factorization`.
 
 The $x$-strip, $y$-strip, and amoebic GBZs coincide when expressed in the same Cartesian coordinates:
-$ beta_(x) & = exp (gamma_(x) + rmi theta_(x)) , \
-beta_(y) & = exp (gamma_(y) + rmi theta_(y)) , $
+$ beta_(x) & = exp (gamma_(x) + ii theta_(x)) , \
+beta_(y) & = exp (gamma_(y) + ii theta_(y)) , $
 where $theta_x, theta_y in [0, 2 pi)$. The $[11]$-strip GBZ generally differs. In the basis $(mathbf(a)_([11]), mathbf(a)_y)$, with $mathbf(a)_([11]) = mathbf(a)_x + mathbf(a)_y$, it is
-$ tilde(beta)_([11]) & = rme^(gamma_(x) + gamma_(y) + rmi theta_([11])) , \
-tilde(beta)_(y) & = rme^(gamma_(y) + rmi theta_(y)) sqrt(lr(abs(frac(J_(x)^(*) rme^(rmi Delta_(x y) + rmi theta_([11])) + J_(y), J_(x) rme^(rmi Delta_(x y) - rmi theta_([11])) + J_(y)^(*))))) , $
+$ tilde(beta)_([11]) & = ee^(gamma_(x) + gamma_(y) + ii theta_([11])) , \
+tilde(beta)_(y) & = ee^(gamma_(y) + ii theta_(y)) sqrt(lr(abs(frac(J_(x)^(*) ee^(ii Delta_(x y) + ii theta_([11])) + J_(y), J_(x) ee^(ii Delta_(x y) - ii theta_([11])) + J_(y)^(*))))) , $
 where $Delta_(x y) := delta_(x) - delta_(y)$. These expressions follow Eqs. (S3.16) and (S3.30) of Ref. @wang2025generaltheorygeometrydependentnonhermitian. The second expression applies where its numerator and denominator are nonzero. When $sin(Delta_(x y)) eq.not 0$, the transverse radius depends on $theta_([11])$, and the model exhibits geometry-dependent bands. When $sin(Delta_(x y)) = 0$, the radius reduces to $exp(gamma_y)$ at nonsingular phases.
 
 The corresponding energy spectra are illustrated in #ref(<fig:HN-model>).
@@ -166,13 +159,13 @@ The number of stored samples is distinct from the number of line subsets. Each `
 
 === Point and line examples
 For the Cartesian GBZs, substituting the analytic radii into the Hamiltonian gives
-$ E(theta_x,theta_y) = 2 rme^(rmi delta_x) limits("Re")(J_x rme^(-rmi theta_x)) + 2 rme^(rmi delta_y) limits("Re")(J_y rme^(-rmi theta_y)). $
+$ E(theta_x,theta_y) = 2 ee^(ii delta_x) limits("Re")(J_x ee^(-ii theta_x)) + 2 ee^(ii delta_y) limits("Re")(J_y ee^(-ii theta_y)). $
 Their spectrum has nonzero area when $sin(Delta_(x y)) eq.not 0$. At a regular energy in a two-dimensional spectral region, fixing a complex energy generally imposes two real constraints and leaves isolated GBZ points. When the spectrum collapses to a line, regular energies instead generally have continuous preimages. Boundary energies and degeneracies require separate consideration.
 
 This area statement must be qualified for the $[11]$ strip: when $abs(J_x)=abs(J_y)$, its spectrum can have zero area even if $sin(Delta_(x y)) eq.not 0$, while the GBZ remains geometry dependent. See Sec. S6 of Ref. @wang2025generaltheorygeometrydependentnonhermitian.
 
 The script uses two fixed parameter sets, each evaluated for all four GBZ choices:
-- `demo_point_subsets`: $J_(x 1)=1+rmi$, $J_(x 2)=1.5+1.2rmi$, $J_(y 1)=-1+rmi$, $J_(y 2)=-1.2-0.5rmi$, and $E_("ref")=1+rmi$. The hopping parameters match the example in Ref. @wang2025generaltheorygeometrydependentnonhermitian.
+- `demo_point_subsets`: $J_(x 1)=1+ii$, $J_(x 2)=1.5+1.2ii$, $J_(y 1)=-1+ii$, $J_(y 2)=-1.2-0.5ii$, and $E_("ref")=1+ii$. The hopping parameters match the example in Ref. @wang2025generaltheorygeometrydependentnonhermitian.
 - `demo_line_subsets`: $J_(x 1)=1$, $J_(x 2)=1.5$, $J_(y 1)=-1$, $J_(y 2)=-1.2$, and $E_("ref")=1$. Here $delta_x=delta_y=0$ in the chosen convention, and the spectra are real.
 
 == Comparison to closed-form solutions
@@ -180,7 +173,7 @@ The comparison first checks whether the reference energy belongs to the analytic
 
 === Checking spectral membership, including empty results
 Define the complex spectral half-widths
-$ u=2 abs(J_x) rme^(rmi delta_x), quad v=2 abs(J_y) rme^(rmi delta_y). $
+$ u=2 abs(J_x) ee^(ii delta_x), quad v=2 abs(J_y) ee^(ii delta_y). $
 For the amoebic, $x$-strip, and $y$-strip GBZs, the dispersion relation gives
 $ sigma_("Cartesian") = {u s+v t : s,t in [-1,1]}. $
 Thus the spectrum is the closed parallelogram with vertices $u+v$, $-u+v$, $-u-v$, and $u-v$. When $u$ and $v$ are collinear, this set reduces to a line segment. A point is outside if it lies beyond the segment endpoints or off the segment's supporting line.
@@ -216,7 +209,7 @@ Let $mu_j=ln abs(beta_j)$ and $theta_1=limits("Arg")(beta_1)$. `closed_form_log_
 )
 
 Here,
-$ R(theta_1) = frac(J_x^* rme^(rmi(Delta_(x y)+theta_1))+J_y, J_x rme^(rmi(Delta_(x y)-theta_1))+J_y^*). $
+$ R(theta_1) = frac(J_x^* ee^(ii(Delta_(x y)+theta_1))+J_y, J_x ee^(ii(Delta_(x y)-theta_1))+J_y^*). $
 The $[11]$ formula can also be checked directly: in this basis the Hamiltonian is $h=A beta_2+B/beta_2$, where
 $ A=J_(x 1)/beta_1+J_(y 2), quad B=J_(x 2) beta_1+J_(y 1). $
 The two roots of $A beta_2^2-E beta_2+B=0$ have product $B/A$, so their equal-modulus condition gives $abs(beta_2)=sqrt(abs(B/A))$. At $abs(beta_1)=exp(gamma_x+gamma_y)$, this reproduces the radius above. The benchmark requires finite, nonzero radii and reports singular expressions rather than clipping or replacing them. The two demonstration parameter sets have $abs(J_x) eq.not abs(J_y)$, so neither the numerator nor the denominator of $R$ vanishes for real $theta_1$.
@@ -224,7 +217,7 @@ The two roots of $A beta_2^2-E beta_2+B=0$ have product $B/A$, so their equal-mo
 === Error measures
 For the $N$ returned samples, define
 $ epsilon_(mu j) = max_(1 <= n <= N) abs(ln abs(beta_(j , n)) - mu_(j)^("exact") (theta_(1 , n))) , quad j = 1 , 2 . $
-For a `PointSubset`, there is one sample. For a `LineSubset`, all stored samples are used, with $beta_(1 , n) = exp (mu_(1) + rmi theta_(1 , n))$.
+For a `PointSubset`, there is one sample. For a `LineSubset`, all stored samples are used, with $beta_(1 , n) = exp (mu_(1) + ii theta_(1 , n))$.
 
 To check the energy, first convert the samples to Cartesian coordinates: interchange the two components for a $y$ strip, and use $beta_x=beta_1/beta_2$, $beta_y=beta_2$ for a $[11]$ strip. Define the four hopping contributions as
 $ (t_(1,n),t_(2,n),t_(3,n),t_(4,n)) = (J_(x 1)/beta_(x,n), J_(x 2) beta_(x,n), J_(y 1)/beta_(y,n), J_(y 2) beta_(y,n)). $
@@ -252,10 +245,10 @@ print_comparison(report)
   columns: (auto, auto, 1fr, 1fr),
   inset: 6pt,
   table.header([*Hoppings*], [*$E_("ref")$*], [*amoeba / x / y*], [*11-strip*]),
-  [Complex], [$6+6rmi$], [Outside], [Outside],
+  [Complex], [$6+6ii$], [Outside], [Outside],
   [Real], [$6$], [Outside: beyond endpoints], [Outside: beyond endpoints],
-  [Real], [$rmi$], [Outside: off the real axis], [Outside: off the real axis],
-  [Complex], [$2+2rmi$], [Inside], [Outside],
+  [Real], [$ii$], [Outside: off the real axis], [Outside: off the real axis],
+  [Complex], [$2+2ii$], [Inside], [Outside],
 )
 In the recorded benchmark run, all sixteen additional comparisons passed: thirteen returned verified empty results and three returned nonempty point subsets. The last case checks geometry-dependent membership explicitly. For example, replacing `1 + 1j` by `2 + 2j` in the code above gives a verified empty $[11]$ result, with `index=(0, 0)`, `n_samples=0`, and `analytic_is_gbz=False`.
 

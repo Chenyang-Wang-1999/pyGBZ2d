@@ -31,6 +31,10 @@
 #let c-amber  = rgb("#96704a")
 #let c-emph   = rgb("#b02a2a") // Dark red emphasis color
 
+#let mathbf(x) = $bold(upright(#x))$
+#let ee = $upright(e)$
+#let ii = $upright(i)$
+
 // ---------- Top-level page and body layout ----------
 #let note(
   title: "",               // Lesson or document title
@@ -121,6 +125,10 @@
     show math.equation: set text(font: font-math)
     show math.equation.where(block: false): it => it
     show figure.caption: set align(left) 
+    show link: it => text(fill: c-blue, it)
+    show raw.where(block: true): it => block(it, fill: rgb("edf6fd"), inset: 6pt, breakable: true)
+    show raw: set text(size: 8.7pt)
+    show raw.where(block: false): it => highlight(it, fill: rgb("e0e0e0"), top-edge: 1.2em, bottom-edge: -.5em, extent: 0.2em)
 
     // Heading levels use visual styling without extra numbering
     // Level 1: Chapter or topic, with an accent rule below
