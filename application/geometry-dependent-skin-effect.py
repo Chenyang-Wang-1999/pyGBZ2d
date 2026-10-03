@@ -50,93 +50,40 @@ DIRECTIONS = ("a1", "a2", "x", "y")
 COLORS = {"a1": "#305f9e", "a2": "#269c95", "x": "#d29229", "y": "#c24752"}
 
 
-# def build_model(params=PARAMS):
-#     """BerryPy convention: [source, destination, amplitude, cell shift]."""
-
-#     t1, t2, phi, mass, gamma = params
-#     lattice = np.array([
-#         [-0.5, -0.5], 
-#         [-np.sqrt(3) / 2, np.sqrt(3) / 2]
-#     ])
-#     intracell = [
-#         [0, 0, mass], 
-#         [1, 1, -mass], 
-#         [1, 0, t1], 
-#         [0, 1, t1]
-#     ]
-#     intercell = [
-#         [1, 0, t1, (0, -1)], 
-#         [1, 0, t1, (1, 0)],
-#         [0, 1, t1, (0, 1)], 
-#         [0, 1, t1, (-1, 0)]
-#     ]
-#     for sublattice, sign in ((0, 1), (1, -1)):
-#         for shift in ((-1, 0), (0, -1), (1, 1)):
-#             intercell.append([sublattice, sublattice,
-#                               t2 * np.exp(1j * (gamma + sign * phi)), shift])
-#             intercell.append([sublattice, sublattice,
-#                               t2 * np.exp(1j * (gamma - sign * phi)),
-#                               tuple(-np.array(shift))])
-#     model = tb.TightBindingModel(2, 2, lattice, intracell, intercell)
-#     sites_cart = np.array([
-#         [0, 1 / (2 * np.sqrt(3))], 
-#         [0, -1 / (2 * np.sqrt(3))]
-#     ])
-#     model.SiteCoord = model.cart2lattice(sites_cart.T).T
-#     return model
-
-def non_Hermitian_Haldane_H(u1, u2, v1, v2, phi, M):
-    dim = 2
-    site_num = 2
-
-    lattice_vec = np.array(
-        [[-cos(pi/3), -cos(pi/3)],
-         [-sin(pi/3), sin(pi/3)]]
-    )
-
-    intra_cell = [
-        [0, 0, M],
-        [1, 1, -M],
-        [1, 0, u1],
-        [0, 1, u2]
-    ]
-    inter_cell = [
-        [0, 0, v2 * exp(1j*phi), (-1,0)],
-        [0, 0, v2 * exp(1j*phi), (0, -1)],
-        [0, 0, v2 * exp(1j*phi), (1,1)],
-        [0, 0, v1 * exp(-1j*phi), (1,0)],
-        [0, 0, v1 * exp(-1j*phi), (0,1)],
-        [0, 0, v1 * exp(-1j*phi), (-1,-1)],
-        [1, 0, u1, (0, -1)],
-        [1, 0, u1, (1, 0)],
-        [0, 1, u2, (0, 1)],
-        [0, 1, u2, (-1, 0)],
-        [1, 1, v2 * exp(-1j * phi), (-1, 0)],
-        [1, 1, v2 * exp(-1j*phi), (0, -1)],
-        [1, 1, v2 * exp(-1j*phi), (1, 1)],
-        [1, 1, v1 * exp(1j * phi), (1, 0)],
-        [1, 1, v1 * exp(1j * phi), (0, 1)],
-        [1, 1, v1 * exp(1j * phi), (-1,-1)]
-    ]
-
-    site_coord_cart = np.array(
-        [[0, 1 / (2 * sqrt(3))],
-         [0, - 1 / (2 * sqrt(3))]]
-    )
-
-    model = tb.TightBindingModel(dim, site_num, lattice_vec, intra_cell, inter_cell)
-    model.SiteCoord = model.cart2lattice(site_coord_cart.T).T
-
-    return model
-
-
-def Haldane_non_Hermitian_phase(t1, t2, phi, M, gamma):
-    # v1 = v2 = t2 * exp(i gamma)
-    return non_Hermitian_Haldane_H(t1, t1, t2 * exp(1j * gamma), t2 * exp(1j * gamma), phi, M)
-
-
 def build_model(params=PARAMS):
-    return Haldane_non_Hermitian_phase(*params)
+    """BerryPy convention: [source, destination, amplitude, cell shift]."""
+
+    t1, t2, phi, mass, gamma = params
+    lattice = np.array([
+        [-0.5, -0.5], 
+        [-np.sqrt(3) / 2, np.sqrt(3) / 2]
+    ])
+    intracell = [
+        [0, 0, mass], 
+        [1, 1, -mass], 
+        [1, 0, t1], 
+        [0, 1, t1]
+    ]
+    intercell = [
+        [1, 0, t1, (0, -1)], 
+        [1, 0, t1, (1, 0)],
+        [0, 1, t1, (0, 1)], 
+        [0, 1, t1, (-1, 0)]
+    ]
+    for sublattice, sign in ((0, 1), (1, -1)):
+        for shift in ((-1, 0), (0, -1), (1, 1)):
+            intercell.append([sublattice, sublattice,
+                              t2 * np.exp(1j * (gamma + sign * phi)), shift])
+            intercell.append([sublattice, sublattice,
+                              t2 * np.exp(1j * (gamma - sign * phi)),
+                              tuple(-np.array(shift))])
+    model = tb.TightBindingModel(2, 2, lattice, intracell, intercell)
+    sites_cart = np.array([
+        [0, 1 / (2 * np.sqrt(3))], 
+        [0, -1 / (2 * np.sqrt(3))]
+    ])
+    model.SiteCoord = model.cart2lattice(sites_cart.T).T
+    return model
 
 
 def get_transformed_model(which: Literal["a1", "a2", "x", "y"], params=PARAMS):
@@ -284,6 +231,8 @@ def sweep_structured_grid(
         pickle.dump(
             {
                 "run_id": run_id,
+                "coeffs": coeffs,
+                "degs": degs,
                 "E_re_range": E_re_range,
                 "E_im_range": E_im_range,
                 "which": which,
@@ -354,6 +303,11 @@ def plot_GBZ_spectrum(fname):
     E_gbz = np.array([r.E_ref for r in results if r.is_gbz])
     E_failed = np.array([r.E_ref for r in results if not r.success])
     E_non_gbz = np.array([r.E_ref for r in results if not r.is_gbz and r.success])
+    print("Failed:", E_failed)
+    for E_ref in E_failed:
+        model = get_transformed_model("y")
+        coeffs, degs = model.get_characteristic_polynomial_data()
+        print(sgbz.collect_GBZ_subsets(coeffs, degs, E_ref, debug_mode=True))
 
     ### Print E range ###
     E_re = np.linspace(data["E_re_range"][0], data["E_re_range"][1], data["n_re"])
