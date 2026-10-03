@@ -152,6 +152,31 @@ boundaries, charges must sum to zero; otherwise `RuntimeError` reports
 inconsistent crossing data. Hard boundaries require independent winding
 seeds because their unknown charges cannot support propagation.
 
+The widest region is evaluated first. Let `w_ref` be its seed winding and
+`J` the sum of absolute known charges plus one per unknown root-column
+entry. A multiple root contributes its multiplicity through these entries;
+assuming the crossing list is complete, `B = abs(w_ref) + J` bounds the
+absolute winding in every region. Remaining regions are considered from
+smallest to largest, and a region is omitted only if
+
+```
+B * (total omitted theta2 width) <= WINDING_QUAD_EPSABS
+```
+
+Thus all omitted regions share an absolute contribution budget of
+`WINDING_QUAD_EPSABS / (2*pi)` in the average. Their contribution is set to
+zero; the denominator remains the full `2*pi`. Points and charges are not
+merged or removed. Narrow soft intervals remain in the weighted sum because
+charge propagation already provides their winding without an extra seed.
+
+This cutoff follows the live **integration** absolute tolerance, not the
+separate `WINDING_ZERO_TOL` / `zero_tol` used to classify a computed average.
+With the default `WINDING_QUAD_EPSABS=1e-3`, the omission budget in the
+average is about `1.59e-4`; it is not an accuracy guarantee at `zero_tol=1e-8`.
+Reducing `WINDING_QUAD_EPSABS` reduces the omission budget as well as the
+quadrature tolerance; setting it to zero disables positive-width omission.
+Relative quadrature tolerance does not enlarge this absolute budget.
+
 ### 2.5 Bisection and plateau detection
 
 `solve_SGBZ_for_E` expands the mu1 bracket, then uses midpoint bisection.

@@ -150,7 +150,7 @@ together.
 
 | Constant | Default | Meaning |
 |---|---|---|
-| `WINDING_QUAD_EPSABS` / `WINDING_QUAD_EPSREL` | 1e-3 / 1e-3 | `scipy.integrate.quad` tolerances; the average-winding solver rounds each seed winding to an integer, while `get_winding_number` itself returns an unrounded value. |
+| `WINDING_QUAD_EPSABS` / `WINDING_QUAD_EPSREL` | 1e-3 / 1e-3 | `scipy.integrate.quad` tolerances; the average-winding solver rounds each seed winding to an integer, while `get_winding_number` itself returns an unrounded value. `EPSABS` also bounds the total omitted contribution from narrow unknown-charge regions before division by `2*pi` (see SGBZ §2.4); it is independent of the average's zero-classification tolerance. |
 | `WINDING_QUAD_LIMIT` | 200 | quad sub-interval budget. |
 | `SEED_N_PER_INTERVAL` | 4 | θ₂ samples per interval when picking the loop-winding seed. |
 

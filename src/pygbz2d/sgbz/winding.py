@@ -53,7 +53,8 @@ from ..continuation import ZeroManager
 from ..core import live_defaults
 
 # Loop-winding integral settings: every caller rounds the result to an
-# integer, so these stay loose on purpose.
+# integer, so these stay loose on purpose. EPSABS also budgets omitted
+# theta2 regions in the unnormalized average (integral of integer winding).
 WINDING_QUAD_EPSABS: float = 1e-3
 WINDING_QUAD_EPSREL: float = 1e-3
 WINDING_QUAD_LIMIT: int = 200
@@ -281,6 +282,16 @@ def compute_average_winding(
     two ordinary crossings sharing a θ₂) create zero-width intervals, which
     contribute 0 to the arc-weighted mean; sequential charge propagation
     handles a +1/−1 pair at one θ₂ correctly.
+
+    Unknown-charge regions may be omitted when their TOTAL possible
+    contribution is at most ``WINDING_QUAD_EPSABS / TWO_PI``. A seed in the
+    widest region supplies a winding reference; crossing each emitted root
+    changes the winding by at most one (known charges use their actual
+    magnitude). This bounds the winding in the other regions, assuming the
+    crossing list is complete, as required for charge propagation itself.
+    The omission budget is an integration tolerance, not ``zero_tol``.
+    Soft intervals remain in the sum even when narrow: their winding is
+    already available by propagation and costs no additional quadrature.
     """
     m = ensure_mu2mid(zm)
     E_ref = m.E_ref
@@ -351,10 +362,9 @@ def compute_average_winding(
                 regions.append(list(range(start, N)) + list(range(0, end)))
 
     windings: list[int] = [0] * N
-    for region in regions:
+
+    def solve_region(region: list[int]) -> int:
         valid = [(p, idx) for p, idx in enumerate(region) if _width(idx) > 0]
-        if not valid:
-            continue
         valid_intervals = [_interval(idx) for _, idx in valid]
         t2_seed, best_valid = _pick_seed_theta2(
             valid_intervals, m, poly,
@@ -376,6 +386,36 @@ def compute_average_winding(
             idx = region[p]
             w = w - bdry_dc[region[p + 1]]
             windings[idx] = w
+        return w0
+
+    measured_regions = [
+        (math.fsum(_width(idx) for idx in region), region)
+        for region in regions
+    ]
+    measured_regions = [(width, region) for width, region in measured_regions
+                        if width > 0.0]
+    if not measured_regions:
+        return 0.0
+    measured_regions.sort(key=lambda entry: entry[0])
+    _, reference_region = measured_regions.pop()
+    reference_winding = solve_region(reference_region)
+
+    # One entry per real root column preserves multiplicity at MRs. Even
+    # without their individual charges, a cluster's jump cannot exceed its
+    # number of root columns. Include known jumps too, so a large winding
+    # or many zeros cannot turn a small angular width into a large omission.
+    winding_bound = abs(reference_winding) + sum(
+        1 if charge is None else abs(charge) for charge in bdry_dc)
+    omitted_width = 0.0
+    for width, region in measured_regions:
+        candidate_width = math.fsum((omitted_width, width))
+        # Spend one budget across ALL omitted regions, smallest first.
+        # Keep their zero entries in windings and divide by the full 2π:
+        # renormalizing the retained arcs would introduce a different bias.
+        if winding_bound * candidate_width <= WINDING_QUAD_EPSABS:
+            omitted_width = candidate_width
+            continue
+        solve_region(region)
 
     total = 0.0
     for k in range(N):
