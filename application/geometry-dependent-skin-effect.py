@@ -149,11 +149,12 @@ def draw_bar(done, total, elapsed, width=40, prefix="进度"):
     sys.stderr.flush()
 
 
-def _sweep_fun(data):
+def _sweep_fun(enum_data):
+    idx, data = enum_data
     if data[0] == "sgbz":
-        return sgbz.collect_GBZ_subsets(*data[1:])
+        return idx, sgbz.collect_GBZ_subsets(*data[1:])
     else:
-        return amoeba.collect_GBZ_subsets(*data[1:])
+        return idx, amoeba.collect_GBZ_subsets(*data[1:])
 
 
 def sweep_GBZ(
@@ -165,28 +166,29 @@ def sweep_GBZ(
     from multiprocessing import Pool
     coeffs, degs = model.get_characteristic_polynomial_data()
     data_pack = [(which, coeffs, degs, E_ref) for E_ref in E_list]
-    results = []
+    results = [0] * len(data_pack)
 
     n_tasks = len(data_pack)
     done = 0
     start = time.time()
     if n_processes == 1:
-        for data in data_pack:
-            results.append(_sweep_fun(data))
+        for enum_data in enumerate(data_pack):
+            idx, r = _sweep_fun(enum_data)
+            results[idx] = r
             # Process bar
             done += 1
             draw_bar(done, n_tasks, time.time() - start)
 
     else:
         with Pool(n_processes) as pool:
-            for r in pool.imap_unordered(_sweep_fun, data_pack):
-                results.append(r)
+            for idx, r in pool.imap_unordered(_sweep_fun, enumerate(data_pack)):
+                results[idx] = r
                 # Process bar
                 done += 1
                 draw_bar(done, n_tasks, time.time() - start)
 
     sys.stderr.write("\n")
-    return results
+    return results, coeffs, degs
 
 
 def sweep_structured_grid(
@@ -217,7 +219,7 @@ def sweep_structured_grid(
         model = get_transformed_model(which, params)
 
     #### Sweep ####
-    results = sweep_GBZ(
+    results, coeffs, degs = sweep_GBZ(
         E_list,
         model,
         n_processes,
@@ -299,6 +301,15 @@ def plot_GBZ_spectrum(fname):
     import matplotlib.pyplot as plt
     with open(fname, "rb") as fp:
         data = pickle.load(fp)
+    #### Check E sequence ####
+    E_re = np.linspace(data["E_re_range"][0], data["E_re_range"][1], data["n_re"])
+    E_im = np.linspace(data["E_im_range"][0], data["E_im_range"][1], data["n_im"])
+    E_re_mesh, E_im_mesh = np.meshgrid(E_re, E_im)
+    E_mesh = E_re_mesh + 1j * E_im_mesh
+    E_list = E_mesh.flatten(order=data["order"])
+    E_list_res = np.array([r.E_ref for r in data["results"]])
+    print("max|E_list - results.E_ref|", max(np.abs(E_list - E_list_res)))
+
     results = data["results"]
     E_gbz = np.array([r.E_ref for r in results if r.is_gbz])
     E_failed = np.array([r.E_ref for r in results if not r.success])
