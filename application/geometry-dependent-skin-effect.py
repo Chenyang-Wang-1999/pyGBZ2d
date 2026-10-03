@@ -296,6 +296,119 @@ def main_GBZ_sweep(kargs: argparse.Namespace):
     sweep_structured_grid(**kwargs)
 
 
+##### OBC geometries #####
+def generate_rhombus_cells(n1: int, n2: int) -> list[tuple[int, int]]:
+    """Primitive-cell coordinates with edges along a1 and a2.
+
+    Return n1*n2 cells, ordered by a1 index first, then a2 index.
+    """
+    if n1 < 1 or n2 < 1:
+        raise ValueError("Both rhombus sizes must be positive")
+    return [(i, j) for i in range(n1) for j in range(n2)]
+
+
+def generate_rectangle_cells(nx: int, ny: int) -> list[tuple[int, int]]:
+    """Return 2*nx*ny primitive cells forming a Cartesian rectangular cut.
+
+    For build_model's lattice, (1, 1) points along -x and (-1, 1)
+    along +y. Each rectangular block contains primitive cells (0, 0)
+    and (1, 0); including both preserves the original boundary termination.
+    All returned coordinates remain in the original a1-a2 basis.
+    """
+    if nx < 1 or ny < 1:
+        raise ValueError("Both rectangle sizes must be positive")
+    ny_2 = ny // 2
+    is_odd = ny % 2
+    bulk = [
+        (i - j + offset, i + j)
+        for i in range(nx) for j in range(ny_2) for offset in (0, 1)
+    ]
+    if is_odd:
+        bulk += ([
+            (i - ny_2 , i + ny_2)
+            for i in range(nx)
+        ])
+    return bulk
+
+
+def add_obc_geom_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--geom", choices=("rhombus", "rectangle"),
+                        default="rhombus", type=str, help="Geometry types")
+    parser.add_argument("--n1", type=int, default=8, help="Parameter n1 for geometry definition")
+    parser.add_argument("--n2", type=int, default=8, help="Parameter n2 for geometry definition")
+    parser.add_argument("--preview", action="store_true", help="Preview the geometry.")
+    parser.add_argument("--outdir", type=Path, default=DATA, help="Directory receiving the pickled OBC geometry.")
+    parser.add_argument("--params", type=_num_parser, nargs=5, default=PARAMS,
+                        metavar=("t1", "t2", "phi", "M", "gamma"),
+                        help="Model parameters, overriding param.json; same expression syntax as param.json.")
+
+
+def plot_OBC_geom(geom: Literal["rhombus", "rectangle"], n1: int, n2: int):
+    model = build_model()
+    if geom == "rhombus":
+        coords = np.array(generate_rhombus_cells(n1, n2))
+    elif geom == "rectangle":
+        coords = np.array(generate_rectangle_cells(n1, n2))
+    else:
+        raise ValueError(f"Unknown geometry type: {geom}")
+
+    site_colors = [COLORS["a1"], COLORS["x"]]
+
+    import matplotlib.pyplot as plt
+    for site_idx in range(model.SiteNum):
+        site_coords = coords + model.SiteCoord[site_idx, :]
+        site_cart = model.lattice2cart(site_coords.T).T
+        plt.plot(site_cart[:,0], site_cart[:, 1], '.', color=site_colors[site_idx])
+    plt.axis("equal")
+    plt.show()
+
+
+def calculate_OBC_spectrum(
+    geom: Literal["rhombus", "rectangle"],
+    n1: int,
+    n2: int,
+    outdir: Path = DATA,
+    params: tuple[float] = PARAMS
+) -> None:
+    ''' Calculate OBC spectrum using scipy.linalg.eig '''
+    from scipy import linalg as la
+    from datetime import datetime, timezone
+
+    model = build_model(params)
+    if geom == "rhombus":
+        coords = generate_rhombus_cells(n1, n2)
+    elif geom == "rectangle":
+        coords = generate_rectangle_cells(n1, n2)
+    else:
+        raise ValueError(f"Unknown geometry type: {geom}")
+    H_mat = model.generate_OBC_bulk(coords).todense()
+    eigv, eigvec = la.eig(H_mat)
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    data = {
+        "geom": geom,
+        "n1": n1,
+        "n2": n2,
+        "cell_coords": model.lattice2cart(np.array(coords).T).T,
+        "site_coords": model.lattice2cart(model.SiteCoord.T).T,
+        "eigv": eigv,
+        "eigvec": eigvec,
+        "run_id": run_id,
+    }
+
+    # save
+    fname = outdir / f"obc_{geom}_{n1}_{n2}_{run_id}.pkl"
+    with open(fname, "wb") as fp:
+        pickle.dump(data, fp)
+    print(f"Save {fname}")
+
+
+def main_OBC_geom(kargs: argparse.Namespace):
+    if kargs.preview:
+        plot_OBC_geom(kargs.geom, kargs.n1, kargs.n2)
+    else:
+        calculate_OBC_spectrum(kargs.geom, kargs.n1, kargs.n2, kargs.outdir, kargs.params)
+
+
 ##### Post processing #####
 def plot_GBZ_spectrum(fname):
     import matplotlib.pyplot as plt
@@ -344,48 +457,81 @@ def plot_GBZ_spectrum(fname):
     plt.show()
 
 
+def plot_OBC_spectrum(fname):
+    with open(fname, "rb") as fp:
+        data = pickle.load(fp)
+    import matplotlib.pyplot as plt
+    plt.plot(data["eigv"].real, data["eigv"].imag, '.')
+    plt.show()
+
+
+def plot_OBC_amplitude(fname, E_re_range, E_im_range):
+    with open(fname, "rb") as fp:
+        data = pickle.load(fp)
+
+    # Assemble coordinates
+    site_coords = data["site_coords"]
+    n_sites = site_coords.shape[0]
+    cell_coords = data["cell_coords"]
+    all_coords = np.column_stack([cell_coords, cell_coords])
+    for site_idx in range(n_sites):
+        all_coords[:, site_idx * n_sites:(site_idx + 1) * n_sites] += site_coords[site_idx, :]
+    all_coords = all_coords.reshape(-1, site_coords.shape[1])
+
+    # Select eigenstates
+    if E_re_range[0] == E_re_range[1]:
+        mask = np.argmin(np.abs(data["eigv"] - (E_re_range[0] + 1j * E_im_range[0])))
+        mean_amplitude = np.abs(data["eigvec"][:, mask])
+    else:
+        re_mask = (data["eigv"].real >= E_re_range[0]) & (data["eigv"].real <= E_re_range[1])
+        im_mask = (data["eigv"].imag >= E_im_range[0]) & (data["eigv"].imag <= E_im_range[1])
+        mask = re_mask & im_mask
+        eigvec = data["eigvec"][:, mask]
+        mean_amplitude = np.abs(eigvec).mean(axis=1)
+
+    # Plot 
+    import matplotlib.pyplot as plt
+    plt.figure()
+    plt.plot(data["eigv"].real, data["eigv"].imag, '.', color="#e0e0e0")
+    plt.plot(data["eigv"][mask].real, data["eigv"][mask].imag, '.', color=COLORS["x"])
+    plt.figure()
+    plt.scatter(all_coords[:, 0], all_coords[:, 1], c=mean_amplitude, cmap="viridis")
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.axis("equal")
+    plt.show()
+
+
 def main_plot(kargs: argparse.Namespace):
     if kargs.type == "gbz-spectrum":
         plot_GBZ_spectrum(kargs.fname)
+    elif kargs.type == "obc-spectrum":
+        plot_OBC_spectrum(kargs.fname)
+    elif kargs.type == "obc-mean-amplitude":
+        plot_OBC_amplitude(kargs.fname, kargs.E_re_range, kargs.E_im_range)
     else:
         raise ValueError(f"Unknown plot type {kargs.type}")
 
 
 def add_plot_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--type", choices=("gbz-spectrum",), default="gbz-spectrum",
+        "--type", 
+        choices=("gbz-spectrum", "obc-spectrum", "obc-mean-amplitude"), 
+        default="gbz-spectrum",
         help="Type of plot to make."
     )
     parser.add_argument(
         "--fname", type=Path, required=True,
         help="Pickled sweep file to plot."
     )
-
-
-def finite_hamiltonian(model, nx, ny):
-    """Assemble BerryPy's hopping list in O(number of bonds), discarding exits.
-
-    This avoids constructing a huge periodic supercell just to delete its wrap
-    bonds. check_model() compares it with BerryPy's supercell OBC Hamiltonian.
-    """
-    from scipy.sparse import coo_matrix
-
-    if nx < 1 or ny < 1:
-        raise ValueError("Both OBC sizes must be positive")
-    cells = [(i, j) for i in range(nx) for j in range(ny)]
-    lookup = {cell: k for k, cell in enumerate(cells)}
-    n = model.SiteNum
-    rows, cols, values = [], [], []
-    bonds = [(*b, (0, 0)) for b in model.InCell] + list(model.InterCell)
-    for index, (i, j) in enumerate(cells):
-        for source, dest, amplitude, shift in bonds:
-            target = lookup.get((i + shift[0], j + shift[1]))
-            if target is not None:
-                rows.append(target * n + dest)
-                cols.append(index * n + source)
-                values.append(amplitude)
-    coords = np.vstack([(np.asarray(model.SiteCoord) + cell) @ model.LatticeVec.T for cell in cells])
-    return coo_matrix((values, (rows, cols)), shape=(len(coords), len(coords))).tocsr(), coords
+    parser.add_argument(
+        "--E_re_range", type=float, nargs=2, default=(-1e5, 1e5),
+        help="Range of eigv.real to plot. If not specified, use the full range. If the lower and upper limits are set equal, use the nearest eigenvalue to (E_re_range[0], E_im_range[0]) instead."
+    )
+    parser.add_argument(
+        "--E_im_range", type=float, nargs=2, default=(-1e5, 1e5),
+        help="Range of eigv.imag to plot. If not specified, use the full range."
+    )
 
 
 if __name__ == "__main__":
@@ -397,10 +543,15 @@ if __name__ == "__main__":
     add_plot_arguments(
         modes.add_parser("plot", help="Visualize the data.")
     )
+    add_obc_geom_arguments(
+        modes.add_parser("obc-geom", help="Build and visualize the OBC geometries.")
+    )
     kargs = parser.parse_args()
     if kargs.mode == "sweep":
         main_GBZ_sweep(kargs)
     elif kargs.mode == "plot":
         main_plot(kargs)
+    elif kargs.mode == "obc-geom":
+        main_OBC_geom(kargs)
     else:
         raise ValueError(f"Unknown mode {kargs.mode}")
